@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rdb-core",
+    "crates/rdb-plugin-runtime",
+    "crates/rdb-rdbms-common",
+    "crates/plugins/postgres",
+    "crates/plugins/mongodb",
+    "crates/plugins/rabbitmq",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/your-org/rdb"
+
+[workspace.dependencies]
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+rdb-core = { path = "crates/rdb-core" }
+rdb-plugin-runtime = { path = "crates/rdb-plugin-runtime" }
+rdb-rdbms-common = { path = "crates/rdb-rdbms-common" }
+rdb-plugin-postgres = { path = "crates/plugins/postgres" }
+rdb-plugin-mongodb = { path = "crates/plugins/mongodb" }
+rdb-plugin-rabbitmq = { path = "crates/plugins/rabbitmq" }

@@ -1,0 +1,17 @@
+[package]
+name = "rdb-plugin-rabbitmq"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rdb-core.workspace = true
+rdb-plugin-runtime.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+lapin = { version = "2", default-features = false, features = ["rustls"] }
+futures-util = "0.3"

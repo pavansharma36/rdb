@@ -1,0 +1,126 @@
+{
+  "pluginInfo": {
+    "id": "rabbitmq",
+    "name": "RabbitMQ",
+    "kind": "messaging",
+    "version": "0.1.0",
+    "description": "Connect to a RabbitMQ broker via AMQP 0-9-1.",
+    "config_schema": [
+      {
+        "key": "mode",
+        "label": "Configure with",
+        "type": {
+          "kind": "select",
+          "options": [
+            "Connection string",
+            "Individual settings"
+          ]
+        },
+        "required": true,
+        "default": "Connection string",
+        "placeholder": null
+      },
+      {
+        "key": "uri",
+        "label": "AMQP URI",
+        "type": {
+          "kind": "text"
+        },
+        "required": true,
+        "default": "amqp://guest:guest@localhost:5672/%2f",
+        "placeholder": "amqp://user:pass@host:5672/vhost",
+        "show_if": {
+          "field": "mode",
+          "equals": "Connection string"
+        }
+      },
+      {
+        "key": "host",
+        "label": "Host",
+        "type": {
+          "kind": "text"
+        },
+        "required": true,
+        "default": "localhost",
+        "placeholder": "localhost",
+        "show_if": {
+          "field": "mode",
+          "equals": "Individual settings"
+        }
+      },
+      {
+        "key": "port",
+        "label": "Port",
+        "type": {
+          "kind": "number"
+        },
+        "required": false,
+        "default": 5672,
+        "placeholder": null,
+        "show_if": {
+          "field": "mode",
+          "equals": "Individual settings"
+        }
+      },
+      {
+        "key": "user",
+        "label": "User",
+        "type": {
+          "kind": "text"
+        },
+        "required": false,
+        "default": "guest",
+        "placeholder": null,
+        "show_if": {
+          "field": "mode",
+          "equals": "Individual settings"
+        }
+      },
+      {
+        "key": "password",
+        "label": "Password",
+        "type": {
+          "kind": "password"
+        },
+        "required": false,
+        "default": "guest",
+        "placeholder": null,
+        "show_if": {
+          "field": "mode",
+          "equals": "Individual settings"
+        }
+      },
+      {
+        "key": "vhost",
+        "label": "Virtual host",
+        "type": {
+          "kind": "text"
+        },
+        "required": false,
+        "default": "/",
+        "placeholder": "/",
+        "show_if": {
+          "field": "mode",
+          "equals": "Individual settings"
+        }
+      },
+      {
+        "key": "tls",
+        "label": "Use TLS (amqps)",
+        "type": {
+          "kind": "boolean"
+        },
+        "required": false,
+        "default": false,
+        "placeholder": null,
+        "show_if": {
+          "field": "mode",
+          "equals": "Individual settings"
+        }
+      }
+    ],
+    "ui_module": "messaging",
+    "protocol_version": 1
+  },
+  "executable": "./rdb-plugin-rabbitmq"
+}
