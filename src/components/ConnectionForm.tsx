@@ -130,7 +130,7 @@ export function ConnectionForm({
         <span className="field-label">Type</span>
         <select value={pluginId} onChange={(e) => selectPlugin(e.target.value)}>
           <option value="" disabled>
-            Select a plugin…
+            Select a connection type…
           </option>
           {plugins.map((p) => (
             <option key={p.id} value={p.id}>
