@@ -5,7 +5,7 @@ name: Publish desktop app
 # separately by publish-plugins.yml and installed in-app at runtime.
 #
 # Two modes:
-#   - push to master  -> nightly: rolling `app-nightly` prerelease,
+#   - push to master  -> nightly: rolling `latest` prerelease,
 #                        version `<major>.<minor>.<commit-count>`.
 #   - push a `v*` tag -> stable: release at the tag (e.g. v0.2.0),
 #                        version taken from the tag.
@@ -31,8 +31,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14   # Apple Silicon
-          - os: macos-13   # Intel
+          - os: macos-14   # Apple Silicon (arm64)
+            rust-target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+          - os: macos-14   # Intel (x86_64), cross-compiled on arm64 — macos-13 Intel runners are scarce
+            rust-target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin"
           - os: ubuntu-22.04
           - os: windows-latest
     steps:
@@ -42,11 +46,13 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
-          key: ${{ matrix.os }}
+          key: ${{ matrix.os }}-${{ matrix.rust-target }}
 
       - name: Install Linux system dependencies
         if: startsWith(matrix.os, 'ubuntu')
@@ -111,7 +117,7 @@ jobs:
             echo "name=rdb desktop ${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=app-nightly" >> "$GITHUB_OUTPUT"
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
             echo "name=rdb desktop (nightly)" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           fi
@@ -128,3 +134,4 @@ jobs:
           releaseName: ${{ steps.meta.outputs.name }}
           releaseBody: "Desktop build from ${{ github.sha }}."
           prerelease: ${{ steps.meta.outputs.prerelease }}
+          args: ${{ matrix.args }}

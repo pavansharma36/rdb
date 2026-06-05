@@ -56,6 +56,16 @@ export interface GithubPreview {
   downloadUrl: string;
 }
 
+/** A plugin installable from the configured GitHub repo (see
+ *  `list_github_plugins`). `id` is the rolling `<plugin>-latest` tag minus its
+ *  `-latest` suffix, which equals the installed plugin's id. */
+export interface AvailablePlugin {
+  id: string;
+  tag: string;
+  assetName: string;
+  sizeBytes: number;
+}
+
 /** Serializes as a UUID string. */
 export type ConnectionId = string;
 
@@ -259,6 +269,9 @@ export const api = {
     invoke<void>("close_connection", { connectionId }),
 
   // Plugin install (from GitHub releases)
+  listGithubPlugins: (repo: string) =>
+    invoke<AvailablePlugin[]>("list_github_plugins", { repo }),
+
   previewGithubPlugin: (repo: string, tag?: string | null) =>
     invoke<GithubPreview>("preview_github_plugin", { repo, tag: tag ?? null }),
 

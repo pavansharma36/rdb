@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, errString } from "../api";
-import type { GithubPreview, PluginInfo } from "../api";
+import type { AvailablePlugin, GithubPreview, PluginInfo } from "../api";
+import { loadConfig } from "../store";
 
 interface InstallPluginDialogProps {
   onClose: () => void;
@@ -14,24 +15,59 @@ function formatSize(bytes: number): string {
   return bytes + " B";
 }
 
-/** Install a plugin from a GitHub release: fetch (preview) the matching asset
- *  and its checksum, then confirm to download, verify, and install. */
+/** Install a plugin from the configured GitHub repo. The list of plugins (its
+ *  rolling `<plugin>-latest` releases) is fetched up front, so there is no
+ *  repo/tag to type — pick a plugin, confirm the checksum, install. */
 export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialogProps) {
-  const [repo, setRepo] = useState("");
-  const [tag, setTag] = useState("");
+  const [repo, setRepo] = useState<string>("");
+  const [available, setAvailable] = useState<AvailablePlugin[] | null>(null);
+  const [installed, setInstalled] = useState<Set<string>>(new Set());
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // The plugin the user picked, plus its fetched preview (asset + checksum)
+  // awaiting confirmation.
+  const [selected, setSelected] = useState<AvailablePlugin | null>(null);
   const [preview, setPreview] = useState<GithubPreview | null>(null);
   const [busy, setBusy] = useState<"preview" | "install" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function onFetch() {
+  // Load the configured repo, then the available + installed plugin lists.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg = await loadConfig();
+        if (cancelled) return;
+        setRepo(cfg.pluginRepo);
+        const [avail, inst] = await Promise.all([
+          api.listGithubPlugins(cfg.pluginRepo),
+          api.listPlugins(),
+        ]);
+        if (cancelled) return;
+        setAvailable(avail);
+        setInstalled(new Set(inst.map((p) => p.id)));
+      } catch (e) {
+        if (!cancelled) setLoadError(errString(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** Pick a plugin and fetch its preview (asset + published checksum) for the
+   *  confirmation step. Nothing is downloaded or executed yet. */
+  async function onSelect(plugin: AvailablePlugin) {
     setError(null);
     setPreview(null);
+    setSelected(plugin);
     setBusy("preview");
     try {
-      const p = await api.previewGithubPlugin(repo.trim(), tag.trim() || null);
+      const p = await api.previewGithubPlugin(repo, plugin.tag);
       setPreview(p);
     } catch (e) {
       setError(errString(e));
+      setSelected(null);
     } finally {
       setBusy(null);
     }
@@ -47,8 +83,11 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
         preview.tag,
         preview.sha256,
       );
+      // Reflect the new install in the list and close the confirm panel.
+      setInstalled((s) => new Set(s).add(info.id));
+      setSelected(null);
+      setPreview(null);
       onInstalled(info);
-      onClose();
     } catch (e) {
       setError(errString(e));
     } finally {
@@ -60,41 +99,57 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <header className="modal-header">
-          <span>Install plugin from GitHub</span>
+          <span>Install plugin{repo ? ` from ${repo}` : ""}</span>
           <button className="close-x" onClick={onClose} title="Close">
             ×
           </button>
         </header>
 
-        <label className="field">
-          <span>Repository</span>
-          <input
-            type="text"
-            placeholder="owner/name"
-            value={repo}
-            onChange={(e) => setRepo(e.target.value)}
-            autoFocus
-          />
-        </label>
-        <label className="field">
-          <span>Release tag (optional)</span>
-          <input
-            type="text"
-            placeholder="latest"
-            value={tag}
-            onChange={(e) => setTag(e.target.value)}
-          />
-        </label>
+        {loadError && <p className="msg error">{loadError}</p>}
 
-        <button onClick={onFetch} disabled={!repo.trim() || busy !== null}>
-          {busy === "preview" ? "Fetching…" : "Fetch release"}
-        </button>
+        {!available && !loadError && <p className="muted">Loading plugins…</p>}
 
-        {preview && (
+        {available && available.length === 0 && !loadError && (
+          <p className="muted">
+            No installable plugins found for this platform in <code>{repo}</code>.
+          </p>
+        )}
+
+        {available && available.length > 0 && (
+          <ul className="plugin-list">
+            {available.map((plugin) => {
+              const isInstalled = installed.has(plugin.id);
+              const active = selected?.tag === plugin.tag;
+              return (
+                <li key={plugin.tag} className="plugin-row">
+                  <div className="plugin-row-main">
+                    <span className="plugin-name">{plugin.id}</span>
+                    <span className="muted small">
+                      {formatSize(plugin.sizeBytes)}
+                      {isInstalled && " · installed"}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => onSelect(plugin)}
+                    disabled={busy !== null}
+                  >
+                    {active && busy === "preview"
+                      ? "Fetching…"
+                      : isInstalled
+                      ? "Update"
+                      : "Install"}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {selected && preview && (
           <div className="preview">
             <div className="preview-row">
-              <span className="muted">Version</span>
-              <span>{preview.tag}</span>
+              <span className="muted">Plugin</span>
+              <span>{selected.id}</span>
             </div>
             <div className="preview-row">
               <span className="muted">Asset</span>

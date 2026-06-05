@@ -7,6 +7,7 @@
 //! Plugins dir: `$RDB_PLUGINS_DIR` if set, else `<app-data>/plugins`.
 
 mod commands;
+mod config;
 mod github;
 mod persistence;
 mod plugin_manager;
@@ -47,10 +48,13 @@ pub fn run() {
             commands::open_connection,
             commands::close_connection,
             commands::plugin_call,
+            commands::list_github_plugins,
             commands::preview_github_plugin,
             commands::install_github_plugin,
             persistence::load_connections,
             persistence::save_connections,
+            config::load_config,
+            config::save_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

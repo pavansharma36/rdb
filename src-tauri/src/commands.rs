@@ -10,7 +10,7 @@ use rdb_core::{ConnectionConfig, ConnectionId, PluginInfo};
 use serde_json::Value;
 use tauri::State;
 
-use crate::plugin_manager::{GithubPreview, PluginManager};
+use crate::plugin_manager::{AvailablePlugin, GithubPreview, PluginManager};
 
 /// Shared manager handle managed by Tauri.
 type Manager<'a> = State<'a, Arc<PluginManager>>;
@@ -65,6 +65,16 @@ pub async fn plugin_call(
         .plugin_call(connection_id, op, params)
         .await
         .map_err(err)
+}
+
+/// List the plugins installable from `repo` (`owner/name`): its rolling
+/// `<plugin>-latest` releases with a binary for this platform. No download.
+#[tauri::command]
+pub async fn list_github_plugins(
+    manager: Manager<'_>,
+    repo: String,
+) -> Result<Vec<AvailablePlugin>, String> {
+    manager.list_github_plugins(&repo).await
 }
 
 /// Resolve a GitHub release and report the asset + checksum that would be

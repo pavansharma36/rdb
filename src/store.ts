@@ -51,3 +51,26 @@ export function upsert(
 export function remove(list: SavedConnection[], id: string): SavedConnection[] {
   return list.filter((c) => c.id !== id);
 }
+
+// --- App config -----------------------------------------------------------
+//
+// App-wide UI state (not tied to any plugin/connection), persisted by the Rust
+// backend at <app_data_dir>/config.json. See src-tauri/src/config.rs.
+
+/** App-wide configuration. Mirrors the Rust `AppConfig` (camelCase). */
+export interface AppConfig {
+  /** Whether the first-run plugin install step has been shown to the user. */
+  pluginsDialogShown: boolean;
+  /** GitHub repo (`owner/name`) the in-app plugin installer fetches from. */
+  pluginRepo: string;
+}
+
+/** Load the app config, creating it with defaults on first run. */
+export function loadConfig(): Promise<AppConfig> {
+  return invoke<AppConfig>("load_config");
+}
+
+/** Persist the full app config. */
+export function saveConfig(config: AppConfig): Promise<void> {
+  return invoke<void>("save_config", { config });
+}

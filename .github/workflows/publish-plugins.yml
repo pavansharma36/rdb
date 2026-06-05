@@ -5,7 +5,7 @@ name: Publish plugins
 # (src-tauri/src/github.rs) can fetch them.
 #
 # Two modes:
-#   - push to master  -> nightly: rolling `<plugin>-nightly` prereleases,
+#   - push to master  -> nightly: rolling `<plugin>-latest` prereleases,
 #                        version `<major>.<minor>.<commit-count>`.
 #   - push a `v*` tag -> stable: immutable `<plugin>-v<version>` releases,
 #                        version taken from the tag (e.g. v0.2.0 -> 0.2.0).
@@ -44,7 +44,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-14   # cross-compiled on arm64; macos-13 Intel runners are scarce
           - target: aarch64-apple-darwin
             os: macos-14
           - target: x86_64-pc-windows-msvc
@@ -136,7 +136,7 @@ jobs:
             echo "label=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           else
-            echo "suffix=nightly" >> "$GITHUB_OUTPUT"
+            echo "suffix=latest" >> "$GITHUB_OUTPUT"
             echo "label=nightly" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           fi

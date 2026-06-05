@@ -67,6 +67,25 @@ pub fn select_binary_asset<'a>(release: &'a Release, triple: &str) -> Result<&'a
     }
 }
 
+/// Suffix marking a release as a rolling per-plugin "latest" release
+/// (`<plugin>-latest`), as published by `publish-plugins.yml`.
+pub const PLUGIN_TAG_SUFFIX: &str = "-latest";
+
+/// From all `releases`, pick the rolling per-plugin ones (`<plugin>-latest`)
+/// that have exactly one binary asset for `triple`. Returns `(release, asset)`
+/// pairs; releases without a matching asset (e.g. the app's own `latest`, or a
+/// plugin not built for this platform) are skipped. Pure — no network.
+pub fn select_plugin_releases<'a>(
+    releases: &'a [Release],
+    triple: &str,
+) -> Vec<(&'a Release, &'a Asset)> {
+    releases
+        .iter()
+        .filter(|r| r.tag_name.ends_with(PLUGIN_TAG_SUFFIX))
+        .filter_map(|r| select_binary_asset(r, triple).ok().map(|a| (r, a)))
+        .collect()
+}
+
 fn asset_names(release: &Release) -> String {
     release
         .assets
@@ -141,13 +160,20 @@ fn auth(req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
     }
 }
 
-/// Fetch a release by `tag`, or the latest release when `tag` is `None`.
-/// `repo` is `owner/name`.
-pub async fn fetch_release(repo: &str, tag: Option<&str>) -> Result<Release, String> {
+/// Normalise and validate a `owner/name` repo string (tolerating a pasted
+/// `https://github.com/owner/name` URL and surrounding slashes).
+fn normalize_repo(repo: &str) -> Result<String, String> {
     let repo = repo.trim().trim_start_matches("https://github.com/").trim_matches('/');
     if repo.split('/').filter(|s| !s.is_empty()).count() != 2 {
         return Err(format!("expected repo as 'owner/name', got '{repo}'"));
     }
+    Ok(repo.to_string())
+}
+
+/// Fetch a release by `tag`, or the latest release when `tag` is `None`.
+/// `repo` is `owner/name`.
+pub async fn fetch_release(repo: &str, tag: Option<&str>) -> Result<Release, String> {
+    let repo = normalize_repo(repo)?;
     let url = match tag {
         Some(t) => format!("https://api.github.com/repos/{repo}/releases/tags/{t}"),
         None => format!("https://api.github.com/repos/{repo}/releases/latest"),
@@ -162,6 +188,22 @@ pub async fn fetch_release(repo: &str, tag: Option<&str>) -> Result<Release, Str
     resp.json::<Release>()
         .await
         .map_err(|e| format!("failed to parse release: {e}"))
+}
+
+/// Fetch all releases for `repo` (`owner/name`), most-recent first.
+pub async fn fetch_releases(repo: &str) -> Result<Vec<Release>, String> {
+    let repo = normalize_repo(repo)?;
+    let url = format!("https://api.github.com/repos/{repo}/releases?per_page=100");
+    let resp = auth(client()?.get(&url))
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("GitHub returned {} for {url}", resp.status()));
+    }
+    resp.json::<Vec<Release>>()
+        .await
+        .map_err(|e| format!("failed to parse releases: {e}"))
 }
 
 /// Download an asset's bytes.
@@ -259,6 +301,51 @@ mod tests {
         assert_eq!(parse_sha256sums(&text, "the-binary").unwrap(), hash);
         let bare = format!("{}\n", "d".repeat(64));
         assert_eq!(parse_sha256sums(&bare, "anything").unwrap(), "d".repeat(64));
+    }
+
+    #[test]
+    fn selects_plugin_releases_with_matching_asset() {
+        let triple = "aarch64-apple-darwin";
+        let releases = vec![
+            // App release: not a `<plugin>-latest` tag -> skipped.
+            Release {
+                tag_name: "latest".into(),
+                assets: vec![Asset {
+                    name: format!("rdb-{triple}.dmg"),
+                    browser_download_url: "https://example/app".into(),
+                    size: 1,
+                }],
+            },
+            // Plugin built for this platform -> kept.
+            Release {
+                tag_name: "postgres-latest".into(),
+                assets: vec![
+                    Asset {
+                        name: format!("rdb-plugin-postgres-{triple}"),
+                        browser_download_url: "https://example/pg".into(),
+                        size: 2,
+                    },
+                    Asset {
+                        name: format!("rdb-plugin-postgres-{triple}.sha256"),
+                        browser_download_url: "https://example/pg.sha256".into(),
+                        size: 1,
+                    },
+                ],
+            },
+            // Plugin tag but no asset for this triple -> skipped.
+            Release {
+                tag_name: "mongodb-latest".into(),
+                assets: vec![Asset {
+                    name: "rdb-plugin-mongodb-x86_64-pc-windows-msvc.exe".into(),
+                    browser_download_url: "https://example/mongo".into(),
+                    size: 3,
+                }],
+            },
+        ];
+        let got = select_plugin_releases(&releases, triple);
+        let tags: Vec<&str> = got.iter().map(|(r, _)| r.tag_name.as_str()).collect();
+        assert_eq!(tags, ["postgres-latest"]);
+        assert_eq!(got[0].1.name, format!("rdb-plugin-postgres-{triple}"));
     }
 
     #[test]

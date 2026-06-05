@@ -225,8 +225,8 @@ Every artifact shares one version `<major>.<minor>.<patch>`:
 
 Rolling **prereleases**, overwritten each push:
 
-- App → release tagged `app-nightly`, version `<major>.<minor>.<commit-count>`.
-- Plugins → releases `postgres-nightly`, `mongodb-nightly`, `rabbitmq-nightly`.
+- App → release tagged `latest`, version `<major>.<minor>.<commit-count>`.
+- Plugins → releases `postgres-latest`, `mongodb-latest`, `rabbitmq-latest`.
 
 ### Stable (push a `v*` tag)
 

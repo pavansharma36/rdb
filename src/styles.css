@@ -184,6 +184,37 @@ textarea:focus {
   word-break: break-all;
 }
 
+.plugin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plugin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.plugin-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.plugin-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .ok {
   color: var(--ok);
 }

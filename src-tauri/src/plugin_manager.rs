@@ -177,6 +177,19 @@ pub struct GithubPreview {
     pub download_url: String,
 }
 
+/// A plugin available to install from the configured GitHub repo, as reported
+/// by [`PluginManager::list_github_plugins`]. `id` is the rolling release tag
+/// minus its `-latest` suffix (e.g. `postgres-latest` -> `postgres`), which is
+/// also the installed plugin's id, so the UI can match against `list_plugins`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailablePlugin {
+    pub id: String,
+    pub tag: String,
+    pub asset_name: String,
+    pub size_bytes: u64,
+}
+
 impl PluginManager {
     /// Scan `dir` for `*.plugin.json` manifests, caching each plugin's info and
     /// executable. Never spawns a process. Malformed or version-incompatible
@@ -301,6 +314,28 @@ impl PluginManager {
     }
 
     // -- GitHub install ----------------------------------------------------
+
+    /// List the plugins installable from `repo` (`owner/name`): its rolling
+    /// `<plugin>-latest` releases that ship a binary for this platform. Fetches
+    /// the release list only — nothing is downloaded or executed.
+    pub async fn list_github_plugins(&self, repo: &str) -> Result<Vec<AvailablePlugin>, String> {
+        let triple = github::target_triple()
+            .ok_or_else(|| "unsupported platform: no known target triple".to_string())?;
+        let releases = github::fetch_releases(repo).await?;
+        Ok(github::select_plugin_releases(&releases, triple)
+            .into_iter()
+            .map(|(r, a)| AvailablePlugin {
+                id: r
+                    .tag_name
+                    .strip_suffix(github::PLUGIN_TAG_SUFFIX)
+                    .unwrap_or(&r.tag_name)
+                    .to_string(),
+                tag: r.tag_name.clone(),
+                asset_name: a.name.clone(),
+                size_bytes: a.size,
+            })
+            .collect())
+    }
 
     /// Resolve a GitHub release and report which asset would be installed and
     /// its published checksum, WITHOUT downloading the binary or executing

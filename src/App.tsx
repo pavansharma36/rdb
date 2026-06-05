@@ -9,6 +9,7 @@ import { DocumentWorkspace } from "./components/workspaces/DocumentWorkspace";
 import { RabbitMqWorkspace } from "./components/workspaces/RabbitMqWorkspace";
 import type { SavedConnection } from "./store";
 import { loadConnections, saveConnections, upsert, remove } from "./store";
+import { loadConfig, saveConfig } from "./store";
 
 /** A live, currently-open connection to a backend (one per connected profile). */
 export interface OpenConnection {
@@ -41,6 +42,16 @@ export function App() {
     loadConnections()
       .then(setSaved)
       .catch((e) => setLoadError(errString(e)));
+    // First launch: show the plugin install step once, then remember it so it
+    // doesn't reappear on subsequent launches.
+    loadConfig()
+      .then((cfg) => {
+        if (!cfg.pluginsDialogShown) {
+          setInstalling(true);
+          saveConfig({ ...cfg, pluginsDialogShown: true }).catch(() => {});
+        }
+      })
+      .catch(() => {});
   }, []);
 
   /** Re-fetch the installed plugin list (e.g. after installing a new one). */
