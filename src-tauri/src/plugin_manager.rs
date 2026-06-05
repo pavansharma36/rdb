@@ -33,6 +33,28 @@ type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<RpcResult>>>>;
 struct Manifest {
     plugin_info: PluginInfo,
     executable: String,
+    /// Provenance of an in-app GitHub install, used for update detection.
+    /// Absent for manually-placed manifests (e.g. `npm run plugins:dev`).
+    #[serde(default)]
+    source: Option<InstallSource>,
+}
+
+/// Where an in-app-installed plugin came from, recorded so the installer can
+/// tell whether a newer release exists. For `stable` we compare `version`; for
+/// `nightly` (whose version is a commit count not in the tag) we compare
+/// `published_at`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallSource {
+    repo: String,
+    tag: String,
+    /// `"nightly"` or `"stable"`.
+    channel: String,
+    /// The installed plugin's version at install time.
+    version: String,
+    /// The release's publish timestamp (ISO-8601 UTC); drives nightly compares.
+    #[serde(default)]
+    published_at: Option<String>,
 }
 
 /// A discovered plugin: its advertised info plus the resolved executable path.
@@ -40,6 +62,7 @@ struct Manifest {
 struct DiscoveredPlugin {
     info: PluginInfo,
     executable: PathBuf,
+    source: Option<InstallSource>,
 }
 
 /// A running plugin process plus the plumbing to talk to it. One per plugin id;
@@ -177,17 +200,41 @@ pub struct GithubPreview {
     pub download_url: String,
 }
 
+/// Install/update state of an [`AvailablePlugin`] relative to what's installed.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginStatus {
+    /// Not installed.
+    NotInstalled,
+    /// Installed and matching the latest release in this channel.
+    UpToDate,
+    /// Installed, but a newer release is available in this channel.
+    UpdateAvailable,
+    /// Installed, but staleness can't be determined (no install provenance, or
+    /// an unparseable version).
+    Unknown,
+}
+
 /// A plugin available to install from the configured GitHub repo, as reported
-/// by [`PluginManager::list_github_plugins`]. `id` is the rolling release tag
-/// minus its `-latest` suffix (e.g. `postgres-latest` -> `postgres`), which is
-/// also the installed plugin's id, so the UI can match against `list_plugins`.
+/// by [`PluginManager::list_github_plugins`]. `id` is derived from the release
+/// tag (e.g. `postgres-latest`/`postgres-v0.2.0` -> `postgres`), which is also
+/// the installed plugin's id, so the UI can match against `list_plugins`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AvailablePlugin {
     pub id: String,
     pub tag: String,
+    /// `"nightly"` or `"stable"` — the channel this listing reflects.
+    pub channel: String,
     pub asset_name: String,
     pub size_bytes: u64,
+    /// Available version (stable releases only; nightly has none in the tag).
+    pub available_version: Option<String>,
+    /// Release publish timestamp (used for nightly update detection).
+    pub published_at: Option<String>,
+    /// The currently-installed version, if this plugin is installed.
+    pub installed_version: Option<String>,
+    pub status: PluginStatus,
 }
 
 impl PluginManager {
@@ -315,24 +362,40 @@ impl PluginManager {
 
     // -- GitHub install ----------------------------------------------------
 
-    /// List the plugins installable from `repo` (`owner/name`): its rolling
-    /// `<plugin>-latest` releases that ship a binary for this platform. Fetches
-    /// the release list only — nothing is downloaded or executed.
+    /// List the plugins installable from `repo` (`owner/name`) for this app's
+    /// release channel: nightly apps see `<plugin>-latest` prereleases, stable
+    /// apps see the highest `<plugin>-v<semver>` release. Each entry carries an
+    /// install/update [`PluginStatus`] computed against what's installed.
+    /// Fetches the release list (and, for installed plugins, nothing further) —
+    /// nothing is downloaded or executed.
     pub async fn list_github_plugins(&self, repo: &str) -> Result<Vec<AvailablePlugin>, String> {
         let triple = github::target_triple()
             .ok_or_else(|| "unsupported platform: no known target triple".to_string())?;
+        let channel = github::Channel::parse(crate::release_channel());
         let releases = github::fetch_releases(repo).await?;
-        Ok(github::select_plugin_releases(&releases, triple)
+        Ok(github::select_plugin_releases(&releases, triple, channel)
             .into_iter()
-            .map(|(r, a)| AvailablePlugin {
-                id: r
-                    .tag_name
-                    .strip_suffix(github::PLUGIN_TAG_SUFFIX)
-                    .unwrap_or(&r.tag_name)
-                    .to_string(),
-                tag: r.tag_name.clone(),
-                asset_name: a.name.clone(),
-                size_bytes: a.size,
+            .map(|pr| {
+                // Snapshot what's installed for this id (version + provenance).
+                let installed = {
+                    let plugins = self.plugins.read().unwrap();
+                    plugins
+                        .get(&pr.id)
+                        .map(|p| (p.info.version.clone(), p.source.clone()))
+                };
+                let installed_version = installed.as_ref().map(|(v, _)| v.clone());
+                let status = status_for(&pr, installed.as_ref().map(|(v, s)| (v.as_str(), s)));
+                AvailablePlugin {
+                    id: pr.id,
+                    tag: pr.tag.to_string(),
+                    channel: pr.channel.as_str().to_string(),
+                    asset_name: pr.asset.name.clone(),
+                    size_bytes: pr.asset.size,
+                    available_version: pr.version,
+                    published_at: pr.published_at.map(str::to_string),
+                    installed_version,
+                    status,
+                }
             })
             .collect())
     }
@@ -411,9 +474,24 @@ impl PluginManager {
             ));
         }
 
+        // Record install provenance (channel from the tag, plus the release's
+        // publish date) so the installer can later detect a newer release.
+        let source = github::plugin_tag_parts(&release.tag_name).map(|(_, channel, _)| {
+            InstallSource {
+                repo: repo.to_string(),
+                tag: release.tag_name.clone(),
+                channel: channel.as_str().to_string(),
+                version: info.version.clone(),
+                published_at: release.published_at.clone(),
+            }
+        });
+
         let manifest_path = self.plugins_dir.join(format!("{}.plugin.json", info.id));
         let info_value = serde_json::to_value(&info).map_err(|e| e.to_string())?;
-        let manifest = json!({ "pluginInfo": info_value, "executable": format!("./{asset_name}") });
+        let mut manifest = json!({ "pluginInfo": info_value, "executable": format!("./{asset_name}") });
+        if let Some(src) = &source {
+            manifest["source"] = serde_json::to_value(src).map_err(|e| e.to_string())?;
+        }
         std::fs::write(
             &manifest_path,
             serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?,
@@ -428,10 +506,43 @@ impl PluginManager {
             DiscoveredPlugin {
                 info: info.clone(),
                 executable: bin_path,
+                source,
             },
         );
         tracing::info!("installed plugin '{}' from {repo}@{tag}", info.id);
         Ok(info)
+    }
+}
+
+/// Compute the install/update status of an available release `pr` against the
+/// installed plugin, given as `(installed_version, recorded_source)`. Pure.
+fn status_for(
+    pr: &github::PluginRelease<'_>,
+    installed: Option<(&str, &Option<InstallSource>)>,
+) -> PluginStatus {
+    let Some((installed_version, source)) = installed else {
+        return PluginStatus::NotInstalled;
+    };
+    match pr.channel {
+        // Stable: the version is in the tag; compare semver to what's installed.
+        github::Channel::Stable => match (
+            pr.version.as_deref().and_then(github::parse_semver),
+            github::parse_semver(installed_version),
+        ) {
+            (Some(avail), Some(inst)) if avail > inst => PluginStatus::UpdateAvailable,
+            (Some(_), Some(_)) => PluginStatus::UpToDate,
+            _ => PluginStatus::Unknown,
+        },
+        // Nightly: no version in the tag; compare release publish timestamps
+        // (ISO-8601 UTC sorts lexicographically).
+        github::Channel::Nightly => match (
+            pr.published_at,
+            source.as_ref().and_then(|s| s.published_at.as_deref()),
+        ) {
+            (Some(avail), Some(inst)) if avail > inst => PluginStatus::UpdateAvailable,
+            (Some(_), Some(_)) => PluginStatus::UpToDate,
+            _ => PluginStatus::Unknown,
+        },
     }
 }
 
@@ -493,6 +604,7 @@ fn load_manifest(path: &Path) -> Result<DiscoveredPlugin, String> {
     Ok(DiscoveredPlugin {
         info: manifest.plugin_info,
         executable,
+        source: manifest.source,
     })
 }
 
@@ -542,5 +654,71 @@ mod tests {
         let mgr = PluginManager::discover(&dir);
         assert!(mgr.list_plugins().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn status_for_covers_all_cases() {
+        use github::{Asset, Channel, PluginRelease};
+        let asset = Asset {
+            name: "bin".into(),
+            browser_download_url: "u".into(),
+            size: 1,
+        };
+        let none: Option<InstallSource> = None;
+
+        // Not installed.
+        let stable = PluginRelease {
+            id: "p".into(),
+            tag: "p-v0.2.0",
+            channel: Channel::Stable,
+            version: Some("0.2.0".into()),
+            published_at: None,
+            asset: &asset,
+        };
+        assert!(matches!(status_for(&stable, None), PluginStatus::NotInstalled));
+        // Stable: version compare.
+        assert!(matches!(
+            status_for(&stable, Some(("0.2.0", &none))),
+            PluginStatus::UpToDate
+        ));
+        assert!(matches!(
+            status_for(&stable, Some(("0.1.0", &none))),
+            PluginStatus::UpdateAvailable
+        ));
+        assert!(matches!(
+            status_for(&stable, Some(("not-semver", &none))),
+            PluginStatus::Unknown
+        ));
+
+        // Nightly: published-date compare.
+        let nightly = PluginRelease {
+            id: "p".into(),
+            tag: "p-latest",
+            channel: Channel::Nightly,
+            version: None,
+            published_at: Some("2026-02-01T00:00:00Z"),
+            asset: &asset,
+        };
+        let older = Some(InstallSource {
+            published_at: Some("2026-01-01T00:00:00Z".into()),
+            ..Default::default()
+        });
+        let same = Some(InstallSource {
+            published_at: Some("2026-02-01T00:00:00Z".into()),
+            ..Default::default()
+        });
+        assert!(matches!(
+            status_for(&nightly, Some(("x", &older))),
+            PluginStatus::UpdateAvailable
+        ));
+        assert!(matches!(
+            status_for(&nightly, Some(("x", &same))),
+            PluginStatus::UpToDate
+        ));
+        // Installed without provenance -> can't tell.
+        assert!(matches!(
+            status_for(&nightly, Some(("x", &none))),
+            PluginStatus::Unknown
+        ));
     }
 }

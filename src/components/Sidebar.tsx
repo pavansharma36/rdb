@@ -5,6 +5,8 @@ import type { SavedConnection } from "../store";
 interface SidebarProps {
   saved: SavedConnection[];
   plugins: PluginInfo[];
+  /** The app's release channel ("nightly" or "stable"); shows a nightly badge. */
+  channel: string;
   openConnections: OpenConnection[];
   activeId: ConnectionId | null;
   creating: boolean;
@@ -13,11 +15,13 @@ interface SidebarProps {
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
   onInstallPlugin: () => void;
+  onCheckUpdates: () => void;
 }
 
 export function Sidebar({
   saved,
   plugins,
+  channel,
   openConnections,
   activeId,
   creating,
@@ -26,6 +30,7 @@ export function Sidebar({
   onEdit,
   onDelete,
   onInstallPlugin,
+  onCheckUpdates,
 }: SidebarProps) {
   function kindOf(pluginId: string): string {
     return plugins.find((p) => p.id === pluginId)?.kind ?? "other";
@@ -36,6 +41,11 @@ export function Sidebar({
       <div className="sidebar-header">
         <span className="logo">rdb</span>
         <span className="logo-sub">client</span>
+        {channel === "nightly" && (
+          <span className="logo-badge" title="Nightly build">
+            nightly
+          </span>
+        )}
       </div>
       <button
         className={"new-btn" + (creating ? " active" : "")}
@@ -90,6 +100,11 @@ export function Sidebar({
           );
         })}
       </nav>
+      <div className="sidebar-footer">
+        <button className="link-btn" onClick={onCheckUpdates}>
+          Check for updates
+        </button>
+      </div>
     </aside>
   );
 }

@@ -25,6 +25,13 @@ pub fn list_plugins(manager: Manager<'_>) -> Vec<PluginInfo> {
     manager.list_plugins()
 }
 
+/// The release channel this app build tracks (`"nightly"` or `"stable"`). Gates
+/// the installer's plugin channel and drives the nightly logo badge.
+#[tauri::command]
+pub fn app_channel() -> String {
+    crate::release_channel().to_string()
+}
+
 #[tauri::command]
 pub async fn test_connection(
     manager: Manager<'_>,

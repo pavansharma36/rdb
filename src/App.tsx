@@ -4,6 +4,8 @@ import type { PluginInfo, ConnectionId, PluginKind } from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { InstallPluginDialog } from "./components/InstallPluginDialog";
+import { UpdateBanner } from "./components/UpdateBanner";
+import { checkForUpdate, type UpdateInfo } from "./updater";
 import { RdbmsWorkspace } from "./components/workspaces/RdbmsWorkspace";
 import { DocumentWorkspace } from "./components/workspaces/DocumentWorkspace";
 import { RabbitMqWorkspace } from "./components/workspaces/RabbitMqWorkspace";
@@ -33,12 +35,22 @@ export function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
+  // The release channel this app build tracks ("nightly" or "stable").
+  const [channel, setChannel] = useState<string>("");
+  // An available app self-update (auto-checked on launch + manual).
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  // Transient note from a manual update check ("up to date" / error).
+  const [updateNote, setUpdateNote] = useState<string | null>(null);
 
   useEffect(() => {
     api
       .listPlugins()
       .then(setPlugins)
       .catch((e) => setLoadError(errString(e)));
+    api
+      .appChannel()
+      .then(setChannel)
+      .catch(() => {});
     loadConnections()
       .then(setSaved)
       .catch((e) => setLoadError(errString(e)));
@@ -52,7 +64,32 @@ export function App() {
         }
       })
       .catch(() => {});
+    // Auto-check for an app update shortly after launch (non-blocking; errors,
+    // e.g. running under `tauri dev`, are ignored).
+    const t = setTimeout(() => {
+      checkForUpdate()
+        .then((u) => u && setUpdate(u))
+        .catch(() => {});
+    }, 3000);
+    return () => clearTimeout(t);
   }, []);
+
+  /** Manual "Check for updates": show the banner if one exists, else a note. */
+  function checkForUpdates() {
+    setUpdateNote(null);
+    checkForUpdate()
+      .then((u) => {
+        if (u) setUpdate(u);
+        else {
+          setUpdateNote("You're up to date.");
+          setTimeout(() => setUpdateNote(null), 4000);
+        }
+      })
+      .catch((e) => {
+        setUpdateNote(errString(e));
+        setTimeout(() => setUpdateNote(null), 5000);
+      });
+  }
 
   /** Re-fetch the installed plugin list (e.g. after installing a new one). */
   function refreshPlugins() {
@@ -187,6 +224,7 @@ export function App() {
       <Sidebar
         saved={saved}
         plugins={plugins}
+        channel={channel}
         openConnections={open}
         activeId={activeId}
         creating={creating || editingId !== null}
@@ -204,6 +242,7 @@ export function App() {
         }}
         onDelete={deleteSaved}
         onInstallPlugin={() => setInstalling(true)}
+        onCheckUpdates={checkForUpdates}
       />
       <main className="main">
         {showForm ? (
@@ -230,6 +269,10 @@ export function App() {
           onInstalled={() => refreshPlugins()}
         />
       )}
+      {update && (
+        <UpdateBanner update={update} onDismiss={() => setUpdate(null)} />
+      )}
+      {updateNote && <div className="update-toast">{updateNote}</div>}
     </div>
   );
 }

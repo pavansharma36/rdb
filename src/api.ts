@@ -56,14 +56,31 @@ export interface GithubPreview {
   downloadUrl: string;
 }
 
+/** Install/update state of an `AvailablePlugin` relative to what's installed. */
+export type PluginStatus =
+  | "not_installed"
+  | "up_to_date"
+  | "update_available"
+  | "unknown";
+
 /** A plugin installable from the configured GitHub repo (see
- *  `list_github_plugins`). `id` is the rolling `<plugin>-latest` tag minus its
- *  `-latest` suffix, which equals the installed plugin's id. */
+ *  `list_github_plugins`). `id` is derived from the release tag
+ *  (`<plugin>-latest` or `<plugin>-v<semver>`), which equals the installed
+ *  plugin's id. `status` is computed by the host against what's installed. */
 export interface AvailablePlugin {
   id: string;
   tag: string;
+  /** `"nightly"` or `"stable"` — the channel this listing reflects. */
+  channel: string;
   assetName: string;
   sizeBytes: number;
+  /** Available version (stable releases only; nightly has none in the tag). */
+  availableVersion: string | null;
+  /** Release publish timestamp (drives nightly update detection). */
+  publishedAt: string | null;
+  /** The currently-installed version, if installed. */
+  installedVersion: string | null;
+  status: PluginStatus;
 }
 
 /** Serializes as a UUID string. */
@@ -258,6 +275,9 @@ const pluginCall = <T>(
 
 export const api = {
   listPlugins: () => invoke<PluginInfo[]>("list_plugins"),
+
+  /** The release channel this app build tracks (`"nightly"` or `"stable"`). */
+  appChannel: () => invoke<string>("app_channel"),
 
   testConnection: (pluginId: string, config: ConnectionConfig) =>
     invoke<void>("test_connection", { pluginId, config }),
