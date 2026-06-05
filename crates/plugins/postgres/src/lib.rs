@@ -9,7 +9,7 @@ use rdb_rdbms_common::{
 };
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column as _, Row, TypeInfo};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 pub struct PostgresPlugin;
@@ -26,8 +26,25 @@ impl Default for PostgresPlugin {
     }
 }
 
+/// A live connection to one database on a Postgres server.
+///
+/// The pool sits behind a lock so the active database can be switched in place
+/// (Postgres binds a connection to a single database, so switching means
+/// building a fresh pool) without changing the connection's id. `config` keeps
+/// the original host/credentials so a new pool can be built for another
+/// database on the same server.
 pub struct PostgresConnection {
-    pub pool: PgPool,
+    pool: RwLock<PgPool>,
+    config: ConnectionConfig,
+}
+
+impl PostgresConnection {
+    /// A cheap clone of the current pool (sqlx pools are internally `Arc`d). The
+    /// lock is released before the returned pool is awaited on, so a concurrent
+    /// `use_database` swap never blocks in-flight queries.
+    fn pool(&self) -> PgPool {
+        self.pool.read().unwrap().clone()
+    }
 }
 
 impl Connection for PostgresConnection {
@@ -51,6 +68,31 @@ fn cfg_u16(cfg: &ConnectionConfig, key: &str, default: u16) -> u16 {
         .and_then(|v| v.as_u64())
         .map(|n| n as u16)
         .unwrap_or(default)
+}
+
+/// Build a `postgres://` URL from a config, pointed at `database`. The database
+/// is passed explicitly (rather than read from `cfg`) so the same credentials
+/// can be reused to connect to a different database when switching.
+fn build_url(cfg: &ConnectionConfig, database: &str) -> Result<String> {
+    let host = cfg_str(cfg, "host")?;
+    let port = cfg_u16(cfg, "port", 5432);
+    let user = cfg_str(cfg, "user")?;
+    let password = cfg_str_opt(cfg, "password").unwrap_or_default();
+    let ssl = cfg_str_opt(cfg, "ssl").unwrap_or_else(|| "prefer".into());
+    Ok(format!(
+        "postgres://{u}:{p}@{host}:{port}/{database}?sslmode={ssl}",
+        u = urlencode(&user),
+        p = urlencode(&password),
+        database = urlencode(database),
+    ))
+}
+
+async fn make_pool(url: &str) -> Result<PgPool> {
+    PgPoolOptions::new()
+        .max_connections(8)
+        .connect(url)
+        .await
+        .map_err(|e| PluginError::Connection(e.to_string()))
 }
 
 #[async_trait]
@@ -126,26 +168,13 @@ impl Plugin for PostgresPlugin {
     }
 
     async fn connect(&self, cfg: ConnectionConfig) -> Result<Arc<dyn Connection>> {
-        let host = cfg_str(&cfg, "host")?;
-        let port = cfg_u16(&cfg, "port", 5432);
         let database = cfg_str(&cfg, "database")?;
-        let user = cfg_str(&cfg, "user")?;
-        let password = cfg_str_opt(&cfg, "password").unwrap_or_default();
-        let ssl = cfg_str_opt(&cfg, "ssl").unwrap_or_else(|| "prefer".into());
-
-        let url = format!(
-            "postgres://{u}:{p}@{host}:{port}/{database}?sslmode={ssl}",
-            u = urlencode(&user),
-            p = urlencode(&password),
-        );
-
-        let pool = PgPoolOptions::new()
-            .max_connections(8)
-            .connect(&url)
-            .await
-            .map_err(|e| PluginError::Connection(e.to_string()))?;
-
-        Ok(Arc::new(PostgresConnection { pool }))
+        let url = build_url(&cfg, &database)?;
+        let pool = make_pool(&url).await?;
+        Ok(Arc::new(PostgresConnection {
+            pool: RwLock::new(pool),
+            config: cfg,
+        }))
     }
 }
 
@@ -159,10 +188,33 @@ impl RdbmsPlugin for PostgresPlugin {
              and schema_name not like 'pg_toast%' and schema_name not like 'pg_temp%' \
              order by schema_name",
         )
-        .fetch_all(&conn.pool)
+        .fetch_all(&conn.pool())
         .await
         .map_err(|e| PluginError::Backend(e.to_string()))?;
         Ok(rows.into_iter().map(|(n,)| Schema { name: n }).collect())
+    }
+
+    async fn list_databases(&self, conn: Arc<dyn Connection>) -> Result<Vec<String>> {
+        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "select datname from pg_database \
+             where datistemplate = false and datallowconn = true \
+             order by datname",
+        )
+        .fetch_all(&conn.pool())
+        .await
+        .map_err(|e| PluginError::Backend(e.to_string()))?;
+        Ok(rows.into_iter().map(|(n,)| n).collect())
+    }
+
+    async fn use_database(&self, conn: Arc<dyn Connection>, database: &str) -> Result<()> {
+        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        // Build and validate the new pool before swapping, so a failed switch
+        // leaves the existing connection untouched.
+        let url = build_url(&conn.config, database)?;
+        let pool = make_pool(&url).await?;
+        *conn.pool.write().unwrap() = pool;
+        Ok(())
     }
 
     async fn list_tables(&self, conn: Arc<dyn Connection>, schema: &str) -> Result<Vec<Table>> {
@@ -172,7 +224,7 @@ impl RdbmsPlugin for PostgresPlugin {
              where table_schema = $1 order by table_name",
         )
         .bind(schema)
-        .fetch_all(&conn.pool)
+        .fetch_all(&conn.pool())
         .await
         .map_err(|e| PluginError::Backend(e.to_string()))?;
 
@@ -211,7 +263,7 @@ impl RdbmsPlugin for PostgresPlugin {
         )
         .bind(schema)
         .bind(table)
-        .fetch_all(&conn.pool)
+        .fetch_all(&conn.pool())
         .await
         .map_err(|e| PluginError::Backend(e.to_string()))?;
 
@@ -229,11 +281,12 @@ impl RdbmsPlugin for PostgresPlugin {
 
     async fn execute(&self, conn: Arc<dyn Connection>, sql: &str) -> Result<QueryResult> {
         let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        let pool = conn.pool();
         let start = Instant::now();
 
         if is_select(sql) {
             let rows = sqlx::query(sql)
-                .fetch_all(&conn.pool)
+                .fetch_all(&pool)
                 .await
                 .map_err(|e| PluginError::Backend(e.to_string()))?;
             let columns = if let Some(first) = rows.first() {
@@ -257,7 +310,7 @@ impl RdbmsPlugin for PostgresPlugin {
             })
         } else {
             let res = sqlx::query(sql)
-                .execute(&conn.pool)
+                .execute(&pool)
                 .await
                 .map_err(|e| PluginError::Backend(e.to_string()))?;
             Ok(QueryResult {
@@ -278,7 +331,7 @@ impl RdbmsPlugin for PostgresPlugin {
     ) -> Result<ApplyResult> {
         let conn = downcast_conn::<PostgresConnection>(&conn)?;
         let mut tx = conn
-            .pool
+            .pool()
             .begin()
             .await
             .map_err(|e| PluginError::Backend(e.to_string()))?;

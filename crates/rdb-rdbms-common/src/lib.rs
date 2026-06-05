@@ -115,6 +115,21 @@ pub struct ApplyResult {
 pub trait RdbmsPlugin: Send + Sync {
     async fn list_schemas(&self, conn: Arc<dyn Connection>) -> Result<Vec<Schema>>;
 
+    /// List the databases reachable on the same server as this connection.
+    /// Backends with no notion of multiple databases (e.g. SQLite) return
+    /// [`PluginError::Unsupported`], in which case the UI hides the picker.
+    async fn list_databases(&self, _conn: Arc<dyn Connection>) -> Result<Vec<String>> {
+        Err(PluginError::Unsupported)
+    }
+
+    /// Point this connection at a different database on the same server,
+    /// without changing its id. The connection keeps the same credentials and
+    /// host; only the active database changes. Plugins that can't switch return
+    /// [`PluginError::Unsupported`].
+    async fn use_database(&self, _conn: Arc<dyn Connection>, _database: &str) -> Result<()> {
+        Err(PluginError::Unsupported)
+    }
+
     async fn list_tables(&self, conn: Arc<dyn Connection>, schema: &str) -> Result<Vec<Table>>;
 
     async fn describe_table(
@@ -179,6 +194,11 @@ struct ExecuteParams {
 }
 
 #[derive(Deserialize)]
+struct UseDatabaseParams {
+    database: String,
+}
+
+#[derive(Deserialize)]
 struct ApplyChangesParams {
     schema: String,
     table: String,
@@ -196,6 +216,12 @@ pub async fn dispatch_rdbms(
 ) -> Result<Value> {
     match op {
         "rdbms.list_schemas" => to_value(plugin.list_schemas(conn).await?),
+        "rdbms.list_databases" => to_value(plugin.list_databases(conn).await?),
+        "rdbms.use_database" => {
+            let p: UseDatabaseParams = parse(params)?;
+            plugin.use_database(conn, &p.database).await?;
+            to_value(())
+        }
         "rdbms.list_tables" => {
             let p: ListTablesParams = parse(params)?;
             to_value(plugin.list_tables(conn, &p.schema).await?)

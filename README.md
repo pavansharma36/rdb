@@ -44,15 +44,18 @@ Ships today with three plugins:
 └───────────────┬────────────────────────────────┘
                 │  @tauri-apps/api  invoke(...)
 ┌───────────────▼────────────────────────────────┐
-│ Tauri host (Rust)  —  src-tauri/                │
-│   - lib.rs   builds the PluginRegistry          │
-│   - commands.rs   #[tauri::command] surface     │
+│ Tauri host (Rust)  —  src-tauri/  (no drivers)  │
+│   - lib.rs           discovers plugins on start │
+│   - commands.rs      generic #[tauri::command]s │
+│   - plugin_manager   spawns + multiplexes procs │
+│   - github.rs        fetch/verify/install        │
 │   - persistence.rs   saved connection profiles  │
 └───────────────┬────────────────────────────────┘
-                │  rdb-core traits (Plugin, Connection)
+                │  line-delimited JSON-RPC over stdio
 ┌───────────────▼────────────────────────────────┐
-│ Plugins (Rust workspace crates)                 │
+│ Plugin sidecars (standalone executables)        │
 │   crates/rdb-core            core types/traits  │
+│   crates/rdb-plugin-runtime  stdio JSON-RPC SDK │
 │   crates/rdb-rdbms-common    RDBMS trait + types│
 │   crates/plugins/postgres    sqlx               │
 │   crates/plugins/mongodb     mongodb            │
@@ -60,26 +63,35 @@ Ships today with three plugins:
 └─────────────────────────────────────────────────┘
 ```
 
+The host knows nothing about SQL/documents/queues. It discovers plugins from
+`*.plugin.json` manifests, spawns each plugin's executable lazily on first use,
+and routes opaque JSON `call`s to the plugin that owns a given `ConnectionId`
+over line-delimited JSON-RPC on stdio.
+
 ### Crates
 
 - **`rdb-core`** — backend-agnostic foundation. Defines `Plugin` and
   `Connection` traits, `PluginKind`, the serializable config-schema types
   (`PluginInfo`, `ConfigField`, …) the UI builds forms from, `ConnectionId`,
-  `PluginError`, and the `PluginRegistry` that tracks plugins and live
-  connections.
+  `PluginError`, and the line-delimited JSON-RPC `protocol` (`Request`/`Response`,
+  `PROTOCOL_VERSION`) the host and plugins speak.
+- **`rdb-plugin-runtime`** — the plugin SDK. `run(plugin, dispatcher)` handles
+  the `--describe` flag and runs the stdio JSON-RPC server loop that turns an
+  in-process `rdb_core::Plugin` into a standalone sidecar; the `Dispatcher` trait
+  routes opaque capability `op`s to the plugin's methods.
 - **`rdb-rdbms-common`** — the `RdbmsPlugin` trait and shared relational types
-  (`Schema`, `Table`, `Column`, `QueryResult`, `RowChanges`, `ApplyResult`, …).
+  (`Schema`, `Table`, `Column`, `QueryResult`, `RowChanges`, `ApplyResult`, …),
+  plus `RdbmsDispatcher`/`dispatch_rdbms` mapping `rdbms.*` ops onto the trait.
   Any relational plugin implements this in addition to `rdb_core::Plugin` and
   reuses the same `rdbms` UI module.
-- **`crates/plugins/*`** — one crate per backend, each implementing `Plugin`
-  (and `RdbmsPlugin` for relational backends).
+- **`crates/plugins/*`** — one binary crate per backend, each implementing
+  `Plugin` (and `RdbmsPlugin` for relational backends) and shipping a `main`
+  that calls `rdb_plugin_runtime::run`.
 
-> **Note on the current model:** plugins are **statically linked** into the
-> Tauri host today — `build_registry()` in `src-tauri/src/lib.rs` registers each
-> one, so the shipped binary contains every driver. A planned refactor moves to
-> **out-of-process sidecar plugins** the host loads at runtime over
-> line-delimited JSON-RPC on stdio. See [`plugin-architecture.md`](./plugin-architecture.md)
-> for the full design.
+> **The plugin model:** plugins are **out-of-process sidecar executables** the
+> host discovers and loads at runtime over line-delimited JSON-RPC on stdio. The
+> shipped host binary contains no DB drivers. See
+> [`plugin-architecture.md`](./plugin-architecture.md) for the full design.
 
 ### Key types (Rust ⇄ TypeScript)
 
@@ -100,12 +112,15 @@ rdb/
 ├── index.html              Frontend entry
 ├── plugin-architecture.md  Design doc: runtime-loaded sidecar plugins
 ├── crates/
-│   ├── rdb-core/           Plugin/Connection traits, registry, shared types
-│   ├── rdb-rdbms-common/   RdbmsPlugin trait + relational types
+│   ├── rdb-core/           Plugin/Connection traits, JSON-RPC protocol, shared types
+│   ├── rdb-plugin-runtime/ Plugin SDK: stdio JSON-RPC server loop + Dispatcher
+│   ├── rdb-rdbms-common/   RdbmsPlugin trait + relational types + dispatch
 │   └── plugins/
 │       ├── postgres/       PostgreSQL plugin (sqlx)
 │       ├── mongodb/        MongoDB plugin
 │       └── rabbitmq/       RabbitMQ plugin (lapin)
+├── scripts/
+│   └── dev-plugins.sh      Build bundled plugins + manifests into dev-plugins/
 ├── src/                    React + TypeScript frontend
 │   ├── App.tsx             Top-level app shell + connection lifecycle
 │   ├── api.ts              Typed bridge to Tauri commands
@@ -113,15 +128,18 @@ rdb/
 │   ├── components/
 │   │   ├── Sidebar.tsx
 │   │   ├── ConnectionForm.tsx
+│   │   ├── InstallPluginDialog.tsx
 │   │   └── workspaces/     Rdbms / Document / Messaging workspaces
 │   └── styles.css
-└── src-tauri/              Tauri host
+└── src-tauri/              Tauri host (ships with no DB drivers)
     ├── Cargo.toml
     ├── tauri.conf.json     App/window/bundle config
     └── src/
-        ├── lib.rs          Builds registry, registers commands
-        ├── commands.rs     #[tauri::command] surface
-        ├── persistence.rs  Saved connection profiles (connections.json)
+        ├── lib.rs          Discovers plugins on startup, registers commands
+        ├── commands.rs     Generic #[tauri::command] surface
+        ├── plugin_manager.rs  Plugin discovery, process spawning, multiplexing
+        ├── github.rs       GitHub release fetch / checksum / install
+        ├── persistence.rs  Saved connection profiles (per-plugin JSON)
         └── main.rs
 ```
 
@@ -237,12 +255,14 @@ Set `RDB_PLUGINS_DIR=$PWD/dev-plugins` when launching the app.
 
 ### Where data is stored
 
-Saved connection profiles live at `<app_data_dir>/connections.json` (the exact
-path is OS-specific). The file is human-readable JSON.
+Saved connection profiles live under `<app_data_dir>/connections/`, one file per
+owning plugin: `<app_data_dir>/connections/<plugin_id>/connections.json` (the
+exact base path is OS-specific). The files are human-readable JSON. Profiles
+whose plugin is no longer installed are skipped on load but left on disk.
 
 > ⚠️ **Security note:** connection configs — **including passwords** — are
-> stored in plaintext in `connections.json`. Treat the file accordingly. A
-> secure-credential store is not yet implemented.
+> stored in plaintext. Treat the files accordingly. A secure-credential store is
+> not yet implemented.
 
 ---
 
@@ -250,16 +270,20 @@ path is OS-specific). The file is human-readable JSON.
 
 The shared traits make new backends small to add. For a relational backend:
 
-1. Create a crate under `crates/plugins/<name>` depending on `rdb-core` and
-   (for relational backends) `rdb-rdbms-common`.
+1. Create a **binary** crate under `crates/plugins/<name>` depending on
+   `rdb-core`, `rdb-plugin-runtime`, and (for relational backends)
+   `rdb-rdbms-common`. Add it to the workspace `members` in `Cargo.toml`.
 2. Implement `rdb_core::Plugin` — return a `PluginInfo` with
    `kind: PluginKind::Rdbms` and a `config_schema` describing the connection
    form, plus a `connect` that opens and returns an `Arc<dyn Connection>`.
 3. For relational backends, also implement `RdbmsPlugin`
    (`list_schemas`, `list_tables`, `describe_table`, `execute`, and optionally
    `apply_changes` for editing).
-4. Register it in `src-tauri/src/lib.rs`’s `build_registry()` and add the crate
-   to the workspace in `Cargo.toml`.
+4. In `main`, call `rdb_plugin_runtime::run(plugin, dispatcher)` — for RDBMS use
+   `RdbmsDispatcher(plugin)`. There is **no central registry to edit**; the host
+   discovers the plugin from its manifest at runtime.
+5. To run it in dev, add the crate to the `PLUGINS`/`CRATES` arrays in
+   `scripts/dev-plugins.sh` so `npm run plugins:dev` builds and installs it.
 
 Non-relational backends pick a different `PluginKind` (`Document`, `Messaging`,
 or `Other`) and the frontend renders the matching workspace. See the existing
@@ -277,17 +301,21 @@ MongoDB and RabbitMQ plugins as references.
   must be reflected in `src/api.ts`. serde uses `rename_all = "lowercase"` for
   enums and `camelCase` for saved-connection persistence — match the existing
   casing.
-- **Plugins are statically registered** in `src-tauri/src/lib.rs`
-  (`build_registry()`); the typed command surface (`rdbms_*`, `doc_*`, `mq_*`)
-  is the current transport. `plugin-architecture.md` describes a *planned*
-  move to generic, runtime-loaded sidecar plugins — it is a design doc, not the
-  current state. Verify against the code before assuming the sidecar model.
-- **Live connection handles never cross the IPC boundary.** They stay in the
-  backend keyed by `ConnectionId` (a UUID). Don't try to serialize a pool or
-  client.
-- **No git history** is present in this checkout (`git` is not initialized).
-- **Build/run:** `npm run tauri dev` for end-to-end; `cargo test` for backend
-  unit tests; `npm run build` to type-check the frontend.
+- **The host is a generic pipe.** It exposes a small set of generic
+  `#[tauri::command]`s (`list_plugins`, `test_connection`, `open_connection`,
+  `close_connection`, `plugin_call`, the GitHub install pair, and persistence).
+  Every capability funnels through `plugin_call` with an opaque `op` string
+  (e.g. `"rdbms.execute"`) — only the typed wrappers in `src/api.ts` know the op
+  names. Plugins are **out-of-process sidecars** discovered from
+  `*.plugin.json` manifests at runtime; there is no static registry. See
+  `plugin-architecture.md` for the design.
+- **Live connection handles never cross the IPC boundary.** They stay inside the
+  plugin process keyed by `ConnectionId` (a UUID); the host only tracks the
+  `ConnectionId → plugin_id` route. Don't try to serialize a pool or client.
+- **Build/run:** `npm run plugins:dev` then
+  `RDB_PLUGINS_DIR=$PWD/dev-plugins npm run tauri dev` for end-to-end (the form
+  is empty without plugins installed); `cargo test` for backend unit tests;
+  `npm run build` to type-check the frontend.
 
 ---
 

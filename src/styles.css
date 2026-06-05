@@ -390,6 +390,19 @@ textarea:focus {
   margin-bottom: 4px;
 }
 
+.tree-dbselect {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 2px 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tree-dbselect select {
+  width: 100%;
+}
+
 .tree-node {
   display: flex;
   align-items: center;

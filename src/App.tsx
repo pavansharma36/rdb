@@ -145,8 +145,17 @@ export function App() {
   function renderWorkspace(conn: OpenConnection) {
     const mod = conn.uiModule || conn.kind;
     switch (mod) {
-      case "rdbms":
-        return <RdbmsWorkspace key={conn.id} connectionId={conn.id} />;
+      case "rdbms": {
+        // The configured database seeds the workspace's database picker.
+        const db = saved.find((s) => s.id === conn.savedId)?.config?.database;
+        return (
+          <RdbmsWorkspace
+            key={conn.id}
+            connectionId={conn.id}
+            database={typeof db === "string" ? db : null}
+          />
+        );
+      }
       case "document":
         return <DocumentWorkspace key={conn.id} connectionId={conn.id} />;
       case "messaging":

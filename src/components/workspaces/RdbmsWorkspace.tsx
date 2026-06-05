@@ -12,6 +12,9 @@ import type {
 
 interface Props {
   connectionId: ConnectionId;
+  /** The database this connection was opened against; the initial selection for
+   * the database picker. Null when the profile didn't specify one. */
+  database?: string | null;
 }
 
 /** Identifies the table currently being browsed, enabling inline editing.
@@ -76,8 +79,14 @@ function parseSingleTable(
     : { schema: "public", table: unq(m[1]) };
 }
 
-export function RdbmsWorkspace({ connectionId }: Props) {
+export function RdbmsWorkspace({ connectionId, database }: Props) {
   const [schemas, setSchemas] = useState<Schema[]>([]);
+  // Databases on the server (empty when the backend doesn't support listing,
+  // which hides the picker) and the one currently selected.
+  const [databases, setDatabases] = useState<string[]>([]);
+  const [currentDatabase, setCurrentDatabase] = useState<string | null>(
+    database ?? null,
+  );
   const [openSchema, setOpenSchema] = useState<string | null>(null);
   const [tables, setTables] = useState<Record<string, Table[]>>({});
   const [activeTable, setActiveTable] = useState<string | null>(null);
@@ -104,6 +113,41 @@ export function RdbmsWorkspace({ connectionId }: Props) {
       .then(setSchemas)
       .catch((e) => setError(errString(e)));
   }, [connectionId]);
+
+  // Populate the database picker. A rejection means the backend doesn't list
+  // databases (e.g. SQLite) — leave the list empty so the picker stays hidden.
+  useEffect(() => {
+    api
+      .rdbmsListDatabases(connectionId)
+      .then(setDatabases)
+      .catch(() => setDatabases([]));
+  }, [connectionId]);
+
+  /** Switch the connection to another database on the same server and reload
+   * the schema tree. Disabled while edits are staged, so nothing is lost. */
+  async function switchDatabase(db: string) {
+    if (db === currentDatabase) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.rdbmsUseDatabase(connectionId, db);
+      setCurrentDatabase(db);
+      // Everything shown belonged to the previous database; start fresh.
+      setOpenSchema(null);
+      setTables({});
+      setActiveTable(null);
+      setResult(null);
+      setEdit(null);
+      clearStaged();
+      const s = await api.rdbmsListSchemas(connectionId);
+      setSchemas(s);
+    } catch (e) {
+      setError(errString(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function toggleSchema(name: string) {
     if (openSchema === name) {
@@ -390,6 +434,32 @@ export function RdbmsWorkspace({ connectionId }: Props) {
   return (
     <div className="workspace">
       <div className="tree">
+        {databases.length > 0 && (
+          <div className="tree-dbselect">
+            <span className="field-label">Database</span>
+            <select
+              value={currentDatabase ?? ""}
+              disabled={busy || saving || dirty}
+              title={
+                dirty
+                  ? "Save or discard changes before switching database"
+                  : undefined
+              }
+              onChange={(e) => switchDatabase(e.target.value)}
+            >
+              {currentDatabase === null && (
+                <option value="" disabled>
+                  Select a database…
+                </option>
+              )}
+              {databases.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         {schemas.length === 0 && <p className="muted">No schemas.</p>}
         {schemas.map((s) => (
           <div key={s.name} className="tree-group">

@@ -187,6 +187,15 @@ export const api = {
   rdbmsListSchemas: (connectionId: ConnectionId) =>
     pluginCall<Schema[]>(connectionId, "rdbms.list_schemas", {}),
 
+  /** Databases on the same server. Rejects with `Unsupported` for backends
+   *  with no notion of multiple databases (e.g. SQLite). */
+  rdbmsListDatabases: (connectionId: ConnectionId) =>
+    pluginCall<string[]>(connectionId, "rdbms.list_databases", {}),
+
+  /** Switch the connection's active database in place (keeps the same id). */
+  rdbmsUseDatabase: (connectionId: ConnectionId, database: string) =>
+    pluginCall<void>(connectionId, "rdbms.use_database", { database }),
+
   rdbmsListTables: (connectionId: ConnectionId, schema: string) =>
     pluginCall<Table[]>(connectionId, "rdbms.list_tables", { schema }),
 

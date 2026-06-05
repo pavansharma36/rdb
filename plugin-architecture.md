@@ -207,3 +207,21 @@ docFind:           (id, db, coll, f, n) => pluginCall(id, "document.find",      
   any installed binary). Note for users; sandboxing is out of scope for v1.
 - **Versioning**: include a `protocolVersion` in `describe`; host refuses
   incompatible plugins with a clear message.
+
+## Follow-up: plugin-provided UI
+
+This doc decoupled the plugin **backend** (the host ships no drivers). The
+**frontend** is still frozen at build time — `App.tsx` hardcodes a `switch` over
+three compiled-in workspace components, so a plugin cannot yet ship its own UI.
+See [`plugin-ui-architecture.md`](./plugin-ui-architecture.md) for the design that
+closes that gap (declarative workspace schemas first, a sandboxed web-asset escape
+hatch later).
+
+## Follow-up: plugin-provided UI
+
+This doc decoupled the plugin **backend** (the host ships no drivers). The
+**frontend** is still frozen at build time — `App.tsx` hardcodes a `switch` over
+three compiled-in workspace components, so a plugin cannot yet ship its own UI.
+See [`plugin-ui-architecture.md`](./plugin-ui-architecture.md) for the design that
+closes that gap (declarative workspace schemas first, a sandboxed web-asset escape
+hatch later).
