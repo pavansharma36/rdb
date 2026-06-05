@@ -11,7 +11,7 @@ Ships today with three plugins:
 | --- | --- | --- |
 | **PostgreSQL** | `rdbms` | PostgreSQL 12+ databases (via `sqlx`) |
 | **MongoDB** | `document` | MongoDB and Atlas clusters |
-| **RabbitMQ** | `messaging` | RabbitMQ brokers over AMQP 0-9-1 (via `lapin`) |
+| **RabbitMQ** | `rabbitmq` | RabbitMQ brokers via the HTTP Management API (requires the `rabbitmq_management` plugin) |
 
 ---
 
@@ -25,8 +25,9 @@ Ships today with three plugins:
 - **RDBMS editing** — browse schemas/tables, run SQL, and stage multi-cell
   edits (inserts/updates/deletes) that commit atomically in a single
   transaction.
-- **Document & messaging surfaces** — query MongoDB collections; declare,
-  publish to, and consume from RabbitMQ queues.
+- **Document & RabbitMQ surfaces** — query MongoDB collections; browse a
+  RabbitMQ broker's overview, queues, exchanges, connections, and channels
+  (management-UI style), and publish/get/purge messages.
 - **Saved connections** — connection profiles persist across restarts as
   human-readable JSON in the OS app-data directory.
 
@@ -39,7 +40,7 @@ Ships today with three plugins:
 │ Frontend (React + TypeScript, Vite)           │
 │   src/                                         │
 │   - App.tsx, Sidebar, ConnectionForm          │
-│   - workspaces/{Rdbms,Document,Messaging}      │
+│   - workspaces/{Rdbms,Document,RabbitMq}       │
 │   - api.ts  ← typed bridge to Tauri commands   │
 └───────────────┬────────────────────────────────┘
                 │  @tauri-apps/api  invoke(...)
@@ -59,7 +60,7 @@ Ships today with three plugins:
 │   crates/rdb-rdbms-common    RDBMS trait + types│
 │   crates/plugins/postgres    sqlx               │
 │   crates/plugins/mongodb     mongodb            │
-│   crates/plugins/rabbitmq    lapin              │
+│   crates/plugins/rabbitmq    reqwest (mgmt API) │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -97,7 +98,7 @@ over line-delimited JSON-RPC on stdio.
 
 All cross-boundary types are `Serialize`/`Deserialize` in Rust and mirrored in
 `src/api.ts`. A `ConnectionId` is a UUID that serializes as a string; live
-connection handles (`PgPool`, `mongodb::Client`, `lapin::Connection`) stay in
+connection handles (`PgPool`, `mongodb::Client`, the RabbitMQ HTTP client) stay in
 the backend and are referenced everywhere by that id.
 
 ---
@@ -118,7 +119,7 @@ rdb/
 │   └── plugins/
 │       ├── postgres/       PostgreSQL plugin (sqlx)
 │       ├── mongodb/        MongoDB plugin
-│       └── rabbitmq/       RabbitMQ plugin (lapin)
+│       └── rabbitmq/       RabbitMQ plugin (HTTP management API)
 ├── scripts/
 │   └── dev-plugins.sh      Build bundled plugins + manifests into dev-plugins/
 ├── src/                    React + TypeScript frontend
@@ -129,7 +130,7 @@ rdb/
 │   │   ├── Sidebar.tsx
 │   │   ├── ConnectionForm.tsx
 │   │   ├── InstallPluginDialog.tsx
-│   │   └── workspaces/     Rdbms / Document / Messaging workspaces
+│   │   └── workspaces/     Rdbms / Document / RabbitMq workspaces
 │   └── styles.css
 └── src-tauri/              Tauri host (ships with no DB drivers)
     ├── Cargo.toml
@@ -198,6 +199,63 @@ Produces platform installers/bundles under `src-tauri/target/release/bundle/`.
 
 ---
 
+## Releasing (CI)
+
+Three GitHub Actions workflows in `.github/workflows/` build and publish
+artifacts. All builds are cross-platform (macOS arm64/x64, Linux arm64/x64,
+Windows arm64/x64) and the version is **stamped at build time** — never
+committed back to the repo, so there is no push → build → push loop.
+
+| Workflow | Trigger | Output |
+| --- | --- | --- |
+| `publish-app.yml` | push to `master`, `v*` tag, manual | Desktop installers/bundles → a GitHub Release |
+| `publish-plugins.yml` | push to `master`, `v*` tag, manual | Per-plugin binaries + `SHA256SUMS` → one Release per plugin |
+| `tag.yml` | manual (`workflow_dispatch`) | Computes and pushes the next `vX.Y.Z` tag |
+
+### Versioning
+
+Every artifact shares one version `<major>.<minor>.<patch>`:
+
+- **`major.minor`** comes from `Cargo.toml` / `src-tauri/tauri.conf.json`. Bump
+  these in source when you want a new minor/major line.
+- **`patch`** is the **git commit count** (`git rev-list --count HEAD`) for
+  nightlies, or the **tag's** patch for tagged releases.
+
+### Nightly (every push to `master`)
+
+Rolling **prereleases**, overwritten each push:
+
+- App → release tagged `app-nightly`, version `<major>.<minor>.<commit-count>`.
+- Plugins → releases `postgres-nightly`, `mongodb-nightly`, `rabbitmq-nightly`.
+
+### Stable (push a `v*` tag)
+
+Immutable releases with the version taken from the tag (`v0.2.0` → `0.2.0`):
+
+- App → release at the tag `v0.2.0`.
+- Plugins → releases `postgres-v0.2.0`, `mongodb-v0.2.0`, `rabbitmq-v0.2.0`
+  (each plugin needs its own release — the installer expects exactly one binary
+  per target triple in a release).
+
+Cut a release either by hand or via the tag workflow:
+
+```bash
+# By hand:
+git tag v0.2.0 && git push origin v0.2.0
+
+# Or run the "Tag release" workflow from the Actions tab
+# (choose patch/minor/major, or type an explicit version).
+```
+
+> **Heads-up:** a tag pushed by the `tag.yml` workflow using the default
+> `GITHUB_TOKEN` will **not** trigger the publish workflows (GitHub blocks
+> token-pushed events from triggering further workflows). To make tagging
+> auto-publish, add a Personal Access Token with `contents: write` as a repo
+> secret named **`RELEASE_TOKEN`**. Pushing a tag manually from your machine
+> always triggers them.
+
+---
+
 ## Plugins
 
 The host ships with only `rdb-core` and loads plugins at runtime from the
@@ -251,7 +309,8 @@ Set `RDB_PLUGINS_DIR=$PWD/dev-plugins` when launching the app.
    - **RDBMS** — schema/table tree, SQL editor, results grid, and inline cell
      editing with staged Save/Cancel.
    - **Document** — browse databases/collections and run `find` queries.
-   - **Messaging** — declare queues, publish messages, and consume.
+   - **RabbitMQ** — browse the broker overview, queues, exchanges, and
+     connections; declare queues and publish/get/purge messages.
 
 ### Where data is stored
 
@@ -285,7 +344,7 @@ The shared traits make new backends small to add. For a relational backend:
 5. To run it in dev, add the crate to the `PLUGINS`/`CRATES` arrays in
    `scripts/dev-plugins.sh` so `npm run plugins:dev` builds and installs it.
 
-Non-relational backends pick a different `PluginKind` (`Document`, `Messaging`,
+Non-relational backends pick a different `PluginKind` (`Document`, `Rabbitmq`,
 or `Other`) and the frontend renders the matching workspace. See the existing
 MongoDB and RabbitMQ plugins as references.
 

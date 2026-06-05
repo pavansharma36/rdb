@@ -1,0 +1,186 @@
+name: Publish plugins
+
+# Build the three bundled plugin sidecars for every supported target triple and
+# publish them as GitHub release assets so the in-app GitHub installer
+# (src-tauri/src/github.rs) can fetch them.
+#
+# Two modes:
+#   - push to master  -> nightly: rolling `<plugin>-nightly` prereleases,
+#                        version `<major>.<minor>.<commit-count>`.
+#   - push a `v*` tag -> stable: immutable `<plugin>-v<version>` releases,
+#                        version taken from the tag (e.g. v0.2.0 -> 0.2.0).
+#
+# Release layout: the installer's `select_binary_asset` expects EXACTLY ONE
+# binary matching a given target triple per release, so each plugin gets its own
+# release. Each release holds one binary per platform (named with the target
+# triple) plus an aggregate `SHA256SUMS`. Install in-app by pointing at this
+# repo and choosing the matching tag.
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:
+
+# Master pushes supersede each other; tag builds run independently and are
+# never cancelled (distinct ref -> distinct group).
+concurrency:
+  group: publish-plugins-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/master' }}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            os: macos-13
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so `git rev-list --count` is accurate
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # Auto-version. On a tag, use the tag's version. On master, keep the
+      # major.minor from the workspace Cargo.toml and set the patch to the git
+      # commit count, so each push builds a higher version shared by the app and
+      # all plugins. Stamped only for this build (not committed back) to avoid a
+      # push -> build -> push loop. Portable across BSD/GNU sed (no -i).
+      - name: Stamp version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            base=$(grep -E '^version = "' Cargo.toml | head -1 | sed -E 's/version = "([0-9]+\.[0-9]+).*/\1/')
+            version="${base}.$(git rev-list --count HEAD)"
+          fi
+          echo "Stamping version $version"
+          sed -E 's/^version = "[^"]*"/version = "'"$version"'"/' Cargo.toml > Cargo.toml.tmp
+          mv Cargo.toml.tmp Cargo.toml
+
+      - name: Build plugin binaries
+        shell: bash
+        run: |
+          cargo build --release --target "${{ matrix.target }}" \
+            -p rdb-plugin-postgres \
+            -p rdb-plugin-mongodb \
+            -p rdb-plugin-rabbitmq
+
+      - name: Stage assets (rename with target triple)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ext=""
+          [[ "${{ matrix.target }}" == *windows* ]] && ext=".exe"
+          for crate in rdb-plugin-postgres rdb-plugin-mongodb rdb-plugin-rabbitmq; do
+            src="target/${{ matrix.target }}/release/${crate}${ext}"
+            dest="dist/${crate}-${{ matrix.target }}${ext}"
+            cp "$src" "$dest"
+            echo "staged $dest"
+          done
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugins-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: publish releases
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: plugins-*
+          path: staging
+          merge-multiple: true
+
+      # Decide the per-plugin tag suffix and prerelease flag from the trigger.
+      - name: Release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "suffix=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "label=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "suffix=nightly" >> "$GITHUB_OUTPUT"
+            echo "label=nightly" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Group assets per plugin and generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          for crate in rdb-plugin-postgres rdb-plugin-mongodb rdb-plugin-rabbitmq; do
+            outdir="release/${crate}"
+            mkdir -p "$outdir"
+            cp staging/${crate}-* "$outdir"/
+            # Aggregate SHA256SUMS listing bare filenames, as github.rs expects.
+            ( cd "$outdir" && sha256sum ${crate}-* > SHA256SUMS )
+            echo "== ${crate} =="
+            cat "$outdir/SHA256SUMS"
+          done
+
+      - name: Publish postgres release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: postgres-${{ steps.meta.outputs.suffix }}
+          name: "PostgreSQL plugin (${{ steps.meta.outputs.label }})"
+          body: "PostgreSQL plugin build from ${{ github.sha }}."
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          make_latest: false
+          files: release/rdb-plugin-postgres/*
+
+      - name: Publish mongodb release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mongodb-${{ steps.meta.outputs.suffix }}
+          name: "MongoDB plugin (${{ steps.meta.outputs.label }})"
+          body: "MongoDB plugin build from ${{ github.sha }}."
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          make_latest: false
+          files: release/rdb-plugin-mongodb/*
+
+      - name: Publish rabbitmq release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: rabbitmq-${{ steps.meta.outputs.suffix }}
+          name: "RabbitMQ plugin (${{ steps.meta.outputs.label }})"
+          body: "RabbitMQ plugin build from ${{ github.sha }}."
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          make_latest: false
+          files: release/rdb-plugin-rabbitmq/*

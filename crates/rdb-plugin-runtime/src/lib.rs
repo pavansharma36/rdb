@@ -29,7 +29,7 @@ use tokio::sync::{mpsc, Mutex};
 
 /// Maps an opaque capability `op` (e.g. `"rdbms.execute"`) plus its JSON
 /// `params` to a result, given the live connection it targets. The host treats
-/// `op` as opaque; each plugin family (rdbms/document/messaging) provides its
+/// `op` as opaque; each plugin family (rdbms/document/rabbitmq) provides its
 /// own dispatcher. See `rdb_rdbms_common::dispatch_rdbms`.
 #[async_trait]
 pub trait Dispatcher: Send + Sync + 'static {

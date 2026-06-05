@@ -39,7 +39,7 @@ pub type Result<T> = std::result::Result<T, PluginError>;
 pub enum PluginKind {
     Rdbms,
     Document,
-    Messaging,
+    Rabbitmq,
     Other,
 }
 
@@ -89,7 +89,7 @@ pub struct PluginInfo {
     pub version: String,
     pub description: String,
     pub config_schema: Vec<ConfigField>,
-    /// UI module hint (`rdbms`, `document`, `messaging`, or plugin id).
+    /// UI module hint (`rdbms`, `document`, `rabbitmq`, or plugin id).
     #[serde(default)]
     pub ui_module: Option<String>,
     /// Wire-protocol version the plugin speaks. Set by the plugin runtime when

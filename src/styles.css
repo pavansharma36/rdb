@@ -691,3 +691,156 @@ table.grid tr.new-row td {
   color: var(--muted);
   margin-bottom: 4px;
 }
+
+/* RabbitMQ management workspace ------------------------------------------ */
+
+.mq {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px;
+  gap: 10px;
+}
+
+.mq-tabbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+
+.mq-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mq-tab:hover {
+  color: var(--text);
+}
+
+.mq-tab.active {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--accent);
+}
+
+.mq-refresh {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.mq-spin {
+  color: var(--accent-2);
+}
+
+.mq-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* List + optional detail panel side by side. */
+.mq-split {
+  flex: 1;
+  display: flex;
+  gap: 12px;
+  min-height: 0;
+}
+
+.mq-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  overflow: auto;
+}
+
+.mq-main h3 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--accent-2);
+}
+
+.mq-detail {
+  width: 360px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  border-left: 1px solid var(--border);
+  padding-left: 12px;
+}
+
+.mq-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mq-row-sel td {
+  background: var(--panel);
+}
+
+/* Overview ---------------------------------------------------------------- */
+
+.mq-overview {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+}
+
+.mq-overview h3 {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--accent-2);
+}
+
+.mq-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  background: var(--bg-2);
+}
+
+.mq-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.mq-stat {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 14px;
+  background: var(--bg-2);
+  min-width: 96px;
+}
+
+.mq-stat-val {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mq-stat-label {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`rdb` is a cross-platform desktop database/message-broker client built with **Tauri 2** (Rust backend) and **React 18 + TypeScript + Vite** (frontend). One window connects to relational DBs, document stores, and queues through a **plugin architecture**. Ships with three plugins: PostgreSQL (`rdbms`, via `sqlx`), MongoDB (`document`), RabbitMQ (`messaging`, via `lapin`).
+`rdb` is a cross-platform desktop database/message-broker client built with **Tauri 2** (Rust backend) and **React 18 + TypeScript + Vite** (frontend). One window connects to relational DBs, document stores, and queues through a **plugin architecture**. Ships with three plugins: PostgreSQL (`rdbms`, via `sqlx`), MongoDB (`document`), RabbitMQ (`rabbitmq`, via the HTTP Management API).
 
 ## Commands
 
@@ -64,7 +64,7 @@ React frontend  ──@tauri-apps/api invoke()──▶  Tauri host (src-tauri)
 
 ### Live connection handles never cross any boundary
 
-`PgPool`, `mongodb::Client`, `lapin::Connection` stay **inside the plugin process**, keyed by a
+`PgPool`, `mongodb::Client`, and the RabbitMQ management HTTP client stay **inside the plugin process**, keyed by a
 `ConnectionId` (a UUID). The host's `PluginManager` only tracks routes (`ConnectionId → plugin_id`);
 the plugin's runtime holds the actual handles (`ConnectionId → Arc<dyn Connection>`). Never try to
 serialize a pool/client across the pipe.
@@ -109,7 +109,7 @@ serde casing conventions to match:
 4. `main.rs` calls `rdb_plugin_runtime::run(plugin, dispatcher)`. For RDBMS use `RdbmsDispatcher(plugin)`.
 5. Add the crate to `scripts/dev-plugins.sh` (`PLUGINS`/`CRATES` arrays) so `npm run plugins:dev` builds it.
 
-Non-relational backends pick a different `PluginKind` (`Document`, `Messaging`, `Other`); the frontend
+Non-relational backends pick a different `PluginKind` (`Document`, `Rabbitmq`, `Other`); the frontend
 renders the matching workspace component (`src/components/workspaces/`) based on `kind`/`ui_module`.
 
 There is **no `build_registry()`** anymore — plugins are not statically linked. Discovery is purely from

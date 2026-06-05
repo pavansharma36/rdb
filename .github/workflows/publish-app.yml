@@ -1,0 +1,130 @@
+name: Publish desktop app
+
+# Build the Tauri desktop app for macOS, Linux, and Windows and publish the
+# installers/bundles to a GitHub release. The plugin sidecars are published
+# separately by publish-plugins.yml and installed in-app at runtime.
+#
+# Two modes:
+#   - push to master  -> nightly: rolling `app-nightly` prerelease,
+#                        version `<major>.<minor>.<commit-count>`.
+#   - push a `v*` tag -> stable: release at the tag (e.g. v0.2.0),
+#                        version taken from the tag.
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: publish-app-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/master' }}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14   # Apple Silicon
+          - os: macos-13   # Intel
+          - os: ubuntu-22.04
+          - os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so `git rev-list --count` is accurate
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.os }}
+
+      - name: Install Linux system dependencies
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev \
+            patchelf \
+            build-essential \
+            file \
+            wget
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # Auto-version. On a tag, use the tag's version. On master, keep
+      # major.minor from tauri.conf.json and set the patch to the git commit
+      # count, so each push produces a higher version shared with the plugins.
+      # Stamped only for this build, not committed back, to avoid a
+      # push -> build -> push loop.
+      - name: Stamp version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            export VERSION="${GITHUB_REF_NAME#v}"
+          else
+            export VERSION=""   # empty -> derive major.minor.count in node
+          fi
+          export COUNT=$(git rev-list --count HEAD)
+          node -e '
+            const fs = require("fs");
+            const p = "src-tauri/tauri.conf.json";
+            const c = JSON.parse(fs.readFileSync(p, "utf8"));
+            let v = process.env.VERSION;
+            if (!v) {
+              const [maj, min] = c.version.split(".");
+              v = `${maj}.${min}.${process.env.COUNT}`;
+            }
+            c.version = v;
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            console.log("Stamped version", c.version);
+          '
+
+      # Decide the release tag/name/prerelease flag from the trigger.
+      - name: Release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "name=rdb desktop ${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=app-nightly" >> "$GITHUB_OUTPUT"
+            echo "name=rdb desktop (nightly)" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # tauri-action runs the beforeBuildCommand (npm run build) to produce the
+      # frontend, builds the app, then uploads the bundles to the release for
+      # `tagName`, creating/updating it as needed.
+      - name: Build and publish app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ steps.meta.outputs.tag }}
+          releaseName: ${{ steps.meta.outputs.name }}
+          releaseBody: "Desktop build from ${{ github.sha }}."
+          prerelease: ${{ steps.meta.outputs.prerelease }}

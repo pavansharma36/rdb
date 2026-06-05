@@ -6,7 +6,7 @@ import { ConnectionForm } from "./components/ConnectionForm";
 import { InstallPluginDialog } from "./components/InstallPluginDialog";
 import { RdbmsWorkspace } from "./components/workspaces/RdbmsWorkspace";
 import { DocumentWorkspace } from "./components/workspaces/DocumentWorkspace";
-import { MessagingWorkspace } from "./components/workspaces/MessagingWorkspace";
+import { RabbitMqWorkspace } from "./components/workspaces/RabbitMqWorkspace";
 import type { SavedConnection } from "./store";
 import { loadConnections, saveConnections, upsert, remove } from "./store";
 
@@ -158,8 +158,8 @@ export function App() {
       }
       case "document":
         return <DocumentWorkspace key={conn.id} connectionId={conn.id} />;
-      case "messaging":
-        return <MessagingWorkspace key={conn.id} connectionId={conn.id} />;
+      case "rabbitmq":
+        return <RabbitMqWorkspace key={conn.id} connectionId={conn.id} />;
       default:
         return (
           <div className="placeholder">No workspace available for “{mod}”.</div>

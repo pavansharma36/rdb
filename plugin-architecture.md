@@ -179,7 +179,7 @@ docFind:           (id, db, coll, f, n) => pluginCall(id, "document.find",      
    runs `--describe` into `<plugins-dir>/postgres.plugin.json`, and copies the
    binary — so `npm run tauri dev` finds it.
 8. **(Follow-up)** Convert mongodb + rabbitmq with the same pattern: add
-   `dispatch_document`/`dispatch_messaging`, flip each crate to a binary.
+   `dispatch_document`/`dispatch_rabbitmq`, flip each crate to a binary.
 
 ## Verification
 

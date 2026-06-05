@@ -1,7 +1,7 @@
 //! RabbitMQ sidecar plugin entry point.
 //!
-//! Routes the `messaging.*` capability ops the host forwards onto the inherent
-//! methods of [`RabbitMqPlugin`].
+//! Routes the `rabbitmq.*` capability ops the host forwards onto the inherent
+//! methods of [`RabbitMqPlugin`], which speak the HTTP Management API.
 
 use std::sync::Arc;
 
@@ -15,26 +15,37 @@ use serde_json::Value;
 struct RabbitMqDispatcher(RabbitMqPlugin);
 
 #[derive(Deserialize)]
-struct DeclareQueueParams {
+struct GetMessagesParams {
+    vhost: String,
     queue: String,
+    count: u32,
+    ackmode: String,
 }
 
 #[derive(Deserialize)]
 struct PublishParams {
-    queue: String,
-    body: String,
+    vhost: String,
+    exchange: String,
+    routing_key: String,
+    payload: String,
 }
 
 #[derive(Deserialize)]
-struct GetOneParams {
+struct QueueParams {
+    vhost: String,
     queue: String,
-    ack: bool,
 }
 
 #[derive(Deserialize)]
-struct ConsumeNParams {
+struct DeclareQueueParams {
+    vhost: String,
     queue: String,
-    n: usize,
+    #[serde(default = "default_true")]
+    durable: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(params: Value) -> Result<T> {
@@ -49,21 +60,39 @@ fn to_value<T: serde::Serialize>(value: T) -> Result<Value> {
 impl Dispatcher for RabbitMqDispatcher {
     async fn dispatch(&self, op: &str, params: Value, conn: Arc<dyn Connection>) -> Result<Value> {
         match op {
-            "messaging.declare_queue" => {
-                let p: DeclareQueueParams = parse(params)?;
-                to_value(self.0.declare_queue(conn, &p.queue).await?)
+            "rabbitmq.overview" => to_value(self.0.overview(conn).await?),
+            "rabbitmq.list_queues" => to_value(self.0.list_queues(conn).await?),
+            "rabbitmq.list_exchanges" => to_value(self.0.list_exchanges(conn).await?),
+            "rabbitmq.list_connections" => to_value(self.0.list_connections(conn).await?),
+            "rabbitmq.list_channels" => to_value(self.0.list_channels(conn).await?),
+            "rabbitmq.get_messages" => {
+                let p: GetMessagesParams = parse(params)?;
+                to_value(
+                    self.0
+                        .get_messages(conn, &p.vhost, &p.queue, p.count, &p.ackmode)
+                        .await?,
+                )
             }
-            "messaging.publish" => {
+            "rabbitmq.publish" => {
                 let p: PublishParams = parse(params)?;
-                to_value(self.0.publish(conn, &p.queue, &p.body).await?)
+                to_value(
+                    self.0
+                        .publish(conn, &p.vhost, &p.exchange, &p.routing_key, &p.payload)
+                        .await?,
+                )
             }
-            "messaging.get_one" => {
-                let p: GetOneParams = parse(params)?;
-                to_value(self.0.get_one(conn, &p.queue, p.ack).await?)
+            "rabbitmq.purge_queue" => {
+                let p: QueueParams = parse(params)?;
+                to_value(self.0.purge_queue(conn, &p.vhost, &p.queue).await?)
             }
-            "messaging.consume_n" => {
-                let p: ConsumeNParams = parse(params)?;
-                to_value(self.0.consume_n(conn, &p.queue, p.n).await?)
+            "rabbitmq.declare_queue" => {
+                let p: DeclareQueueParams = parse(params)?;
+                to_value(self.0.declare_queue(conn, &p.vhost, &p.queue, p.durable).await?)
+            }
+            "rabbitmq.delete_queue" => {
+                let p: QueueParams = parse(params)?;
+                self.0.delete_queue(conn, &p.vhost, &p.queue).await?;
+                Ok(Value::Null)
             }
             _ => Err(PluginError::Unsupported),
         }

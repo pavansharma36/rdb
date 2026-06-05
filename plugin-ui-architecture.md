@@ -13,7 +13,7 @@ host needs no per-kind knowledge. But the **frontend is frozen at app-build time
 
 - `src/App.tsx:145` `renderWorkspace()` is a hardcoded `switch (ui_module)` over
   three compiled-in components (`RdbmsWorkspace`, `DocumentWorkspace`,
-  `MessagingWorkspace`).
+  `RabbitMqWorkspace`).
 - `src/api.ts` hardcodes the `op` names (`rdbms.execute`, `document.find`, …).
 - `src-tauri/tauri.conf.json` sets `frontendDist: ../dist` — the webview loads one
   bundle baked into the app binary.
@@ -53,7 +53,7 @@ only when a plugin needs a custom surface.
   same pattern applied one level up.
 - **No new backend ops needed for Phase A.** The existing Postgres/Mongo/Rabbit
   plugins already expose every op a declarative workspace would call
-  (`rdbms.list_schemas`, `document.find`, `messaging.publish`, …). Phase A can
+  (`rdbms.list_schemas`, `document.find`, `rabbitmq.publish`, …). Phase A can
   render them by *writing a `workspace_spec`*, with the plugin's Rust unchanged.
 - **The hand-written components are not thrown away.** `ui_module: "rdbms"` keeps
   rendering the polished, compiled `RdbmsWorkspace` (with its staged multi-cell
@@ -63,7 +63,7 @@ only when a plugin needs a custom surface.
 
 `App.tsx`'s `renderWorkspace()` resolves in this precedence:
 
-1. `ui_module` names a **built-in module** (`"rdbms"` | `"document"` | `"messaging"`)
+1. `ui_module` names a **built-in module** (`"rdbms"` | `"document"` | `"rabbitmq"`)
    → render the existing compiled component (today's behavior, unchanged).
 2. `ui_module == "webview"` **and** the plugin ships UI assets → `<PluginWebview>`
    (Phase B).
@@ -124,9 +124,9 @@ form inputs populate (e.g. `{schema}`, `{table}`, `{database}`).
   - `json` — expects `{ documents: unknown[] }` (Mongo `FindResult`).
   - `messages` — expects `ConsumedMessage[]` / single message.
 - **actions** (optional) — buttons bound to an `op` with templated params
-  (e.g. Messaging's *Declare* / *Publish* / *Consume N*).
+  (e.g. RabbitMQ's *Declare* / *Publish* / *Get*).
 
-### Worked example: Document and Messaging
+### Worked example: Document and RabbitMQ
 
 These are the **Phase-A reference migrations** (simpler than RDBMS):
 
@@ -147,9 +147,9 @@ These are the **Phase-A reference migrations** (simpler than RDBMS):
   "main": { "kind": "form",
     "input": { "kind": "form", "fields": [ { "key": "queue", "label": "Queue", "type": { "kind": "text" } } ] },
     "actions": [
-      { "label": "Declare",   "op": "messaging.declare_queue", "params": { "queue": "{queue}" }, "result": { "kind": "json" } },
-      { "label": "Publish",   "op": "messaging.publish",       "params": { "queue": "{queue}", "body": "{body}" } },
-      { "label": "Consume 10","op": "messaging.consume_n",     "params": { "queue": "{queue}", "n": 10 }, "result": { "kind": "messages" } } ] } }
+      { "label": "Declare",   "op": "rabbitmq.declare_queue", "params": { "queue": "{queue}" }, "result": { "kind": "json" } },
+      { "label": "Publish",   "op": "rabbitmq.publish",       "params": { "queue": "{queue}", "body": "{body}" } },
+      { "label": "Get 10",    "op": "rabbitmq.get_messages",  "params": { "queue": "{queue}", "count": 10 }, "result": { "kind": "messages" } } ] } }
 ```
 
 ## The generic renderer (`<SchemaWorkspace>`)
@@ -195,7 +195,7 @@ attempt to express in v1:
 Two ways out, deferred: (a) add an `editableTable` result capability that maps grid
 edits to `apply_changes` (grows the vocabulary), or (b) such plugins use Phase B.
 Until then, RDBMS stays on its compiled `ui_module: "rdbms"` component. Phase A's
-proof is migrating **Document** and **Messaging** to specs and deleting their
+proof is migrating **Document** and **RabbitMQ** to specs and deleting their
 bespoke components.
 
 ## Implementation steps (Phase A)
@@ -210,7 +210,7 @@ bespoke components.
    `workspace_spec` → placeholder).
 5. **Reference migration**: add `workspace_spec` to the **mongodb** and **rabbitmq**
    plugins' `PluginInfo`; confirm `SchemaWorkspace` reproduces their behavior; then
-   delete `DocumentWorkspace.tsx` / `MessagingWorkspace.tsx` and their `ui_module`
+   delete `DocumentWorkspace.tsx` / `RabbitMqWorkspace.tsx` and their `ui_module`
    cases.
 6. **Dev loop**: `npm run plugins:dev` already regenerates manifests via
    `--describe`, so the new `workspace_spec` flows into `dev-plugins/` automatically.
@@ -264,7 +264,7 @@ concrete plugin needs it**.
   renderer. Hold the line: the schema describes *what op to call and how to show the
   result*; anything needing real logic is a Phase-B candidate, not a new element.
 - **Two UI paths to maintain**: built-in components, declarative, and (later)
-  webview. Mitigated by migrating Document/Messaging *off* bespoke components in
+  webview. Mitigated by migrating Document/RabbitMQ *off* bespoke components in
   Phase A, so declarative is the default and built-ins shrink rather than grow.
 - **Untrusted code (B)**: native plugin binaries already run with full privilege
   (noted in `plugin-architecture.md`); a sandboxed iframe is *stricter* than that,
