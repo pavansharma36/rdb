@@ -317,6 +317,10 @@ export const api = {
   rdbmsDescribeTable: (connectionId: ConnectionId, schema: string, table: string) =>
     pluginCall<Column[]>(connectionId, "rdbms.describe_table", { schema, table }),
 
+  /** Full backend-specific DDL (CREATE TABLE + indexes) for a table. */
+  rdbmsDdlStatement: (connectionId: ConnectionId, schema: string, table: string) =>
+    pluginCall<string>(connectionId, "rdbms.ddl_statement", { schema, table }),
+
   rdbmsExecute: (connectionId: ConnectionId, sql: string) =>
     pluginCall<QueryResult>(connectionId, "rdbms.execute", { sql }),
 

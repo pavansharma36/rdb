@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { OpenConnection } from "../App";
 import type { PluginInfo, ConnectionId } from "../api";
 import type { SavedConnection } from "../store";
@@ -7,6 +8,8 @@ interface SidebarProps {
   plugins: PluginInfo[];
   /** The app's release channel ("nightly" or "stable"); shows a nightly badge. */
   channel: string;
+  /** Sidebar width in CSS pixels (driven by the resize handle). */
+  width: number;
   openConnections: OpenConnection[];
   activeId: ConnectionId | null;
   creating: boolean;
@@ -22,6 +25,7 @@ export function Sidebar({
   saved,
   plugins,
   channel,
+  width,
   openConnections,
   activeId,
   creating,
@@ -36,8 +40,22 @@ export function Sidebar({
     return plugins.find((p) => p.id === pluginId)?.kind ?? "other";
   }
 
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [menuOpen]);
+
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" style={{ width }}>
       <div className="sidebar-header">
         <span className="logo">rdb</span>
         <span className="logo-sub">client</span>
@@ -52,9 +70,6 @@ export function Sidebar({
         onClick={onNew}
       >
         + New connection
-      </button>
-      <button className="install-btn" onClick={onInstallPlugin}>
-        ⤓ Install plugin
       </button>
       <nav className="conn-list">
         {saved.length === 0 && (
@@ -75,7 +90,9 @@ export function Sidebar({
                 }
                 title={live ? "Connected" : "Not connected"}
               />
-              <span className="conn-name">{s.name}</span>
+              <span className="conn-name" title={s.name}>
+                {s.name}
+              </span>
               <button
                 className="icon-btn"
                 title="Edit connection"
@@ -101,9 +118,31 @@ export function Sidebar({
         })}
       </nav>
       <div className="sidebar-footer">
-        <button className="link-btn" onClick={onCheckUpdates}>
-          Check for updates
+        <button className="install-btn" onClick={onInstallPlugin}>
+          ⤓ Install plugin
         </button>
+        <div className="footer-menu" ref={menuRef}>
+          <button
+            className="icon-btn"
+            title="More"
+            onClick={() => setMenuOpen((o) => !o)}
+          >
+            ⋮
+          </button>
+          {menuOpen && (
+            <div className="footer-menu-popup">
+              <button
+                className="footer-menu-item"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onCheckUpdates();
+                }}
+              >
+                Check for updates
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </aside>
   );

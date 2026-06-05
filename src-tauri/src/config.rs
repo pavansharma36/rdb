@@ -22,6 +22,8 @@ pub struct AppConfig {
     /// Defaults to this project's own repo so installing the bundled plugins
     /// needs no repo/tag entry.
     pub plugin_repo: String,
+    /// Sidebar width in CSS pixels, set by dragging the sidebar's resize handle.
+    pub sidebar_width: u32,
 }
 
 impl Default for AppConfig {
@@ -29,6 +31,7 @@ impl Default for AppConfig {
         Self {
             plugins_dialog_shown: false,
             plugin_repo: "pavansharma36/rdb".to_string(),
+            sidebar_width: 240,
         }
     }
 }

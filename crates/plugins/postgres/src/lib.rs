@@ -279,6 +279,68 @@ impl RdbmsPlugin for PostgresPlugin {
             .collect())
     }
 
+    async fn ddl_statement(
+        &self,
+        conn: Arc<dyn Connection>,
+        schema: &str,
+        table: &str,
+    ) -> Result<String> {
+        let columns = self.describe_table(conn.clone(), schema, table).await?;
+        if columns.is_empty() {
+            return Err(PluginError::Backend(format!(
+                "table {schema}.{table} not found or has no columns"
+            )));
+        }
+        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+
+        // Column definitions, then the primary key (if any).
+        let mut lines: Vec<String> = columns
+            .iter()
+            .map(|c| {
+                let ty = match (c.data_type.as_str(), &c.udt_name) {
+                    ("USER-DEFINED", Some(udt)) => udt.clone(),
+                    _ => c.data_type.clone(),
+                };
+                let null = if c.nullable { "" } else { " NOT NULL" };
+                format!("  \"{}\" {}{}", c.name, ty, null)
+            })
+            .collect();
+        let pks: Vec<String> = columns
+            .iter()
+            .filter(|c| c.primary_key)
+            .map(|c| format!("\"{}\"", c.name))
+            .collect();
+        if !pks.is_empty() {
+            lines.push(format!("  PRIMARY KEY ({})", pks.join(", ")));
+        }
+        let mut ddl = format!(
+            "CREATE TABLE \"{schema}\".\"{table}\" (\n{}\n);",
+            lines.join(",\n")
+        );
+
+        // Append non-primary-key indexes via pg_get_indexdef.
+        let indexes: Vec<(String,)> = sqlx::query_as(
+            "select pg_get_indexdef(ix.indexrelid) \
+             from pg_index ix \
+             join pg_class t on t.oid = ix.indrelid \
+             join pg_namespace n on n.oid = t.relnamespace \
+             where n.nspname = $1 and t.relname = $2 and not ix.indisprimary \
+             order by ix.indexrelid::regclass::text",
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&conn.pool())
+        .await
+        .map_err(|e| PluginError::Backend(e.to_string()))?;
+
+        for (def,) in indexes {
+            ddl.push_str("\n\n");
+            ddl.push_str(&def);
+            ddl.push(';');
+        }
+        Ok(ddl)
+    }
+
     async fn execute(&self, conn: Arc<dyn Connection>, sql: &str) -> Result<QueryResult> {
         let conn = downcast_conn::<PostgresConnection>(&conn)?;
         let pool = conn.pool();

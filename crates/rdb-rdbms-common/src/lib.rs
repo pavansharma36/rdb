@@ -139,6 +139,18 @@ pub trait RdbmsPlugin: Send + Sync {
         table: &str,
     ) -> Result<Vec<Column>>;
 
+    /// Return the full `CREATE TABLE` (and related `CREATE INDEX`, etc.) DDL for
+    /// a table as backend-specific text. Plugins that can't produce DDL return
+    /// [`PluginError::Unsupported`].
+    async fn ddl_statement(
+        &self,
+        _conn: Arc<dyn Connection>,
+        _schema: &str,
+        _table: &str,
+    ) -> Result<String> {
+        Err(PluginError::Unsupported)
+    }
+
     async fn execute(&self, conn: Arc<dyn Connection>, sql: &str) -> Result<QueryResult>;
 
     /// Apply a batch of inserts/updates/deletes to one table atomically (in a
@@ -229,6 +241,10 @@ pub async fn dispatch_rdbms(
         "rdbms.describe_table" => {
             let p: DescribeTableParams = parse(params)?;
             to_value(plugin.describe_table(conn, &p.schema, &p.table).await?)
+        }
+        "rdbms.ddl_statement" => {
+            let p: DescribeTableParams = parse(params)?;
+            to_value(plugin.ddl_statement(conn, &p.schema, &p.table).await?)
         }
         "rdbms.execute" => {
             let p: ExecuteParams = parse(params)?;

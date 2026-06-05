@@ -9,9 +9,17 @@ import type {
   Table,
   QueryResult,
 } from "../../api";
+import type { WorkspaceFile } from "../../store";
+import {
+  listWorkspaceFiles,
+  saveWorkspaceFile,
+  deleteWorkspaceFile,
+} from "../../store";
 
 interface Props {
   connectionId: ConnectionId;
+  /** Stable saved-profile id; scopes the saved SQL snippets to this profile. */
+  savedId: string;
   /** The database this connection was opened against; the initial selection for
    * the database picker. Null when the profile didn't specify one. */
   database?: string | null;
@@ -79,7 +87,7 @@ function parseSingleTable(
     : { schema: "public", table: unq(m[1]) };
 }
 
-export function RdbmsWorkspace({ connectionId, database }: Props) {
+export function RdbmsWorkspace({ connectionId, savedId, database }: Props) {
   const [schemas, setSchemas] = useState<Schema[]>([]);
   // Databases on the server (empty when the backend doesn't support listing,
   // which hides the picker) and the one currently selected.
@@ -89,6 +97,22 @@ export function RdbmsWorkspace({ connectionId, database }: Props) {
   );
   const [openSchema, setOpenSchema] = useState<string | null>(null);
   const [tables, setTables] = useState<Record<string, Table[]>>({});
+  // Saved SQL files for this connection profile (the "SQL files" section).
+  const [sqlFiles, setSqlFiles] = useState<WorkspaceFile[]>([]);
+  // When non-null, the inline "new SQL file name" input is open with this draft.
+  const [newSqlName, setNewSqlName] = useState<string | null>(null);
+  // Name of the SQL file currently loaded in the editor (shown in its header).
+  const [activeFile, setActiveFile] = useState<string | null>(null);
+  // Name of the SQL file awaiting inline delete confirmation, if any.
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  // Which view of a browsed table is shown: the data grid, its column
+  // structure, or a generated CREATE TABLE statement.
+  const [tableView, setTableView] = useState<"data" | "structure" | "ddl">(
+    "data",
+  );
+  // Generated DDL for the browsed table (lazily fetched from the plugin for the
+  // DDL view); null until loaded for the current table.
+  const [ddlText, setDdlText] = useState<string | null>(null);
   const [activeTable, setActiveTable] = useState<string | null>(null);
   const [sql, setSql] = useState("select 1;");
   const [result, setResult] = useState<QueryResult | null>(null);
@@ -110,7 +134,10 @@ export function RdbmsWorkspace({ connectionId, database }: Props) {
   useEffect(() => {
     api
       .rdbmsListSchemas(connectionId)
-      .then(setSchemas)
+      .then((list) => {
+        setSchemas(list);
+        autoOpenSingle(list);
+      })
       .catch((e) => setError(errString(e)));
   }, [connectionId]);
 
@@ -122,6 +149,76 @@ export function RdbmsWorkspace({ connectionId, database }: Props) {
       .then(setDatabases)
       .catch(() => setDatabases([]));
   }, [connectionId]);
+
+  // Load this profile's saved SQL files.
+  useEffect(() => {
+    listWorkspaceFiles(savedId)
+      .then(setSqlFiles)
+      .catch(() => setSqlFiles([]));
+  }, [savedId]);
+
+  // Auto-save edits to the active SQL file, debounced so we don't write on every
+  // keystroke. No-op when nothing's loaded or the content already matches disk.
+  useEffect(() => {
+    if (!activeFile) return;
+    const stored = sqlFiles.find((f) => f.name === activeFile);
+    if (!stored || stored.content === sql) return;
+    const t = setTimeout(() => {
+      saveWorkspaceFile(savedId, activeFile, sql)
+        .then(() =>
+          setSqlFiles((prev) =>
+            prev.map((f) =>
+              f.name === activeFile ? { ...f, content: sql } : f,
+            ),
+          ),
+        )
+        .catch((e) => setError(errString(e)));
+    }, 800);
+    return () => clearTimeout(t);
+  }, [sql, activeFile, sqlFiles, savedId]);
+
+  // Lazily fetch the table's DDL from the plugin when the DDL view is opened.
+  useEffect(() => {
+    if (tableView !== "ddl" || !edit || ddlText !== null) return;
+    api
+      .rdbmsDdlStatement(connectionId, edit.schema, edit.table)
+      .then(setDdlText)
+      .catch((e) => setDdlText(`-- Failed to load DDL: ${errString(e)}`));
+  }, [tableView, edit, ddlText, connectionId]);
+
+  /** Save the current editor SQL under `name` (from the inline name input). */
+  async function saveCurrentSql() {
+    const name = newSqlName?.trim();
+    if (!name) {
+      setNewSqlName(null);
+      return;
+    }
+    if (sqlFiles.some((f) => f.name.toLowerCase() === name.toLowerCase())) {
+      setError(`A SQL file named "${name}" already exists.`);
+      return;
+    }
+    try {
+      await saveWorkspaceFile(savedId, name, sql);
+      setSqlFiles(await listWorkspaceFiles(savedId));
+      setNewSqlName(null);
+      setActiveFile(name);
+      setError(null);
+    } catch (e) {
+      setError(errString(e));
+    }
+  }
+
+  /** Delete a saved SQL file (after inline confirmation). */
+  async function removeSqlFile(name: string) {
+    setConfirmDelete(null);
+    try {
+      await deleteWorkspaceFile(savedId, name);
+      setSqlFiles(await listWorkspaceFiles(savedId));
+      if (activeFile === name) setActiveFile(null);
+    } catch (e) {
+      setError(errString(e));
+    }
+  }
 
   /** Switch the connection to another database on the same server and reload
    * the schema tree. Disabled while edits are staged, so nothing is lost. */
@@ -142,11 +239,24 @@ export function RdbmsWorkspace({ connectionId, database }: Props) {
       clearStaged();
       const s = await api.rdbmsListSchemas(connectionId);
       setSchemas(s);
+      autoOpenSingle(s);
     } catch (e) {
       setError(errString(e));
     } finally {
       setBusy(false);
     }
+  }
+
+  /** When a connection/database has exactly one schema, expand it and load its
+   * tables automatically so the user doesn't have to click to reach them. */
+  function autoOpenSingle(list: Schema[]) {
+    if (list.length !== 1) return;
+    const only = list[0].name;
+    setOpenSchema(only);
+    api
+      .rdbmsListTables(connectionId, only)
+      .then((t) => setTables((m) => ({ ...m, [only]: t })))
+      .catch((e) => setError(errString(e)));
   }
 
   async function toggleSchema(name: string) {
@@ -162,6 +272,31 @@ export function RdbmsWorkspace({ connectionId, database }: Props) {
       } catch (e) {
         setError(errString(e));
       }
+    }
+  }
+
+  /** Re-fetch the schema list and the open schema's tables from the server,
+   * picking up tables/schemas created since the tree was last loaded. */
+  async function refreshTree() {
+    setBusy(true);
+    setError(null);
+    try {
+      const list = await api.rdbmsListSchemas(connectionId);
+      setSchemas(list);
+      const open =
+        openSchema && list.some((s) => s.name === openSchema) ? openSchema : null;
+      if (open) {
+        const t = await api.rdbmsListTables(connectionId, open);
+        setTables({ [open]: t });
+      } else {
+        setTables({});
+        setOpenSchema(null);
+        autoOpenSingle(list);
+      }
+    } catch (e) {
+      setError(errString(e));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -193,6 +328,10 @@ export function RdbmsWorkspace({ connectionId, database }: Props) {
 
   async function pickTable(schema: string, table: string) {
     setActiveTable(schema + "." + table);
+    // Leave SQL-file mode: the editor now reflects the table query, not a file.
+    setActiveFile(null);
+    setTableView("data");
+    setDdlText(null);
     setNotice(null);
     const q = `SELECT * FROM "${schema}"."${table}" LIMIT 100;`;
     setSql(q);
@@ -215,18 +354,40 @@ export function RdbmsWorkspace({ connectionId, database }: Props) {
    * query is a simple single-table `SELECT` (like Postico); otherwise it's
    * shown read-only. */
   async function runManual() {
-    setEdit(null);
     setActiveTable(null);
+    setTableView("data");
+    setDdlText(null);
+    await runAndEdit(sql);
+  }
+
+  /** Execute `query`, then make the result editable if it maps to a single
+   * table. Shared by the Run button and SQL-file selection. */
+  async function runAndEdit(query: string) {
+    setEdit(null);
     setNotice(null);
-    const ok = await executeQuery(sql);
+    const ok = await executeQuery(query);
     if (!ok) return;
-    const ctx = await deriveEditContext(sql);
+    const ctx = await deriveEditContext(query);
     setEdit(ctx);
     if (ctx && !ctx.columns.some((c) => c.primary_key)) {
       setNotice(
         "No primary key: edits match rows by all column values and may affect duplicates.",
       );
     }
+  }
+
+  /** Open a saved SQL file: load it into the editor. Run it manually to view
+   * its data; a single-table SELECT then becomes editable (see runAndEdit). */
+  async function loadSqlFile(file: WorkspaceFile) {
+    setSql(file.content);
+    setActiveFile(file.name);
+    // Leave table-browse mode and clear the previous query's grid so a stale,
+    // read-only result doesn't linger until this file is run.
+    setActiveTable(null);
+    setEdit(null);
+    setResult(null);
+    setNotice(null);
+    clearStaged();
   }
 
   /** Resolve the editable table behind a query, or null if it isn't a simple
@@ -250,6 +411,13 @@ export function RdbmsWorkspace({ connectionId, database }: Props) {
     if (v === null || v === undefined) return "NULL";
     if (typeof v === "object") return JSON.stringify(v);
     return String(v);
+  }
+
+  /** A column's SQL type for display (enums report `USER-DEFINED`; their real
+   * type name lives in `udt_name`). */
+  function displayType(c: Column): string {
+    if (c.data_type === "USER-DEFINED" && c.udt_name) return c.udt_name;
+    return c.data_type;
   }
 
   /** Text shown in the inline editor for a cell value. */
@@ -434,32 +602,126 @@ export function RdbmsWorkspace({ connectionId, database }: Props) {
   return (
     <div className="workspace">
       <div className="tree">
-        {databases.length > 0 && (
-          <div className="tree-dbselect">
-            <span className="field-label">Database</span>
-            <select
-              value={currentDatabase ?? ""}
-              disabled={busy || saving || dirty}
-              title={
-                dirty
-                  ? "Save or discard changes before switching database"
-                  : undefined
-              }
-              onChange={(e) => switchDatabase(e.target.value)}
+        <div className="tree-top">
+        <div className="tree-queries">
+          <div className="tree-section-head">
+            <span className="field-label">SQL files</span>
+            <button
+              className="tree-add"
+              title="Save current SQL as a file"
+              onClick={() => setNewSqlName((n) => (n === null ? "" : null))}
             >
-              {currentDatabase === null && (
-                <option value="" disabled>
-                  Select a database…
-                </option>
-              )}
-              {databases.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
+              ＋
+            </button>
           </div>
-        )}
+          {newSqlName !== null && (
+            <input
+              className="tree-name-input"
+              autoFocus
+              placeholder="file name…"
+              value={newSqlName}
+              onChange={(e) => setNewSqlName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveCurrentSql();
+                else if (e.key === "Escape") setNewSqlName(null);
+              }}
+              onBlur={saveCurrentSql}
+            />
+          )}
+          <div className="tree-queries-list">
+            {sqlFiles.length === 0 ? (
+              <p className="muted">No SQL files.</p>
+            ) : (
+              sqlFiles.map((f) => (
+                <div
+                  key={f.name}
+                  className={
+                    "tree-node leaf" + (activeFile === f.name ? " active" : "")
+                  }
+                  onClick={() => loadSqlFile(f)}
+                  title="Load into editor"
+                >
+                  <span className="conn-name">{f.name}.sql</span>
+                  {confirmDelete === f.name ? (
+                    <span className="confirm-del">
+                      <button
+                        className="confirm-yes"
+                        title="Confirm delete"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeSqlFile(f.name);
+                        }}
+                      >
+                        ✓
+                      </button>
+                      <button
+                        className="confirm-no"
+                        title="Cancel"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDelete(null);
+                        }}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      className="close-x"
+                      title="Delete SQL file"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmDelete(f.name);
+                      }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+        <div className="tree-dbselect">
+          {databases.length > 0 && (
+            <span className="field-label">Database</span>
+          )}
+          <div className="tree-db-row">
+            {databases.length > 0 && (
+              <select
+                value={currentDatabase ?? ""}
+                disabled={busy || saving || dirty}
+                title={
+                  dirty
+                    ? "Save or discard changes before switching database"
+                    : undefined
+                }
+                onChange={(e) => switchDatabase(e.target.value)}
+              >
+                {currentDatabase === null && (
+                  <option value="" disabled>
+                    Select a database…
+                  </option>
+                )}
+                {databases.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              className="tree-refresh"
+              disabled={busy || saving}
+              title="Reload schemas and tables"
+              onClick={refreshTree}
+            >
+              ↻
+            </button>
+          </div>
+        </div>
+        </div>
+        <div className="tree-schemas">
         {schemas.length === 0 && <p className="muted">No schemas.</p>}
         {schemas.map((s) => (
           <div key={s.name} className="tree-group">
@@ -490,18 +752,33 @@ export function RdbmsWorkspace({ connectionId, database }: Props) {
               ))}
           </div>
         ))}
+        </div>
       </div>
       <div className="editor-pane">
-        <textarea
-          className="code"
-          value={sql}
-          spellCheck={false}
-          onChange={(e) => setSql(e.target.value)}
-        />
+        {activeFile && (
+          <div className="editor-file">
+            <span className="editor-file-name">{activeFile}.sql</span>
+            {sqlFiles.find((f) => f.name === activeFile)?.content !== sql && (
+              <span className="editor-file-dirty" title="Auto-saving…">
+                ●
+              </span>
+            )}
+          </div>
+        )}
+        {activeFile && (
+          <textarea
+            className="code"
+            value={sql}
+            spellCheck={false}
+            onChange={(e) => setSql(e.target.value)}
+          />
+        )}
         <div className="editor-toolbar">
-          <button className="primary" disabled={busy || saving} onClick={runManual}>
-            Run
-          </button>
+          {activeFile && (
+            <button className="primary" disabled={busy || saving} onClick={runManual}>
+              Run
+            </button>
+          )}
           {editable && (
             <>
               <button
@@ -517,25 +794,39 @@ export function RdbmsWorkspace({ connectionId, database }: Props) {
               >
                 ↻ Refresh
               </button>
-              <span className="status-line">
-                Editing {edit!.schema}.{edit!.table}
-              </span>
             </>
-          )}
-          {result && !editable && (
-            <span className="status-line">
-              {result.rows_affected !== null
-                ? `${result.rows_affected} row(s) affected`
-                : `${result.rows.length} row(s)`}{" "}
-              · {result.elapsed_ms} ms
-            </span>
           )}
         </div>
         {notice && <div className="status-line">{notice}</div>}
         {error && <div className="status-line error">{error}</div>}
         <div className="result-scroll">
-          {result && result.columns.length > 0 && (
+          {tableView === "structure" && edit ? (
             <table className="grid">
+              <thead>
+                <tr>
+                  <th>Column</th>
+                  <th>Type</th>
+                  <th>Nullable</th>
+                  <th>Key</th>
+                </tr>
+              </thead>
+              <tbody>
+                {edit.columns.map((c) => (
+                  <tr key={c.name}>
+                    <td>{c.name}</td>
+                    <td>{displayType(c)}</td>
+                    <td>{c.nullable ? "YES" : "NO"}</td>
+                    <td>{c.primary_key ? "🔑 PK" : ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : tableView === "ddl" && edit ? (
+            <pre className="ddl">{ddlText ?? "Loading…"}</pre>
+          ) : (
+            result &&
+            result.columns.length > 0 && (
+              <table className="grid">
               <thead>
                 <tr>
                   {editable && <th className="gutter" />}
@@ -661,32 +952,71 @@ export function RdbmsWorkspace({ connectionId, database }: Props) {
                 ))}
               </tbody>
             </table>
-          )}
+          ))}
         </div>
-        {editable && dirty && (
-          <div className="edit-bar">
-            <span className="status-line">
-              {[
-                pendingUpdates && `${pendingUpdates} row(s) edited`,
-                newRows.length && `${newRows.length} new`,
-                deletes.size && `${deletes.size} to delete`,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </span>
+        {result && (
+          <div className="grid-footer">
+            {activeTable && edit && (
+              <div className="view-switch">
+                <button
+                  className={tableView === "data" ? "active" : ""}
+                  onClick={() => setTableView("data")}
+                >
+                  Data
+                </button>
+                <button
+                  className={tableView === "structure" ? "active" : ""}
+                  onClick={() => setTableView("structure")}
+                >
+                  Structure
+                </button>
+                <button
+                  className={tableView === "ddl" ? "active" : ""}
+                  onClick={() => setTableView("ddl")}
+                >
+                  DDL
+                </button>
+              </div>
+            )}
+            {tableView === "data" && (
+              <span>
+                {result.rows_affected !== null
+                  ? `${result.rows_affected} row(s) affected`
+                  : `${result.rows.length} row(s)`}
+              </span>
+            )}
+            {edit && (
+              <span className="grid-footer-table">
+                {edit.schema}.{edit.table}
+              </span>
+            )}
+            {tableView === "data" && <span>{result.elapsed_ms} ms</span>}
             <span className="spacer" />
-            <button disabled={saving} onClick={discard}>
-              Cancel
-            </button>
-            <button
-              className="primary"
-              disabled={saving}
-              // keep the open editor's value (mousedown precedes its blur)
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={save}
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
+            {editable && dirty && (
+              <>
+                <span className="status-line">
+                  {[
+                    pendingUpdates && `${pendingUpdates} row(s) edited`,
+                    newRows.length && `${newRows.length} new`,
+                    deletes.size && `${deletes.size} to delete`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+                <button disabled={saving} onClick={discard}>
+                  Cancel
+                </button>
+                <button
+                  className="primary"
+                  disabled={saving}
+                  // keep the open editor's value (mousedown precedes its blur)
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={save}
+                >
+                  {saving ? "Saving…" : "Save"}
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>

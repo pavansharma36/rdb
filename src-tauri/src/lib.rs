@@ -12,6 +12,7 @@ mod github;
 mod persistence;
 mod plugin_manager;
 mod update;
+mod workspace_files;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -91,6 +92,9 @@ pub fn run() {
             persistence::save_connections,
             config::load_config,
             config::save_config,
+            workspace_files::list_workspace_files,
+            workspace_files::save_workspace_file,
+            workspace_files::delete_workspace_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

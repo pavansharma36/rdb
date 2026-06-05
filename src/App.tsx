@@ -12,6 +12,11 @@ import { RabbitMqWorkspace } from "./components/workspaces/RabbitMqWorkspace";
 import type { SavedConnection } from "./store";
 import { loadConnections, saveConnections, upsert, remove } from "./store";
 import { loadConfig, saveConfig } from "./store";
+import type { AppConfig } from "./store";
+
+/** Min/max sidebar width (px) enforced while dragging the resize handle. */
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 500;
 
 /** A live, currently-open connection to a backend (one per connected profile). */
 export interface OpenConnection {
@@ -41,6 +46,10 @@ export function App() {
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   // Transient note from a manual update check ("up to date" / error).
   const [updateNote, setUpdateNote] = useState<string | null>(null);
+  // Persisted app config (UI prefs); kept so width saves merge other fields.
+  const [config, setConfig] = useState<AppConfig | null>(null);
+  // Sidebar width in px, restored from config and updated by the drag handle.
+  const [sidebarWidth, setSidebarWidth] = useState(240);
 
   useEffect(() => {
     api
@@ -58,9 +67,18 @@ export function App() {
     // doesn't reappear on subsequent launches.
     loadConfig()
       .then((cfg) => {
+        const effective = cfg.pluginsDialogShown
+          ? cfg
+          : { ...cfg, pluginsDialogShown: true };
+        setConfig(effective);
+        if (cfg.sidebarWidth) {
+          setSidebarWidth(
+            Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, cfg.sidebarWidth)),
+          );
+        }
         if (!cfg.pluginsDialogShown) {
           setInstalling(true);
-          saveConfig({ ...cfg, pluginsDialogShown: true }).catch(() => {});
+          saveConfig(effective).catch(() => {});
         }
       })
       .catch(() => {});
@@ -200,6 +218,7 @@ export function App() {
           <RdbmsWorkspace
             key={conn.id}
             connectionId={conn.id}
+            savedId={conn.savedId}
             database={typeof db === "string" ? db : null}
           />
         );
@@ -219,12 +238,41 @@ export function App() {
     ? "Failed to load plugins: " + loadError
     : connectError;
 
+  // Drag the divider between sidebar and main to resize; persist on release.
+  function startSidebarResize(e: React.MouseEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+    function onMove(ev: MouseEvent) {
+      const next = Math.min(
+        SIDEBAR_MAX,
+        Math.max(SIDEBAR_MIN, startWidth + ev.clientX - startX),
+      );
+      setSidebarWidth(next);
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      setSidebarWidth((w) => {
+        saveConfig({ ...(config ?? ({} as AppConfig)), sidebarWidth: w }).catch(
+          () => {},
+        );
+        return w;
+      });
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    document.body.style.cursor = "col-resize";
+  }
+
   return (
     <div className="app">
       <Sidebar
         saved={saved}
         plugins={plugins}
         channel={channel}
+        width={sidebarWidth}
         openConnections={open}
         activeId={activeId}
         creating={creating || editingId !== null}
@@ -243,6 +291,11 @@ export function App() {
         onDelete={deleteSaved}
         onInstallPlugin={() => setInstalling(true)}
         onCheckUpdates={checkForUpdates}
+      />
+      <div
+        className="sidebar-resizer"
+        onMouseDown={startSidebarResize}
+        title="Drag to resize sidebar"
       />
       <main className="main">
         {showForm ? (
