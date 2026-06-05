@@ -14,4 +14,4 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
-sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros"] }
