@@ -63,7 +63,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     needs: cleanup
     if: |
-      always() &&
+      always() && !cancelled() &&
       !contains(github.event.head_commit.message, '[skip ci]')
     strategy:
       fail-fast: false
@@ -72,11 +72,11 @@ jobs:
           - os: macos-14   # Apple Silicon (arm64)
             rust-target: aarch64-apple-darwin
             args: "--target aarch64-apple-darwin"
-          - os: macos-14   # Intel (x86_64), cross-compiled on arm64 — macos-13 Intel runners are scarce
-            rust-target: x86_64-apple-darwin
-            args: "--target x86_64-apple-darwin"
+#          - os: macos-14   # Intel (x86_64), cross-compiled on arm64 — macos-13 Intel runners are scarce
+#            rust-target: x86_64-apple-darwin
+#            args: "--target x86_64-apple-darwin"
           - os: ubuntu-22.04
-          - os: windows-latest
+#          - os: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
