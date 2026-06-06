@@ -189,7 +189,10 @@ jobs:
   finalize:
     name: finalize release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    if: |
+      always() &&
+      github.ref_type == 'tag' &&
+      needs.build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -209,7 +212,7 @@ jobs:
         run: |
           set -euo pipefail
           
-          VERSION="${GITHUB_REF_NAME#v}"
+          export VERSION="${GITHUB_REF_NAME#v}"
           
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -237,5 +240,3 @@ jobs:
           else
             echo "No version changes to commit"
           fi
-        env:
-          VERSION: ${{ github.ref_name }}
