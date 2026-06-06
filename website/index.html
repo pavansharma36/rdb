@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>rdb — one desktop client for databases & message brokers</title>
+  <meta name="description" content="rdb is a cross-platform desktop client for PostgreSQL, MongoDB, and RabbitMQ, built on a plugin architecture with Tauri and React. Free and open source." />
+  <meta property="og:title" content="rdb — one client for databases & message brokers" />
+  <meta property="og:description" content="Connect to relational databases, document stores, and queues from one window. Plugin-based, cross-platform, open source." />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="assets/icon.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="index.html">
+        <img src="assets/icon-128.png" alt="rdb logo" />
+        rdb
+      </a>
+      <nav class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#plugins">Plugins</a>
+        <a href="#download">Download</a>
+        <a href="docs.html">Docs</a>
+        <a class="gh" href="https://github.com/pavansharma36/rdb" target="_blank" rel="noopener">
+          GitHub ↗
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero -->
+    <section class="hero">
+      <div class="wrap">
+        <img class="logo" src="assets/icon.png" alt="rdb" />
+        <h1>One client. Every backend.</h1>
+        <p class="tagline">
+          A cross-platform desktop client for relational databases, document
+          stores, and message brokers — unified behind a single plugin-based
+          window.
+        </p>
+        <div class="cta">
+          <a class="btn primary" href="#download">↓ Download</a>
+          <a class="btn" href="docs.html">Read the docs</a>
+        </div>
+        <div class="badges">
+          <span class="badge">Built with <b>Tauri 2</b> + <b>React</b></span>
+          <span class="badge"><b>macOS</b> · <b>Linux</b> · <b>Windows</b></span>
+          <span class="badge"><b>MIT</b> / <b>Apache-2.0</b></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features">
+      <div class="wrap">
+        <div class="section-head">
+          <div class="kicker">Why rdb</div>
+          <h2>Stop juggling one tool per backend</h2>
+          <p>rdb speaks SQL, documents, and queues from the same window — and stays small because the host ships no drivers.</p>
+        </div>
+        <div class="grid">
+          <div class="card">
+            <span class="ico">🔌</span>
+            <h3>Plugin architecture</h3>
+            <p>Each backend is an out-of-process sidecar executable the host discovers at runtime. Connection forms and workspaces render generically from a plugin's declared config schema.</p>
+          </div>
+          <div class="card">
+            <span class="ico">🗂️</span>
+            <h3>Unified workspace</h3>
+            <p>One window, a sidebar of saved connections, and a workspace per connection rendered according to its plugin kind — relational, document, or queue.</p>
+          </div>
+          <div class="card">
+            <span class="ico">✏️</span>
+            <h3>RDBMS editing</h3>
+            <p>Browse schemas and tables, run SQL, and stage multi-cell edits — inserts, updates, deletes — that commit atomically in a single transaction.</p>
+          </div>
+          <div class="card">
+            <span class="ico">📨</span>
+            <h3>Documents & queues</h3>
+            <p>Query MongoDB collections, and browse a RabbitMQ broker's overview, queues, exchanges, and connections — publish, get, and purge messages.</p>
+          </div>
+          <div class="card">
+            <span class="ico">💾</span>
+            <h3>Saved connections</h3>
+            <p>Connection profiles persist across restarts as human-readable JSON in your OS app-data directory, organised per owning plugin.</p>
+          </div>
+          <div class="card">
+            <span class="ico">🎨</span>
+            <h3>10 built-in themes</h3>
+            <p>Catppuccin Mocha &amp; Latte, Dracula, Nord, Tokyo Night, Gruvbox, Monokai, Solarized, and GitHub Light — dark and light, your pick.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Plugins -->
+    <section id="plugins">
+      <div class="wrap">
+        <div class="section-head">
+          <div class="kicker">Bundled plugins</div>
+          <h2>Three backends, ready today</h2>
+          <p>Install more in-app straight from a GitHub release — checksum-verified, no rebuild required.</p>
+        </div>
+        <div class="plugins">
+          <div class="plugin">
+            <span class="tag">rdbms</span>
+            <h3>PostgreSQL</h3>
+            <p>PostgreSQL 12+ databases via <code>sqlx</code>. Full schema browsing, SQL editor, and inline cell editing.</p>
+          </div>
+          <div class="plugin">
+            <span class="tag">document</span>
+            <h3>MongoDB</h3>
+            <p>MongoDB and Atlas clusters. Browse databases and collections and run <code>find</code> queries.</p>
+          </div>
+          <div class="plugin">
+            <span class="tag">rabbitmq</span>
+            <h3>RabbitMQ</h3>
+            <p>Brokers via the HTTP Management API. Management-UI-style browsing plus publish / get / purge.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Architecture -->
+    <section id="architecture">
+      <div class="wrap">
+        <div class="section-head">
+          <div class="kicker">Under the hood</div>
+          <h2>The host is a generic pipe</h2>
+          <p>The Tauri host knows nothing about SQL, documents, or queues. It transports opaque JSON-RPC between the frontend and plugin sidecars over stdio.</p>
+        </div>
+        <div class="diagram">
+<pre><code>  React + TypeScript frontend
+            │  @tauri-apps/api invoke()
+            ▼
+  Tauri host (Rust, no DB drivers)
+            │  line-delimited JSON-RPC over stdio
+            ▼
+  Plugin sidecars  ─  postgres · mongodb · rabbitmq
+  (live PgPool / Client / HTTP handles stay inside the plugin)</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Download -->
+    <section id="download">
+      <div class="wrap">
+        <div class="section-head">
+          <div class="kicker">Get rdb</div>
+          <h2>Download</h2>
+          <p>Grab the installer for your platform from the latest GitHub release. Then install a plugin in-app to start connecting.</p>
+        </div>
+        <div class="dl-grid">
+          <div class="dl" data-os="mac">
+            <div class="os-ico">🍎</div>
+            <h3>macOS</h3>
+            <div class="arch">Apple Silicon &amp; Intel · .dmg</div>
+            <a class="btn primary" href="https://github.com/pavansharma36/rdb/releases/latest" target="_blank" rel="noopener">Download</a>
+            <span class="yours" hidden>● Your platform</span>
+          </div>
+          <div class="dl" data-os="windows">
+            <div class="os-ico">🪟</div>
+            <h3>Windows</h3>
+            <div class="arch">x64 &amp; arm64 · .msi / .exe</div>
+            <a class="btn primary" href="https://github.com/pavansharma36/rdb/releases/latest" target="_blank" rel="noopener">Download</a>
+            <span class="yours" hidden>● Your platform</span>
+          </div>
+          <div class="dl" data-os="linux">
+            <div class="os-ico">🐧</div>
+            <h3>Linux</h3>
+            <div class="arch">x64 &amp; arm64 · .AppImage / .deb</div>
+            <a class="btn primary" href="https://github.com/pavansharma36/rdb/releases/latest" target="_blank" rel="noopener">Download</a>
+            <span class="yours" hidden>● Your platform</span>
+          </div>
+        </div>
+        <p class="dl-note">
+          Pick the asset matching your OS and architecture on the release page ·
+          <a href="https://github.com/pavansharma36/rdb/releases" target="_blank" rel="noopener">All releases</a> ·
+          <a href="https://github.com/pavansharma36/rdb/releases/tag/latest" target="_blank" rel="noopener">Nightly builds</a>
+        </p>
+        <div class="callout" style="max-width:760px;margin:28px auto 0">
+          <b>⚠️ Heads-up:</b> the app auto-updates from GitHub releases. On macOS,
+          an unsigned build may be blocked by Gatekeeper on first launch —
+          right-click → Open to allow it. Connection configs (including passwords)
+          are currently stored in plaintext.
+        </div>
+      </div>
+    </section>
+
+    <!-- Build from source -->
+    <section id="build">
+      <div class="wrap">
+        <div class="section-head">
+          <div class="kicker">Prefer the source</div>
+          <h2>Build it yourself</h2>
+          <p>Requires Rust (stable), Node.js 18+, and the Tauri 2 system dependencies.</p>
+        </div>
+        <div style="max-width:760px;margin:0 auto">
+<pre><code>git clone https://github.com/pavansharma36/rdb
+cd rdb
+npm install
+
+# Build the bundled plugins, then point the host at them:
+npm run plugins:dev
+RDB_PLUGINS_DIR=$PWD/dev-plugins npm run tauri dev
+
+# Or build a release bundle:
+npm run tauri build</code></pre>
+          <p style="text-align:center;margin-top:18px">
+            <a class="btn" href="docs.html#building">Full build guide →</a>
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap footer-inner">
+      <div>
+        <strong style="color:var(--text)">rdb</strong> — dual-licensed MIT OR Apache-2.0
+      </div>
+      <div style="display:flex;gap:20px">
+        <a href="https://github.com/pavansharma36/rdb" target="_blank" rel="noopener">GitHub</a>
+        <a href="docs.html">Docs</a>
+        <a href="#download">Download</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Highlight the visitor's platform on the download cards.
+    (function () {
+      var p = navigator.userAgent + " " + (navigator.platform || "");
+      var os = /Mac/i.test(p) ? "mac" : /Win/i.test(p) ? "windows" : /Linux|X11/i.test(p) ? "linux" : null;
+      if (!os) return;
+      var card = document.querySelector('.dl[data-os="' + os + '"]');
+      if (!card) return;
+      card.classList.add("detected");
+      var tag = card.querySelector(".yours");
+      if (tag) tag.hidden = false;
+    })();
+  </script>
+</body>
+</html>
