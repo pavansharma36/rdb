@@ -1,4 +1,4 @@
-# rdb
+# rdb.
 
 A cross-platform desktop client for databases and message brokers, built with
 [Tauri](https://tauri.app) (Rust backend) and React + TypeScript (frontend).
