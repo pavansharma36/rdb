@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import {useEffect, useRef, useState} from "react";
 import type { OpenConnection } from "../App";
 import type { PluginInfo, ConnectionId } from "../api";
 import type { SavedConnection } from "../store";
 import { THEMES } from "../theme";
+import { getVersion } from '@tauri-apps/api/app'; // v2 Import
+
 
 interface SidebarProps {
   saved: SavedConnection[];
@@ -51,6 +53,15 @@ export function Sidebar({
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  const [version, setVersion] = useState('');
+
+  useEffect(() => {
+    // getVersion returns a Promise <string>
+    getVersion()
+        .then((appVersion) => setVersion(appVersion))
+        .catch((err) => console.error('Failed to get version:', err));
+  }, []);
+
   useEffect(() => {
     if (!menuOpen) return;
     function onClick(e: MouseEvent) {
@@ -67,11 +78,9 @@ export function Sidebar({
       <div className="sidebar-header">
         <span className="logo">rdb</span>
         <span className="logo-sub">client</span>
-        {channel === "nightly" && (
-          <span className="logo-badge" title="Nightly build">
-            nightly
-          </span>
-        )}
+        <span className="logo-badge" title="App Version">
+          { channel === "nightly" ? "nightly" : `v${version}` }
+        </span>
       </div>
       <button
         className={"new-btn" + (creating ? " active" : "")}
