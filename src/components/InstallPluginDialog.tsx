@@ -77,7 +77,7 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
     setSelected(plugin);
     setBusy("preview");
     try {
-      const p = await api.previewGithubPlugin(repo, plugin.tag);
+      const p = await api.previewGithubPlugin(repo, plugin.tag, plugin.id);
       setPreview(p);
     } catch (e) {
       setError(errString(e));
@@ -95,6 +95,7 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
       const info = await api.installGithubPlugin(
         preview.repo,
         preview.tag,
+        selected.id,
         preview.sha256,
       );
       // Reflect the new install in the list: this plugin is now up to date.
@@ -154,10 +155,10 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
         {available && available.length > 0 && (
           <ul className="plugin-list">
             {available.map((plugin) => {
-              const active = selected?.tag === plugin.tag;
+              const active = selected?.id === plugin.id;
               const upToDate = plugin.status === "up_to_date";
               return (
-                <li key={plugin.tag} className="plugin-row">
+                <li key={plugin.id} className="plugin-row">
                   <div className="plugin-row-main">
                     <span className="plugin-name">{plugin.id}</span>
                     <span className="muted small">{statusNote(plugin)}</span>

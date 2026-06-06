@@ -209,7 +209,7 @@ committed back to the repo, so there is no push → build → push loop.
 | Workflow | Trigger | Output |
 | --- | --- | --- |
 | `publish-app.yml` | push to `master`, `v*` tag, manual | Desktop installers/bundles → a GitHub Release |
-| `publish-plugins.yml` | push to `master`, `v*` tag, manual | Per-plugin binaries + `SHA256SUMS` → one Release per plugin |
+| `publish-plugins.yml` | push to `master`, `v*` tag, manual | All plugin binaries + aggregate `SHA256SUMS` → one shared Release (`plugins-latest` / `plugins-v*`) |
 | `tag.yml` | manual (`workflow_dispatch`) | Computes and pushes the next `vX.Y.Z` tag |
 
 ### Versioning
@@ -226,16 +226,18 @@ Every artifact shares one version `<major>.<minor>.<patch>`:
 Rolling **prereleases**, overwritten each push:
 
 - App → release tagged `latest`, version `<major>.<minor>.<commit-count>`.
-- Plugins → releases `postgres-latest`, `mongodb-latest`, `rabbitmq-latest`.
+- Plugins → a single rolling release tagged `plugins-latest`, holding every
+  plugin's binaries as assets (one per target triple).
 
 ### Stable (push a `v*` tag)
 
 Immutable releases with the version taken from the tag (`v0.2.0` → `0.2.0`):
 
 - App → release at the tag `v0.2.0`.
-- Plugins → releases `postgres-v0.2.0`, `mongodb-v0.2.0`, `rabbitmq-v0.2.0`
-  (each plugin needs its own release — the installer expects exactly one binary
-  per target triple in a release).
+- Plugins → a single release tagged `plugins-v0.2.0` holding every plugin's
+  binaries as assets (one per target triple, named `rdb-plugin-<id>-<triple>`),
+  plus an aggregate `SHA256SUMS`. The installer picks the asset by plugin id +
+  target triple, so all plugins ship in one release.
 
 Cut a release either by hand or via the tag workflow:
 
@@ -278,11 +280,13 @@ New-connection form immediately, no rebuild required.
 
 ### Publishing a plugin (release convention)
 
-For a plugin repo to be installable, each GitHub Release must include:
+For a plugin repo to be installable, a GitHub Release must include, for each
+plugin it ships (one or many can share a release):
 
-- **One binary per platform** whose asset name contains the Rust **target
-  triple**, e.g. `rdb-plugin-mysql-aarch64-apple-darwin`
-  (`…-x86_64-pc-windows-msvc.exe` on Windows).
+- **One binary per platform** whose asset name contains the plugin id and the
+  Rust **target triple**, e.g. `rdb-plugin-mysql-aarch64-apple-darwin`
+  (`…-x86_64-pc-windows-msvc.exe` on Windows). The installer picks the asset by
+  plugin id + target triple, so several plugins can live in one release.
 - **A checksums asset**: `SHA256SUMS` (or `checksums.txt`) with
   `<sha256>  <asset-name>` lines, or a per-asset `<asset-name>.sha256`.
 

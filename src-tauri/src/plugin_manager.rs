@@ -40,9 +40,10 @@ struct Manifest {
 }
 
 /// Where an in-app-installed plugin came from, recorded so the installer can
-/// tell whether a newer release exists. For `stable` we compare `version`; for
-/// `nightly` (whose version is a commit count not in the tag) we compare
-/// `published_at`.
+/// tell whether a newer release exists. All plugins share one release tag, so
+/// the tag does not identify the plugin and is not used for staleness: for
+/// `stable` we compare `version`, for `nightly` (whose version is a commit
+/// count) we compare the release's `published_at`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InstallSource {
@@ -235,9 +236,10 @@ pub enum PluginStatus {
 }
 
 /// A plugin available to install from the configured GitHub repo, as reported
-/// by [`PluginManager::list_github_plugins`]. `id` is derived from the release
-/// tag (e.g. `postgres-latest`/`postgres-v0.2.0` -> `postgres`), which is also
-/// the installed plugin's id, so the UI can match against `list_plugins`.
+/// by [`PluginManager::list_github_plugins`]. All plugins share one release tag
+/// (`plugins-latest`/`plugins-v0.2.0`); `id` is derived from the asset name
+/// (e.g. `rdb-plugin-postgres-<triple>` -> `postgres`), which is also the
+/// installed plugin's id, so the UI can match against `list_plugins`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AvailablePlugin {
@@ -446,16 +448,18 @@ impl PluginManager {
 
     /// Resolve a GitHub release and report which asset would be installed and
     /// its published checksum, WITHOUT downloading the binary or executing
-    /// anything. Drives the confirmation step in the UI.
+    /// anything. Drives the confirmation step in the UI. `plugin_id` picks the
+    /// right asset when a single release publishes several plugins.
     pub async fn preview_github(
         &self,
         repo: &str,
         tag: Option<String>,
+        plugin_id: Option<&str>,
     ) -> Result<GithubPreview, String> {
         let triple = github::target_triple()
             .ok_or_else(|| "unsupported platform: no known target triple".to_string())?;
         let release = github::fetch_release(repo, tag.as_deref()).await?;
-        let asset = github::select_binary_asset(&release, triple)?;
+        let asset = github::select_binary_asset(&release, triple, plugin_id)?;
 
         // The checksum file is small and safe to fetch (no execution).
         let sha256 = match github::find_checksum(&release, &asset.name) {
@@ -479,17 +483,20 @@ impl PluginManager {
     /// Download, verify, and install the plugin from the release `tag` resolved
     /// during [`preview_github`]. `expected_sha` is the checksum the user
     /// confirmed; a mismatch is a hard error. `None` means the release published
-    /// no checksum and the user opted to install anyway.
+    /// no checksum and the user opted to install anyway. When installing from a
+    /// release with multiple plugins, `plugin_id` must be specified to select
+    /// the correct asset.
     pub async fn install_github(
         &self,
         repo: &str,
         tag: &str,
+        plugin_id: Option<&str>,
         expected_sha: Option<String>,
     ) -> Result<PluginInfo, String> {
         let triple = github::target_triple()
             .ok_or_else(|| "unsupported platform: no known target triple".to_string())?;
         let release = github::fetch_release(repo, Some(tag)).await?;
-        let asset = github::select_binary_asset(&release, triple)?;
+        let asset = github::select_binary_asset(&release, triple, plugin_id)?;
         let asset_name = asset.name.clone();
 
         let bytes = github::download_bytes(&asset.browser_download_url).await?;

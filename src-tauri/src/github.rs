@@ -73,27 +73,53 @@ fn is_aux(name: &str) -> bool {
     n.ends_with(".sha256") || n.ends_with(".json") || n.ends_with(".txt") || n.ends_with(".sig")
 }
 
-/// Pick the single binary asset whose name contains the target `triple`.
-/// Checksum/manifest/signature files are ignored. Ambiguous or missing matches
-/// produce a descriptive error listing the available asset names.
-pub fn select_binary_asset<'a>(release: &'a Release, triple: &str) -> Result<&'a Asset, String> {
+/// Pick the single binary asset whose name contains the target `triple` and
+/// optionally matches a specific `plugin_id`. Checksum/manifest/signature files
+/// are ignored. Ambiguous or missing matches produce a descriptive error listing
+/// the available asset names.
+pub fn select_binary_asset<'a>(
+    release: &'a Release,
+    triple: &str,
+    plugin_id: Option<&str>,
+) -> Result<&'a Asset, String> {
     let matches: Vec<&Asset> = release
         .assets
         .iter()
-        .filter(|a| !is_aux(&a.name) && a.name.contains(triple))
+        .filter(|a| {
+            if is_aux(&a.name) || !a.name.contains(triple) {
+                return false;
+            }
+            if let Some(id) = plugin_id {
+                extract_plugin_id(&a.name).as_deref() == Some(id)
+            } else {
+                true
+            }
+        })
         .collect();
     match matches.as_slice() {
         [one] => Ok(one),
-        [] => Err(format!(
-            "no asset matching target '{triple}' in release {}. assets: [{}]",
-            release.tag_name,
-            asset_names(release)
-        )),
-        many => Err(format!(
-            "{} assets match target '{triple}'; expected exactly one: [{}]",
-            many.len(),
-            many.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
-        )),
+        [] => {
+            let filter_desc = match plugin_id {
+                Some(id) => format!("target '{triple}' and plugin_id '{id}'"),
+                None => format!("target '{triple}'"),
+            };
+            Err(format!(
+                "no asset matching {filter_desc} in release {}. assets: [{}]",
+                release.tag_name,
+                asset_names(release)
+            ))
+        }
+        many => {
+            let filter_desc = match plugin_id {
+                Some(id) => format!("target '{triple}' and plugin_id '{id}'"),
+                None => format!("target '{triple}'"),
+            };
+            Err(format!(
+                "{} assets match {filter_desc}; expected exactly one: [{}]",
+                many.len(),
+                many.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
+            ))
+        }
     }
 }
 
@@ -175,7 +201,8 @@ pub fn select_plugin_releases<'a>(
     channel: Channel,
 ) -> Vec<PluginRelease<'a>> {
     let mut result: Vec<PluginRelease<'a>> = Vec::new();
-    let mut best_stable: Option<PluginRelease<'a>> = None;
+    let mut best_stable_version: Option<(u64, u64, u64)> = None;
+    let mut best_stable_plugins: Vec<PluginRelease<'a>> = Vec::new();
 
     for r in releases {
         let Some((ch, version)) = is_plugins_release(&r.tag_name) else {
@@ -188,17 +215,17 @@ pub fn select_plugin_releases<'a>(
         // For stable, keep only the highest semver; for nightly, use the latest.
         match channel {
             Channel::Stable => {
-                let keep = match &best_stable {
-                    Some(existing) => {
-                        version.as_deref().and_then(parse_semver)
-                            > existing.version.as_deref().and_then(parse_semver)
-                    }
-                    None => true,
+                let new_version = version.as_deref().and_then(parse_semver);
+                let should_keep = match best_stable_version {
+                    Some(existing) => new_version > Some(existing),
+                    None => new_version.is_some(),
                 };
-                if !keep {
+                if !should_keep {
                     continue;
                 }
-                best_stable = None; // will be replaced
+                // This is a better stable release; reset and collect its plugins.
+                best_stable_version = new_version;
+                best_stable_plugins.clear();
             }
             Channel::Nightly => {} // keep all nightly matches
         }
@@ -219,15 +246,13 @@ pub fn select_plugin_releases<'a>(
                 };
                 match channel {
                     Channel::Nightly => result.push(pr),
-                    Channel::Stable => best_stable = Some(pr),
+                    Channel::Stable => best_stable_plugins.push(pr),
                 }
             }
         }
     }
 
-    if let Some(pr) = best_stable {
-        result.push(pr);
-    }
+    result.extend(best_stable_plugins);
     result
 }
 
@@ -405,22 +430,36 @@ mod tests {
             "rdb-plugin-mysql-x86_64-apple-darwin",
             "SHA256SUMS",
         ]);
-        let a = select_binary_asset(&r, "aarch64-apple-darwin").unwrap();
+        let a = select_binary_asset(&r, "aarch64-apple-darwin", None).unwrap();
         assert_eq!(a.name, "rdb-plugin-mysql-aarch64-apple-darwin");
     }
 
     #[test]
     fn errors_when_no_asset_matches() {
         let r = release_with(&["rdb-plugin-mysql-x86_64-apple-darwin"]);
-        let e = select_binary_asset(&r, "aarch64-unknown-linux-gnu").unwrap_err();
+        let e = select_binary_asset(&r, "aarch64-unknown-linux-gnu", None).unwrap_err();
         assert!(e.contains("no asset matching"), "{e}");
     }
 
     #[test]
     fn errors_when_ambiguous() {
         let r = release_with(&["plugin-linux-extra", "other-plugin-linux"]);
-        let e = select_binary_asset(&r, "linux").unwrap_err();
+        let e = select_binary_asset(&r, "linux", None).unwrap_err();
         assert!(e.contains("expected exactly one"), "{e}");
+    }
+
+    #[test]
+    fn filters_by_plugin_id_to_disambiguate() {
+        let r = release_with(&[
+            "rdb-plugin-postgres-aarch64-apple-darwin",
+            "rdb-plugin-mongodb-aarch64-apple-darwin",
+            "rdb-plugin-rabbitmq-aarch64-apple-darwin",
+        ]);
+        // Without plugin_id: ambiguous
+        assert!(select_binary_asset(&r, "aarch64-apple-darwin", None).is_err());
+        // With plugin_id: selects the right one
+        let a = select_binary_asset(&r, "aarch64-apple-darwin", Some("postgres")).unwrap();
+        assert_eq!(a.name, "rdb-plugin-postgres-aarch64-apple-darwin");
     }
 
     #[test]

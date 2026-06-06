@@ -64,8 +64,9 @@ export type PluginStatus =
   | "unknown";
 
 /** A plugin installable from the configured GitHub repo (see
- *  `list_github_plugins`). `id` is derived from the release tag
- *  (`<plugin>-latest` or `<plugin>-v<semver>`), which equals the installed
+ *  `list_github_plugins`). All plugins share one release tag (`plugins-latest`
+ *  or `plugins-v<semver>`); `id` is derived from the asset name
+ *  (e.g. `rdb-plugin-postgres-<triple>` -> `postgres`) and equals the installed
  *  plugin's id. `status` is computed by the host against what's installed. */
 export interface AvailablePlugin {
   id: string;
@@ -312,11 +313,15 @@ export const api = {
   listGithubPlugins: (repo: string) =>
     invoke<AvailablePlugin[]>("list_github_plugins", { repo }),
 
-  previewGithubPlugin: (repo: string, tag?: string | null) =>
-    invoke<GithubPreview>("preview_github_plugin", { repo, tag: tag ?? null }),
+  previewGithubPlugin: (repo: string, tag?: string | null, pluginId?: string | null) =>
+    invoke<GithubPreview>("preview_github_plugin", {
+      repo,
+      tag: tag ?? null,
+      pluginId: pluginId ?? null,
+    }),
 
-  installGithubPlugin: (repo: string, tag: string, expectedSha: string | null) =>
-    invoke<PluginInfo>("install_github_plugin", { repo, tag, expectedSha }),
+  installGithubPlugin: (repo: string, tag: string, pluginId: string, expectedSha: string | null) =>
+    invoke<PluginInfo>("install_github_plugin", { repo, tag, pluginId, expectedSha }),
 
   // RDBMS
   rdbmsListSchemas: (connectionId: ConnectionId) =>

@@ -83,8 +83,9 @@ pub async fn cancel_last_plugin_call(
     manager.cancel(connection_id).await.map_err(err)
 }
 
-/// List the plugins installable from `repo` (`owner/name`): its rolling
-/// `<plugin>-latest` releases with a binary for this platform. No download.
+/// List the plugins installable from `repo` (`owner/name`): the rolling
+/// `plugins-latest` release's assets with a binary for this platform, one entry
+/// per plugin. No download.
 #[tauri::command]
 pub async fn list_github_plugins(
     manager: Manager<'_>,
@@ -95,13 +96,15 @@ pub async fn list_github_plugins(
 
 /// Resolve a GitHub release and report the asset + checksum that would be
 /// installed, without downloading the binary or executing anything.
+/// `plugin_id` disambiguates when a single release publishes several plugins.
 #[tauri::command]
 pub async fn preview_github_plugin(
     manager: Manager<'_>,
     repo: String,
     tag: Option<String>,
+    plugin_id: Option<String>,
 ) -> Result<GithubPreview, String> {
-    manager.preview_github(&repo, tag).await
+    manager.preview_github(&repo, tag, plugin_id.as_deref()).await
 }
 
 /// Download, checksum-verify, and install the plugin from the previewed release.
@@ -112,7 +115,8 @@ pub async fn install_github_plugin(
     manager: Manager<'_>,
     repo: String,
     tag: String,
+    plugin_id: String,
     expected_sha: Option<String>,
 ) -> Result<PluginInfo, String> {
-    manager.install_github(&repo, &tag, expected_sha).await
+    manager.install_github(&repo, &tag, Some(&plugin_id), expected_sha).await
 }
