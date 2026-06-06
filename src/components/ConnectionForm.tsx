@@ -7,6 +7,8 @@ import { genId } from "../store";
 interface ConnectionFormProps {
   plugins: PluginInfo[];
   error: string | null;
+  /** All saved profiles, used to enforce unique connection names. */
+  existing: SavedConnection[];
   /** When editing an existing saved profile; null/undefined for a new one. */
   initial?: SavedConnection | null;
   /** Persist the profile and open a live connection. Should reject on failure
@@ -33,6 +35,7 @@ function isVisible(field: ConfigField, values: ConnectionConfig): boolean {
 export function ConnectionForm({
   plugins,
   error,
+  existing,
   initial,
   onSaveAndConnect,
 }: ConnectionFormProps) {
@@ -104,11 +107,26 @@ export function ConnectionForm({
 
   async function onSaveAndConnectClick() {
     if (!selected) return;
+    const finalName = name.trim() || buildLabel();
+    // Names must be unique across saved profiles (case-insensitive), so the
+    // sidebar stays unambiguous. Skip the profile being edited.
+    const clash = existing.some(
+      (c) =>
+        c.id !== initial?.id &&
+        c.name.trim().toLowerCase() === finalName.toLowerCase(),
+    );
+    if (clash) {
+      setMsg({
+        kind: "error",
+        text: `A connection named "${finalName}" already exists.`,
+      });
+      return;
+    }
     setBusy(true);
     setMsg(null);
     const profile: SavedConnection = {
       id: initial?.id ?? genId(),
-      name: name.trim() || buildLabel(),
+      name: finalName,
       pluginId: selected.id,
       config: visibleConfig(),
     };

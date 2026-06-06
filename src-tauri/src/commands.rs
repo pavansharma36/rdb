@@ -74,6 +74,15 @@ pub async fn plugin_call(
         .map_err(err)
 }
 
+/// Cancel the in-flight `plugin_call` for `connection_id`, if any.
+#[tauri::command]
+pub async fn cancel_last_plugin_call(
+    manager: Manager<'_>,
+    connection_id: ConnectionId,
+) -> Result<(), String> {
+    manager.cancel(connection_id).await.map_err(err)
+}
+
 /// List the plugins installable from `repo` (`owner/name`): its rolling
 /// `<plugin>-latest` releases with a binary for this platform. No download.
 #[tauri::command]

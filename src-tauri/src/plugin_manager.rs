@@ -150,10 +150,26 @@ impl PluginProcess {
 
     /// Send one request and await its correlated response.
     async fn request(&self, method: &str, params: Value) -> Result<Value, PluginError> {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        self.request_with_id(id, method, params).await
+    }
+
+    /// Reserve a request id (so a caller can record it for cancellation before
+    /// awaiting via [`PluginProcess::request_with_id`]).
+    fn reserve_id(&self) -> u64 {
+        self.next_id.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// Send a request under a caller-provided `id` and await its response.
+    async fn request_with_id(
+        &self,
+        id: u64,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, PluginError> {
         if !self.is_alive() {
             return Err(PluginError::Backend("plugin process is not running".into()));
         }
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(id, tx);
 
@@ -184,6 +200,9 @@ pub struct PluginManager {
     plugins: RwLock<HashMap<String, DiscoveredPlugin>>,
     processes: Mutex<HashMap<String, Arc<PluginProcess>>>,
     routes: Mutex<HashMap<ConnectionId, String>>,
+    /// The current cancellable call per connection: `(plugin_id, request_id)`.
+    /// Lets `cancel` target the in-flight request for a connection.
+    in_flight: Mutex<HashMap<ConnectionId, (String, u64)>>,
 }
 
 /// What [`PluginManager::preview_github`] reports for the UI to confirm before
@@ -270,6 +289,7 @@ impl PluginManager {
             plugins: RwLock::new(plugins),
             processes: Mutex::new(HashMap::new()),
             routes: Mutex::new(HashMap::new()),
+            in_flight: Mutex::new(HashMap::new()),
         }
     }
 
@@ -353,11 +373,35 @@ impl PluginManager {
             .cloned()
             .ok_or_else(|| PluginError::NotFound(format!("connection {connection_id:?}")))?;
         let proc = self.process(&plugin_id).await?;
-        proc.request(
-            "call",
-            json!({ "connectionId": connection_id, "op": op, "params": params }),
-        )
-        .await
+        // Record this call as the connection's cancellable in-flight request, so
+        // `cancel` can target it; clear it once the call settles.
+        let id = proc.reserve_id();
+        self.in_flight
+            .lock()
+            .await
+            .insert(connection_id, (plugin_id.clone(), id));
+        let res = proc
+            .request_with_id(
+                id,
+                "call",
+                json!({ "connectionId": connection_id, "op": op, "params": params }),
+            )
+            .await;
+        self.in_flight.lock().await.remove(&connection_id);
+        res
+    }
+
+    /// Cancel the in-flight call for `connection_id`, if any. Sends a `cancel`
+    /// to the owning plugin, which aborts the request task (dropping its query
+    /// future closes the connection so the database terminates the statement).
+    pub async fn cancel(&self, connection_id: ConnectionId) -> Result<(), PluginError> {
+        let target = self.in_flight.lock().await.get(&connection_id).cloned();
+        let Some((plugin_id, id)) = target else {
+            return Ok(());
+        };
+        let proc = self.process(&plugin_id).await?;
+        proc.request("cancel", json!({ "id": id })).await?;
+        Ok(())
     }
 
     // -- GitHub install ----------------------------------------------------

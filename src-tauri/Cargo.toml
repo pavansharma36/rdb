@@ -31,3 +31,9 @@ rdb-core.workspace = true
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+
+# Used to disable macOS system text substitutions (auto-capitalize, smart
+# quotes/dashes) that corrupt typed input inside the WebView.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSUserDefaults"] }

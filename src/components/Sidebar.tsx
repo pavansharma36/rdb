@@ -17,6 +17,7 @@ interface SidebarProps {
   onNew: () => void;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  onDisconnect: (savedId: string) => void;
   onInstallPlugin: () => void;
   onCheckUpdates: () => void;
 }
@@ -33,6 +34,7 @@ export function Sidebar({
   onNew,
   onEdit,
   onDelete,
+  onDisconnect,
   onInstallPlugin,
   onCheckUpdates,
 }: SidebarProps) {
@@ -81,18 +83,38 @@ export function Sidebar({
           return (
             <div
               key={s.id}
-              className={"conn-item" + (isActive ? " active" : "")}
+              className={
+                "conn-item" +
+                (isActive ? " active" : "") +
+                (live ? " connected" : "")
+              }
               onClick={() => onSelect(s)}
             >
               <span
                 className={
-                  "dot dot-" + kindOf(s.pluginId) + (live ? " connected" : "")
+                  "dot dot-" +
+                  kindOf(s.pluginId) +
+                  " dot-id-" +
+                  s.pluginId +
+                  (live ? " connected" : "")
                 }
                 title={live ? "Connected" : "Not connected"}
               />
               <span className="conn-name" title={s.name}>
                 {s.name}
               </span>
+              {live && (
+                <button
+                  className="icon-btn"
+                  title="Disconnect"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDisconnect(s.id);
+                  }}
+                >
+                  ⏏
+                </button>
+              )}
               <button
                 className="icon-btn"
                 title="Edit connection"

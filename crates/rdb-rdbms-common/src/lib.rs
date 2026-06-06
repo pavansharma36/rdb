@@ -51,6 +51,23 @@ pub struct Column {
     pub udt_name: Option<String>,
     pub nullable: bool,
     pub primary_key: bool,
+    /// Declared length for character types (`varchar(n)`, `char(n)`), if any.
+    #[serde(default)]
+    pub char_max_length: Option<i32>,
+    /// Precision for `numeric`/`decimal` columns, if declared.
+    #[serde(default)]
+    pub numeric_precision: Option<i32>,
+    /// Scale for `numeric`/`decimal` columns, if declared.
+    #[serde(default)]
+    pub numeric_scale: Option<i32>,
+    /// True for JSON-valued columns; the UI offers a JSON editor (validate/format).
+    #[serde(default)]
+    pub json: bool,
+    /// True for long-text-ish columns (incl. JSON); the UI edits them in a modal
+    /// rather than a one-line input. The plugin classifies this so the frontend
+    /// stays dialect-agnostic.
+    #[serde(default)]
+    pub large: bool,
 }
 
 /// A single cell's value together with the SQL type to cast it to. Used to
@@ -80,6 +97,18 @@ pub struct QueryResult {
 pub struct ColumnMeta {
     pub name: String,
     pub data_type: String,
+}
+
+/// An index on a table, for the structure view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Index {
+    pub name: String,
+    /// Access method (`btree`, `hash`, `gin`, …).
+    pub method: String,
+    pub unique: bool,
+    pub primary: bool,
+    /// The indexed columns (or expressions), in order.
+    pub columns: Vec<String>,
 }
 
 /// A staged update to one row: identify it by `pk`, set the columns in `changes`.
@@ -151,7 +180,46 @@ pub trait RdbmsPlugin: Send + Sync {
         Err(PluginError::Unsupported)
     }
 
-    async fn execute(&self, conn: Arc<dyn Connection>, sql: &str) -> Result<QueryResult>;
+    /// List the indexes on a table, for the structure view. Plugins that don't
+    /// expose index metadata return [`PluginError::Unsupported`].
+    async fn list_indexes(
+        &self,
+        _conn: Arc<dyn Connection>,
+        _schema: &str,
+        _table: &str,
+    ) -> Result<Vec<Index>> {
+        Err(PluginError::Unsupported)
+    }
+
+    /// Fetch the first `limit` rows of a table for browsing. The default builds
+    /// an ANSI `SELECT * FROM "schema"."table" LIMIT n` (double-quote-escaping
+    /// identifiers) and runs it via [`RdbmsPlugin::execute`]. Plugins on dialects
+    /// that quote differently or page differently (MySQL backticks, SQL Server
+    /// `TOP`, …) override this — keeping dialect knowledge out of the frontend.
+    async fn browse_table(
+        &self,
+        conn: Arc<dyn Connection>,
+        schema: &str,
+        table: &str,
+        limit: u32,
+    ) -> Result<QueryResult> {
+        let q = format!(
+            "SELECT * FROM \"{}\".\"{}\" LIMIT {}",
+            schema.replace('"', "\"\""),
+            table.replace('"', "\"\""),
+            limit
+        );
+        // Browsing is a single SELECT, so hand back just that one result.
+        Ok(self.execute(conn, &q).await?.pop().unwrap_or(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            rows_affected: None,
+            elapsed_ms: 0,
+        }))
+    }
+
+    /// Run a SQL script and return one [`QueryResult`] per statement, in order.
+    async fn execute(&self, conn: Arc<dyn Connection>, sql: &str) -> Result<Vec<QueryResult>>;
 
     /// Apply a batch of inserts/updates/deletes to one table atomically (in a
     /// single transaction). Plugins that don't support editing return
@@ -201,6 +269,13 @@ struct DescribeTableParams {
 }
 
 #[derive(Deserialize)]
+struct BrowseTableParams {
+    schema: String,
+    table: String,
+    limit: u32,
+}
+
+#[derive(Deserialize)]
 struct ExecuteParams {
     sql: String,
 }
@@ -245,6 +320,14 @@ pub async fn dispatch_rdbms(
         "rdbms.ddl_statement" => {
             let p: DescribeTableParams = parse(params)?;
             to_value(plugin.ddl_statement(conn, &p.schema, &p.table).await?)
+        }
+        "rdbms.list_indexes" => {
+            let p: DescribeTableParams = parse(params)?;
+            to_value(plugin.list_indexes(conn, &p.schema, &p.table).await?)
+        }
+        "rdbms.browse_table" => {
+            let p: BrowseTableParams = parse(params)?;
+            to_value(plugin.browse_table(conn, &p.schema, &p.table, p.limit).await?)
         }
         "rdbms.execute" => {
             let p: ExecuteParams = parse(params)?;
@@ -294,13 +377,13 @@ mod tests {
         ) -> Result<Vec<Column>> {
             Ok(vec![])
         }
-        async fn execute(&self, _c: Arc<dyn Connection>, _sql: &str) -> Result<QueryResult> {
-            Ok(QueryResult {
+        async fn execute(&self, _c: Arc<dyn Connection>, _sql: &str) -> Result<Vec<QueryResult>> {
+            Ok(vec![QueryResult {
                 columns: vec![],
                 rows: vec![],
                 rows_affected: Some(0),
                 elapsed_ms: 0,
-            })
+            }])
         }
     }
 

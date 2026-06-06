@@ -109,6 +109,16 @@ export interface Column {
   udt_name?: string | null;
   nullable: boolean;
   primary_key: boolean;
+  /** Declared length for character types (`varchar(n)`/`char(n)`), if any. */
+  char_max_length?: number | null;
+  /** Precision/scale for `numeric`/`decimal` columns, if declared. */
+  numeric_precision?: number | null;
+  numeric_scale?: number | null;
+  /** JSON-valued column: the UI offers the JSON editor (validate/format). */
+  json?: boolean;
+  /** Long-text-ish column (incl. JSON): edits open in a modal, not inline.
+   * The owning plugin classifies this so the UI stays dialect-agnostic. */
+  large?: boolean;
 }
 
 /** A cell value plus the SQL type to CAST it to, for editing DML. */
@@ -142,6 +152,16 @@ export interface ApplyResult {
 export interface ColumnMeta {
   name: string;
   data_type: string;
+}
+
+/** An index on a table (shown in the structure view). */
+export interface Index {
+  name: string;
+  /** Access method (`btree`, `hash`, `gin`, …). */
+  method: string;
+  unique: boolean;
+  primary: boolean;
+  columns: string[];
 }
 
 export interface QueryResult {
@@ -321,8 +341,31 @@ export const api = {
   rdbmsDdlStatement: (connectionId: ConnectionId, schema: string, table: string) =>
     pluginCall<string>(connectionId, "rdbms.ddl_statement", { schema, table }),
 
+  /** Indexes on a table, for the structure view. */
+  rdbmsListIndexes: (connectionId: ConnectionId, schema: string, table: string) =>
+    pluginCall<Index[]>(connectionId, "rdbms.list_indexes", { schema, table }),
+
+  /** Run a SQL script; returns one result per statement, in order. */
   rdbmsExecute: (connectionId: ConnectionId, sql: string) =>
-    pluginCall<QueryResult>(connectionId, "rdbms.execute", { sql }),
+    pluginCall<QueryResult[]>(connectionId, "rdbms.execute", { sql }),
+
+  /** Cancel the in-flight plugin call for a connection (aborts it on the server). */
+  cancelLastPluginCall: (connectionId: ConnectionId) =>
+    invoke<void>("cancel_last_plugin_call", { connectionId }),
+
+  /** Fetch the first `limit` rows of a table; the plugin builds the
+   * dialect-correct query (quoting + row limit). */
+  rdbmsBrowseTable: (
+    connectionId: ConnectionId,
+    schema: string,
+    table: string,
+    limit: number,
+  ) =>
+    pluginCall<QueryResult>(connectionId, "rdbms.browse_table", {
+      schema,
+      table,
+      limit,
+    }),
 
   rdbmsApplyChanges: (
     connectionId: ConnectionId,

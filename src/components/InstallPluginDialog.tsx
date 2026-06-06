@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, errString } from "../api";
 import type { AvailablePlugin, GithubPreview, PluginInfo, PluginStatus } from "../api";
 import { loadConfig } from "../store";
+import { Modal } from "./Modal";
 
 interface InstallPluginDialogProps {
   onClose: () => void;
@@ -131,19 +132,16 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <header className="modal-header">
-          <span>
-            Install plugin{repo ? ` from ${repo}` : ""}
-            {channel && <span className="channel-tag">{channel}</span>}
-          </span>
-          <button className="close-x" onClick={onClose} title="Close">
-            ×
-          </button>
-        </header>
-
-        {loadError && <p className="msg error">{loadError}</p>}
+    <Modal
+      onClose={onClose}
+      title={
+        <>
+          Install plugin{repo ? ` from ${repo}` : ""}
+          {channel && <span className="channel-tag">{channel}</span>}
+        </>
+      }
+    >
+      {loadError && <p className="msg error">{loadError}</p>}
 
         {!available && !loadError && <p className="muted">Loading plugins…</p>}
 
@@ -224,7 +222,6 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
         )}
 
         {error && <p className="msg error">{error}</p>}
-      </div>
-    </div>
+    </Modal>
   );
 }

@@ -25,7 +25,7 @@ use rdb_core::{Connection, ConnectionConfig, ConnectionId, Plugin, PluginError, 
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 /// Maps an opaque capability `op` (e.g. `"rdbms.execute"`) plus its JSON
 /// `params` to a result, given the live connection it targets. The host treats
@@ -140,6 +140,12 @@ where
     let plugin = Arc::new(plugin);
     let dispatcher = Arc::new(dispatcher);
     let conns: Connections = Arc::new(Mutex::new(HashMap::new()));
+    // Cancellation channels for in-flight request tasks, keyed by request id, so
+    // a `cancel` can stop one cooperatively (we drop the query future at an await
+    // point inside the task — never via task abort, which can turn a panicking
+    // destructor into a process abort).
+    let in_flight: Arc<Mutex<HashMap<u64, oneshot::Sender<()>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
 
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
     let writer = tokio::spawn(async move {
@@ -174,20 +180,48 @@ where
             }
         };
 
+        // `cancel` is handled inline (not spawned): signal the target request's
+        // task to cancel; it drops its query future and replies on its own. We
+        // just ack the cancel here.
+        if req.method == "cancel" {
+            if let Some(target) = req.params.get("id").and_then(|v| v.as_u64()) {
+                if let Some(tx) = in_flight.lock().await.remove(&target) {
+                    let _ = tx.send(());
+                }
+            }
+            if let Ok(s) = serde_json::to_string(&Response::ok(req.id, Value::Null)) {
+                let _ = out_tx.send(s);
+            }
+            continue;
+        }
+
         let plugin = plugin.clone();
         let dispatcher = dispatcher.clone();
         let conns = conns.clone();
         let out_tx = out_tx.clone();
+        let in_flight_task = in_flight.clone();
+        let req_id = req.id;
+        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         tokio::spawn(async move {
             let id = req.id;
-            let resp = match handle(&*plugin, &*dispatcher, &conns, req).await {
-                Ok(v) => Response::ok(id, v),
-                Err(e) => Response::err(id, (&e).into()),
+            // Race the work against a cancel signal. Picking the cancel branch
+            // drops the `handle(..)` future at its current await point — a
+            // cancellation-safe drop that closes any in-flight query connection.
+            let resp = tokio::select! {
+                r = handle(&*plugin, &*dispatcher, &conns, req) => match r {
+                    Ok(v) => Response::ok(id, v),
+                    Err(e) => Response::err(id, (&e).into()),
+                },
+                _ = cancel_rx => {
+                    Response::err(id, PluginError::Backend("cancelled".into()).into())
+                }
             };
+            in_flight_task.lock().await.remove(&id);
             if let Ok(s) = serde_json::to_string(&resp) {
                 let _ = out_tx.send(s);
             }
         });
+        in_flight.lock().await.insert(req_id, cancel_tx);
     }
 
     drop(out_tx);

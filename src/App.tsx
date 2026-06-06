@@ -5,6 +5,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { InstallPluginDialog } from "./components/InstallPluginDialog";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { ConfirmDialog } from "./components/Modal";
 import { checkForUpdate, type UpdateInfo } from "./updater";
 import { RdbmsWorkspace } from "./components/workspaces/RdbmsWorkspace";
 import { DocumentWorkspace } from "./components/workspaces/DocumentWorkspace";
@@ -50,6 +51,8 @@ export function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   // Sidebar width in px, restored from config and updated by the drag handle.
   const [sidebarWidth, setSidebarWidth] = useState(240);
+  // Saved-profile id pending a delete confirmation (null = no prompt shown).
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   useEffect(() => {
     api
@@ -193,6 +196,19 @@ export function App() {
     }
   }
 
+  /** Close the live connection for a saved profile (leaving the profile). */
+  async function disconnect(savedId: string) {
+    const live = open.find((o) => o.savedId === savedId);
+    if (!live) return;
+    try {
+      await api.closeConnection(live.id);
+    } catch {
+      // Best effort — drop it locally regardless.
+    }
+    setOpen((os) => os.filter((o) => o.id !== live.id));
+    setActiveId((cur) => (cur === live.id ? null : cur));
+  }
+
   async function deleteSaved(id: string) {
     const live = open.find((o) => o.savedId === id);
     if (live) {
@@ -288,7 +304,8 @@ export function App() {
           setCreating(false);
           setConnectError(null);
         }}
-        onDelete={deleteSaved}
+        onDelete={(id) => setPendingDelete(id)}
+        onDisconnect={disconnect}
         onInstallPlugin={() => setInstalling(true)}
         onCheckUpdates={checkForUpdates}
       />
@@ -303,6 +320,7 @@ export function App() {
             key={editingId ?? (creating ? "new" : "default")}
             plugins={plugins}
             error={formError}
+            existing={saved}
             initial={editingProfile}
             onSaveAndConnect={saveAndConnect}
           />
@@ -326,6 +344,27 @@ export function App() {
         <UpdateBanner update={update} onDismiss={() => setUpdate(null)} />
       )}
       {updateNote && <div className="update-toast">{updateNote}</div>}
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Delete connection"
+          message={
+            <>
+              Delete{" "}
+              <strong>
+                {saved.find((c) => c.id === pendingDelete)?.name ??
+                  "this connection"}
+              </strong>
+              ? This can't be undone.
+            </>
+          }
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => {
+            const id = pendingDelete;
+            setPendingDelete(null);
+            void deleteSaved(id);
+          }}
+        />
+      )}
     </div>
   );
 }

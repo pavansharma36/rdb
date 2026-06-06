@@ -59,6 +59,13 @@ button.primary {
   font-weight: 600;
 }
 
+button.danger {
+  background: #c0392b;
+  color: #fff;
+  border-color: #c0392b;
+  font-weight: 600;
+}
+
 input,
 select,
 textarea {
@@ -319,6 +326,30 @@ textarea:focus {
   gap: 12px;
 }
 
+.cell-editor-modal {
+  width: 680px;
+}
+
+.cell-editor {
+  width: 100%;
+  min-height: 320px;
+  resize: vertical;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  tab-size: 2;
+}
+
+.cell-editor-actions {
+  align-items: center;
+}
+
+.cell-editor-actions .spacer {
+  flex: 1;
+}
+
 .modal-header {
   display: flex;
   align-items: center;
@@ -452,19 +483,33 @@ textarea:focus {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: var(--muted);
+  background: var(--dot-color, var(--muted));
 }
 
+/* Per-kind fallback colors (used when a plugin id has no specific color). */
 .dot-rdbms {
-  background: var(--accent);
+  --dot-color: var(--accent);
 }
 
 .dot-document {
-  background: var(--ok);
+  --dot-color: var(--ok);
 }
 
-.dot-messaging {
-  background: var(--warn);
+.dot-rabbitmq {
+  --dot-color: var(--warn);
+}
+
+/* Per-plugin brand colors. */
+.dot-id-postgres {
+  --dot-color: #4a90d9;
+}
+
+.dot-id-rabbitmq {
+  --dot-color: #f60;
+}
+
+.dot-id-mongodb {
+  --dot-color: #00684a;
 }
 
 /* Dim saved connections that aren't currently open; light up the connected. */
@@ -472,8 +517,20 @@ textarea:focus {
   opacity: 0.35;
 }
 
+/* Connected: full opacity + a soft glow in the plugin's own color. */
 .dot.connected {
   opacity: 1;
+  box-shadow: 0 0 6px 1px var(--dot-color, var(--ok));
+}
+
+/* Dim disconnected rows; brighten connected ones. */
+.conn-item:not(.connected) .conn-name {
+  color: var(--muted);
+}
+
+.conn-item.connected .conn-name {
+  color: var(--text);
+  font-weight: 500;
 }
 
 .main {
@@ -688,34 +745,6 @@ textarea:focus {
   opacity: 1;
 }
 
-.confirm-del {
-  display: flex;
-  gap: 2px;
-  margin-left: auto;
-}
-
-.confirm-yes,
-.confirm-no {
-  background: none;
-  border: none;
-  padding: 0 4px;
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.confirm-yes {
-  color: var(--err);
-}
-
-.confirm-no {
-  color: var(--muted);
-}
-
-.confirm-no:hover {
-  color: var(--text);
-}
-
 .tree-dbselect select {
   width: 100%;
 }
@@ -770,6 +799,11 @@ textarea:focus {
   flex-wrap: wrap;
 }
 
+.editor-toolbar .running {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .editor-file {
   display: flex;
   align-items: center;
@@ -811,6 +845,29 @@ textarea.code {
   border-radius: 6px;
 }
 
+/* Per-statement result tabs (multi-statement scripts). */
+.result-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.result-tabs button {
+  padding: 2px 10px;
+  font-size: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 5px 5px 0 0;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.result-tabs button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-3);
+}
+
 table.grid {
   border-collapse: collapse;
   width: 100%;
@@ -823,7 +880,9 @@ table.grid td {
   border: 1px solid var(--border);
   padding: 4px 8px;
   text-align: left;
-  white-space: pre;
+  /* nowrap (not pre) so multi-line text/JSON stays on one line and every row
+     keeps the same height; the full value opens in the cell editor. */
+  white-space: nowrap;
   max-width: 360px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -839,6 +898,51 @@ table.grid th {
 table.grid td.null {
   color: var(--muted);
   font-style: italic;
+}
+
+table.grid tr.empty-row td {
+  color: var(--muted);
+  font-style: italic;
+  text-align: center;
+  padding: 12px;
+}
+
+.structure-heading {
+  margin: 16px 8px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-2);
+}
+
+/* Roomier structure tables with chip-style cell values. */
+table.grid.structure-table th,
+table.grid.structure-table td {
+  padding: 4px 10px;
+  white-space: normal;
+}
+
+.chip {
+  display: inline-block;
+  margin: 1px 4px 1px 0;
+  padding: 1px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* Nullable column: nullable (YES) vs NOT NULL (NO). */
+.chip.chip-yes {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.chip.chip-no {
+  color: var(--warn);
+  border-color: var(--warn);
 }
 
 /* Editable grid ---------------------------------------------------------- */
@@ -973,27 +1077,39 @@ table.grid tr.new-row td {
 }
 
 .view-switch {
-  display: flex;
-  gap: 0;
+  display: inline-flex;
 }
 
 .view-switch button {
-  padding: 2px 8px;
+  padding: 3px 12px;
+  min-width: 64px;
   font-size: 12px;
+  line-height: 1.5;
   background: var(--bg-2);
   border: 1px solid var(--border);
-  border-right: none;
+  border-radius: 0;
   color: var(--muted);
   cursor: pointer;
+  position: relative;
+}
+
+/* Collapse the shared border between adjacent segments. */
+.view-switch button + button {
+  margin-left: -1px;
 }
 
 .view-switch button:first-child {
-  border-radius: 4px 0 0 4px;
+  border-radius: 5px 0 0 5px;
 }
 
 .view-switch button:last-child {
-  border-right: 1px solid var(--border);
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 5px 5px 0;
+}
+
+/* Lift hovered/active segments so their full border draws over neighbors. */
+.view-switch button:hover:not(:disabled),
+.view-switch button.active {
+  z-index: 1;
 }
 
 .view-switch button.active {

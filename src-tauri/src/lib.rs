@@ -61,6 +61,9 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            disable_macos_text_substitutions();
+
             let dir = plugins_dir(app)?;
             tracing::info!("discovering plugins in {}", dir.display());
             let manager = Arc::new(PluginManager::discover(&dir));
@@ -82,6 +85,7 @@ pub fn run() {
             commands::open_connection,
             commands::close_connection,
             commands::plugin_call,
+            commands::cancel_last_plugin_call,
             commands::list_github_plugins,
             commands::preview_github_plugin,
             commands::install_github_plugin,
@@ -98,6 +102,33 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// macOS applies system "smart" text substitutions — first-letter
+/// capitalization, smart quotes/dashes — inside WebView text fields. That
+/// silently corrupts typed input (JSON, SQL, hostnames, passwords), so disable
+/// them in this app's user-defaults domain. The HTML `autocapitalize`/
+/// `autocorrect` attributes don't control this on desktop WKWebView.
+#[cfg(target_os = "macos")]
+fn disable_macos_text_substitutions() {
+    use objc2::msg_send;
+    use objc2_foundation::{NSString, NSUserDefaults};
+
+    let keys = [
+        "NSAutomaticCapitalizationEnabled",
+        "NSAutomaticQuoteSubstitutionEnabled",
+        "NSAutomaticDashSubstitutionEnabled",
+        "NSAutomaticPeriodSubstitutionEnabled",
+        "NSAutomaticTextReplacementEnabled",
+        "NSAutomaticSpellingCorrectionEnabled",
+    ];
+    unsafe {
+        let defaults = NSUserDefaults::standardUserDefaults();
+        for key in keys {
+            let k = NSString::from_str(key);
+            let _: () = msg_send![&*defaults, setBool: false, forKey: &*k];
+        }
+    }
 }
 
 #[cfg(test)]
