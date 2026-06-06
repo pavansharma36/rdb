@@ -27,6 +27,8 @@ jobs:
   build:
     name: build ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    if: |
+      !contains(github.event.head_commit.message, '[skip ci]')
     strategy:
       fail-fast: false
       matrix:
@@ -98,8 +100,8 @@ jobs:
             const c = JSON.parse(fs.readFileSync(p, "utf8"));
             let v = process.env.VERSION;
             if (!v) {
-              const [maj, min] = c.version.split(".");
-              v = `${maj}.${min}.${process.env.COUNT}`;
+              const [maj, min, patch] = c.version.split(".");
+              v = `${maj}.${min}.${patch}.${process.env.COUNT}`;
             }
             c.version = v;
             fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
@@ -121,6 +123,13 @@ jobs:
             echo "name=rdb desktop (nightly)" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Delete existing latest release
+        if: github.ref_name == 'latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes || true
 
       # tauri-action runs the beforeBuildCommand (npm run build) to produce the
       # frontend, builds the app, then uploads the bundles to the release for
@@ -144,3 +153,16 @@ jobs:
           releaseBody: "Desktop build from ${{ github.sha }}."
           prerelease: ${{ steps.meta.outputs.prerelease }}
           args: ${{ matrix.args }}
+
+      - name: Commit version change
+        if: github.ref_type == 'tag'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add src-tauri/tauri.conf.json
+
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update version to ${GITHUB_REF_NAME#v} [skip ci]"
+            git push origin HEAD:master
+          fi
