@@ -39,6 +39,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          
+          gh release view latest
   
           if gh release view latest >/dev/null 2>&1; then
             echo "Cleaning existing assets from latest release..."
@@ -182,8 +184,7 @@ jobs:
     name: finalize release
     needs: build
     if: |
-      github.ref_type == 'tag' &&
-      needs.build.result == 'success'
+      github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
       contents: write
