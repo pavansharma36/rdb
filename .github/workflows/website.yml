@@ -2,7 +2,7 @@ name: Deploy Website Folder
 
 on:
   push:
-    branches: ["dev"] # Change to master if needed
+    branches: ["master"] # Change to master if needed
 
 permissions:
   contents: read
