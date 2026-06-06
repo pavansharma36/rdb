@@ -213,7 +213,9 @@ jobs:
           
           export VERSION="${GITHUB_REF_NAME#v}"
           IFS='.' read -r maj min pat <<< "$VERSION"
-          export VERSION="${maj}.${min}.${(pat + 1)}"
+          pat=${pat:-0}
+          pat=$((pat+1))
+          export VERSION="${maj}.${min}.${pat}"
           
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
