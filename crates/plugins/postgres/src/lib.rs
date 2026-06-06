@@ -4,11 +4,12 @@ use rdb_core::{
     PluginKind, Result,
 };
 use rdb_rdbms_common::{
-    downcast_conn, ApplyResult, Column, ColumnMeta, ColumnValue, QueryResult, RdbmsPlugin,
+    downcast_conn, ApplyResult, Column, ColumnMeta, ColumnValue, Index, QueryResult, RdbmsPlugin,
     RowChanges, Schema, Table, TableKind,
 };
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
-use sqlx::{Column as _, Row, TypeInfo};
+use sqlx::{Column as _, Executor, Row, TypeInfo};
+use sqlx::{AssertSqlSafe, SqlSafeStr};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -249,8 +250,18 @@ impl RdbmsPlugin for PostgresPlugin {
         table: &str,
     ) -> Result<Vec<Column>> {
         let conn = downcast_conn::<PostgresConnection>(&conn)?;
-        let rows: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
+        let rows: Vec<(
+            String,
+            String,
+            String,
+            String,
+            Option<i32>,
+            Option<i32>,
+            Option<i32>,
+            Option<String>,
+        )> = sqlx::query_as(
             "select c.column_name, c.data_type, c.udt_name, c.is_nullable, \
+                    c.character_maximum_length, c.numeric_precision, c.numeric_scale, \
                     (select 'YES' from information_schema.table_constraints tc \
                      join information_schema.key_column_usage kcu using (constraint_name, table_schema) \
                      where tc.constraint_type = 'PRIMARY KEY' \
@@ -269,57 +280,166 @@ impl RdbmsPlugin for PostgresPlugin {
 
         Ok(rows
             .into_iter()
-            .map(|(name, dtype, udt, nullable, pk)| Column {
+            .map(
+                |(name, dtype, udt, nullable, char_len, precision, scale, pk)| {
+                    let u = udt.to_ascii_lowercase();
+                    let json = u == "json" || u == "jsonb";
+                    // Long-text-ish columns get the modal editor instead of an
+                    // inline input. Classified here so the UI stays dialect-free.
+                    let large = json || dtype == "text" || dtype == "xml" || u == "citext";
+                    Column {
+                        name,
+                        data_type: dtype,
+                        udt_name: Some(udt),
+                        nullable: nullable == "YES",
+                        primary_key: pk.is_some(),
+                        char_max_length: char_len,
+                        numeric_precision: precision,
+                        numeric_scale: scale,
+                        json,
+                        large,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    async fn ddl_statement(
+        &self,
+        conn: Arc<dyn Connection>,
+        schema: &str,
+        table: &str,
+    ) -> Result<String> {
+        let columns = self.describe_table(conn.clone(), schema, table).await?;
+        if columns.is_empty() {
+            return Err(PluginError::Backend(format!(
+                "table {schema}.{table} not found or has no columns"
+            )));
+        }
+        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+
+        // Column definitions, then the primary key (if any).
+        let mut lines: Vec<String> = columns
+            .iter()
+            .map(|c| {
+                let ty = match (c.data_type.as_str(), &c.udt_name) {
+                    ("USER-DEFINED", Some(udt)) => udt.clone(),
+                    _ => c.data_type.clone(),
+                };
+                let null = if c.nullable { "" } else { " NOT NULL" };
+                format!("  \"{}\" {}{}", c.name, ty, null)
+            })
+            .collect();
+        let pks: Vec<String> = columns
+            .iter()
+            .filter(|c| c.primary_key)
+            .map(|c| format!("\"{}\"", c.name))
+            .collect();
+        if !pks.is_empty() {
+            lines.push(format!("  PRIMARY KEY ({})", pks.join(", ")));
+        }
+        let mut ddl = format!(
+            "CREATE TABLE \"{schema}\".\"{table}\" (\n{}\n);",
+            lines.join(",\n")
+        );
+
+        // Append non-primary-key indexes via pg_get_indexdef.
+        let indexes: Vec<(String,)> = sqlx::query_as(
+            "select pg_get_indexdef(ix.indexrelid) \
+             from pg_index ix \
+             join pg_class t on t.oid = ix.indrelid \
+             join pg_namespace n on n.oid = t.relnamespace \
+             where n.nspname = $1 and t.relname = $2 and not ix.indisprimary \
+             order by ix.indexrelid::regclass::text",
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&conn.pool())
+        .await
+        .map_err(|e| PluginError::Backend(e.to_string()))?;
+
+        for (def,) in indexes {
+            ddl.push_str("\n\n");
+            ddl.push_str(&def);
+            ddl.push(';');
+        }
+        Ok(ddl)
+    }
+
+    async fn list_indexes(
+        &self,
+        conn: Arc<dyn Connection>,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<Index>> {
+        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        // Each index's columns come back as a text[] of column expressions in
+        // key order. `indkey` is a 0-based int2vector, but pg_get_indexdef's
+        // column number is 1-based (and 0 means "the whole index" → it would
+        // return the full CREATE INDEX statement), so offset the subscript by 1.
+        let rows: Vec<(String, String, bool, bool, Vec<String>)> = sqlx::query_as(
+            "select i.relname, am.amname, ix.indisunique, ix.indisprimary, \
+                    array(select pg_get_indexdef(ix.indexrelid, k.n + 1, true) \
+                          from generate_subscripts(ix.indkey, 1) as k(n) \
+                          order by k.n) \
+             from pg_index ix \
+             join pg_class i on i.oid = ix.indexrelid \
+             join pg_class t on t.oid = ix.indrelid \
+             join pg_namespace n on n.oid = t.relnamespace \
+             join pg_am am on am.oid = i.relam \
+             where n.nspname = $1 and t.relname = $2 \
+             order by ix.indisprimary desc, i.relname",
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&conn.pool())
+        .await
+        .map_err(|e| PluginError::Backend(e.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(name, method, unique, primary, columns)| Index {
                 name,
-                data_type: dtype,
-                udt_name: Some(udt),
-                nullable: nullable == "YES",
-                primary_key: pk.is_some(),
+                method,
+                unique,
+                primary,
+                columns,
             })
             .collect())
     }
 
-    async fn execute(&self, conn: Arc<dyn Connection>, sql: &str) -> Result<QueryResult> {
+    async fn execute(&self, conn: Arc<dyn Connection>, sql: &str) -> Result<Vec<QueryResult>> {
         let conn = downcast_conn::<PostgresConnection>(&conn)?;
         let pool = conn.pool();
-        let start = Instant::now();
 
-        if is_select(sql) {
-            let rows = sqlx::query(sql)
-                .fetch_all(&pool)
-                .await
-                .map_err(|e| PluginError::Backend(e.to_string()))?;
-            let columns = if let Some(first) = rows.first() {
-                first
-                    .columns()
-                    .iter()
-                    .map(|c| ColumnMeta {
-                        name: c.name().to_string(),
-                        data_type: c.type_info().name().to_string(),
-                    })
-                    .collect()
+        // A script may hold several statements; run them in order on the same
+        // pool and return one result each. SELECT-ish statements yield a row
+        // grid; other statements yield their affected-row count.
+        let mut results = Vec::new();
+        for stmt in split_statements(sql) {
+            let start = Instant::now();
+            if is_select(&stmt) {
+                let (columns, rows) = select_result(&pool, &stmt).await?;
+                results.push(QueryResult {
+                    columns,
+                    rows,
+                    rows_affected: None,
+                    elapsed_ms: start.elapsed().as_millis(),
+                });
             } else {
-                Vec::new()
-            };
-            let data = rows.iter().map(row_to_json).collect();
-            Ok(QueryResult {
-                columns,
-                rows: data,
-                rows_affected: None,
-                elapsed_ms: start.elapsed().as_millis(),
-            })
-        } else {
-            let res = sqlx::query(sql)
-                .execute(&pool)
-                .await
-                .map_err(|e| PluginError::Backend(e.to_string()))?;
-            Ok(QueryResult {
-                columns: Vec::new(),
-                rows: Vec::new(),
-                rows_affected: Some(res.rows_affected()),
-                elapsed_ms: start.elapsed().as_millis(),
-            })
+                let res = sqlx::query(AssertSqlSafe(stmt.clone()))
+                    .execute(&pool)
+                    .await
+                    .map_err(|e| PluginError::Backend(e.to_string()))?;
+                results.push(QueryResult {
+                    columns: Vec::new(),
+                    rows: Vec::new(),
+                    rows_affected: Some(res.rows_affected()),
+                    elapsed_ms: start.elapsed().as_millis(),
+                });
+            }
         }
+        Ok(results)
     }
 
     async fn apply_changes(
@@ -365,7 +485,7 @@ async fn run_dml(
     sql: &str,
     params: &[String],
 ) -> Result<u64> {
-    let mut q = sqlx::query(sql);
+    let mut q = sqlx::query(AssertSqlSafe(sql));
     for p in params {
         q = q.bind(p);
     }
@@ -522,43 +642,250 @@ fn is_select(sql: &str) -> bool {
     matches!(head.as_str(), "select" | "with" | "show" | "explain")
 }
 
-fn row_to_json(row: &PgRow) -> Vec<serde_json::Value> {
-    use sqlx::ValueRef;
-    let mut out = Vec::with_capacity(row.len());
-    for i in 0..row.len() {
-        let raw = match row.try_get_raw(i) {
-            Ok(r) => r,
-            Err(_) => {
-                out.push(serde_json::Value::Null);
-                continue;
-            }
-        };
-        if raw.is_null() {
-            out.push(serde_json::Value::Null);
-            continue;
+/// Run one SELECT-ish statement and return its column metadata + JSON rows.
+/// When zero rows come back we `describe` the statement so the grid still shows
+/// the column headers rather than nothing.
+async fn select_result(
+    pool: &PgPool,
+    stmt: &str,
+) -> Result<(Vec<ColumnMeta>, Vec<Vec<serde_json::Value>>)> {
+    let rows = sqlx::query(AssertSqlSafe(stmt))
+        .fetch_all(pool)
+        .await
+        .map_err(|e| PluginError::Backend(e.to_string()))?;
+    let columns: Vec<ColumnMeta> = if let Some(first) = rows.first() {
+        first
+            .columns()
+            .iter()
+            .map(|c| ColumnMeta {
+                name: c.name().to_string(),
+                data_type: c.type_info().name().to_string(),
+            })
+            .collect()
+    } else {
+        match pool.describe(AssertSqlSafe(stmt).into_sql_str()).await {
+            Ok(d) => d
+                .columns
+                .iter()
+                .map(|c| ColumnMeta {
+                    name: c.name().to_string(),
+                    data_type: c.type_info().name().to_string(),
+                })
+                .collect(),
+            Err(_) => Vec::new(),
         }
-        if let Ok(v) = row.try_get::<bool, _>(i) {
-            out.push(serde_json::Value::Bool(v));
-        } else if let Ok(v) = row.try_get::<i64, _>(i) {
-            out.push(serde_json::Value::Number(v.into()));
-        } else if let Ok(v) = row.try_get::<f64, _>(i) {
-            out.push(
-                serde_json::Number::from_f64(v)
-                    .map(serde_json::Value::Number)
-                    .unwrap_or(serde_json::Value::Null),
-            );
-        } else if let Ok(v) = row.try_get::<serde_json::Value, _>(i) {
-            out.push(v);
-        } else if let Ok(v) = row.try_get::<String, _>(i) {
-            out.push(serde_json::Value::String(v));
-        } else {
-            out.push(serde_json::Value::String(format!(
-                "<{}>",
-                raw.type_info().name()
-            )));
+    };
+    let data = rows.iter().map(row_to_json).collect();
+    Ok((columns, data))
+}
+
+/// Split a SQL script into individual statements on top-level semicolons,
+/// ignoring `;` inside single-quoted strings, double-quoted identifiers,
+/// dollar-quoted bodies (`$tag$ … $tag$`), and line/block comments. Returns
+/// trimmed, non-empty statements. (Standard strings use `''` to escape a quote;
+/// backslash escapes in `E'…'` strings are not special-cased.)
+fn split_statements(sql: &str) -> Vec<String> {
+    let b = sql.as_bytes();
+    let n = b.len();
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < n {
+        match b[i] {
+            b'\'' | b'"' => {
+                let q = b[i];
+                i += 1;
+                while i < n {
+                    if b[i] == q {
+                        // Doubled quote is an escaped quote, not a terminator.
+                        if i + 1 < n && b[i + 1] == q {
+                            i += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    i += 1;
+                }
+                i += 1;
+            }
+            b'-' if i + 1 < n && b[i + 1] == b'-' => {
+                i += 2;
+                while i < n && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if i + 1 < n && b[i + 1] == b'*' => {
+                i += 2;
+                let mut depth = 1; // Postgres block comments nest.
+                while i < n && depth > 0 {
+                    if b[i] == b'/' && i + 1 < n && b[i + 1] == b'*' {
+                        depth += 1;
+                        i += 2;
+                    } else if b[i] == b'*' && i + 1 < n && b[i + 1] == b'/' {
+                        depth -= 1;
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            b'$' => {
+                if let Some(tag_end) = dollar_tag_end(b, i) {
+                    let tag = &b[i..=tag_end];
+                    i = tag_end + 1;
+                    while i < n {
+                        if b[i] == b'$' && b[i..].starts_with(tag) {
+                            i += tag.len();
+                            break;
+                        }
+                        i += 1;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            b';' => {
+                let stmt = sql[start..i].trim();
+                if !stmt.is_empty() {
+                    out.push(stmt.to_string());
+                }
+                i += 1;
+                start = i;
+            }
+            _ => i += 1,
         }
     }
+    let tail = sql[start..].trim();
+    if !tail.is_empty() {
+        out.push(tail.to_string());
+    }
     out
+}
+
+/// If a dollar-quote tag opens at `start` (`b[start] == b'$'`), return the index
+/// of its closing `$` (so `b[start..=end]` is the full `$tag$`). A tag is `$$`
+/// or `$ident$` where `ident` is `[A-Za-z_][A-Za-z0-9_]*` — this rules out `$1`
+/// style placeholders.
+fn dollar_tag_end(b: &[u8], start: usize) -> Option<usize> {
+    let mut j = start + 1;
+    while j < b.len() {
+        let c = b[j];
+        if c == b'$' {
+            return Some(j);
+        }
+        if c == b'_' || c.is_ascii_alphabetic() || (j > start + 1 && c.is_ascii_digit()) {
+            j += 1;
+        } else {
+            return None;
+        }
+    }
+    None
+}
+
+fn row_to_json(row: &PgRow) -> Vec<serde_json::Value> {
+    (0..row.len()).map(|i| value_to_json(row, i)).collect()
+}
+
+/// Convert one cell to JSON, decoding by the column's Postgres type so numbers
+/// stay numbers and dates/uuids/etc. render as readable text. sqlx is strict
+/// about Rust↔SQL type pairing (e.g. `int4` is `i32`, not `i64`), so we match on
+/// the type name and decode the right Rust type. Anything we don't recognise
+/// falls back to its text encoding, then a `<type>` placeholder, so a cell is
+/// never silently blank.
+fn value_to_json(row: &PgRow, i: usize) -> serde_json::Value {
+    use serde_json::Value;
+    use sqlx::types::chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+    use sqlx::types::{BigDecimal, Uuid};
+    use sqlx::ValueRef;
+
+    let raw = match row.try_get_raw(i) {
+        Ok(r) => r,
+        Err(_) => return Value::Null,
+    };
+    if raw.is_null() {
+        return Value::Null;
+    }
+    let type_name = raw.type_info().name().to_string();
+
+    // Decode column `i` as `$t` and, on success, return `$conv(value)`. A decode
+    // error falls through to the next arm / the text fallback below.
+    macro_rules! decode {
+        ($t:ty, $conv:expr) => {
+            if let Ok(v) = row.try_get::<$t, _>(i) {
+                return $conv(v);
+            }
+        };
+    }
+    let num_f64 = |v: f64| {
+        serde_json::Number::from_f64(v)
+            .map(Value::Number)
+            .unwrap_or(Value::Null)
+    };
+    let to_str = |v: String| Value::String(v);
+
+    match type_name.to_uppercase().as_str() {
+        "BOOL" => decode!(bool, Value::Bool),
+        "INT2" | "SMALLINT" | "SMALLSERIAL" => decode!(i16, |v: i16| Value::Number(v.into())),
+        "INT4" | "INT" | "INTEGER" | "SERIAL" => decode!(i32, |v: i32| Value::Number(v.into())),
+        "INT8" | "BIGINT" | "BIGSERIAL" => decode!(i64, |v: i64| Value::Number(v.into())),
+        "OID" => decode!(sqlx::postgres::types::Oid, |v: sqlx::postgres::types::Oid| {
+            Value::Number(v.0.into())
+        }),
+        "FLOAT4" | "REAL" => decode!(f32, |v: f32| num_f64(v as f64)),
+        "FLOAT8" | "DOUBLE PRECISION" => decode!(f64, num_f64),
+        "NUMERIC" | "DECIMAL" | "MONEY" => decode!(BigDecimal, |v: BigDecimal| {
+            Value::String(v.to_string())
+        }),
+        "TIMESTAMPTZ" => decode!(DateTime<Utc>, |v: DateTime<Utc>| {
+            Value::String(v.to_rfc3339())
+        }),
+        "TIMESTAMP" => decode!(NaiveDateTime, |v: NaiveDateTime| Value::String(v.to_string())),
+        "DATE" => decode!(NaiveDate, |v: NaiveDate| Value::String(v.to_string())),
+        "TIME" | "TIMETZ" => decode!(NaiveTime, |v: NaiveTime| Value::String(v.to_string())),
+        "UUID" => decode!(Uuid, |v: Uuid| Value::String(v.to_string())),
+        "JSON" | "JSONB" => decode!(Value, |v| v),
+        "BYTEA" => decode!(Vec<u8>, |v: Vec<u8>| Value::String(bytea_hex(&v))),
+        // Array types are named `_int4`, `_text`, … (or `INT4[]`); decode the
+        // common element types into a JSON array.
+        "_BOOL" => decode!(Vec<bool>, |v: Vec<bool>| json_array(v, Value::Bool)),
+        "_INT2" => decode!(Vec<i16>, |v: Vec<i16>| json_array(v, |x: i16| Value::Number(x.into()))),
+        "_INT4" => decode!(Vec<i32>, |v: Vec<i32>| json_array(v, |x: i32| Value::Number(x.into()))),
+        "_INT8" => decode!(Vec<i64>, |v: Vec<i64>| json_array(v, |x: i64| Value::Number(x.into()))),
+        "_FLOAT8" => decode!(Vec<f64>, |v: Vec<f64>| json_array(v, num_f64)),
+        "_TEXT" | "_VARCHAR" => decode!(Vec<String>, |v: Vec<String>| json_array(v, to_str)),
+        _ => {}
+    }
+
+    // Text-family types (text/varchar/bpchar/name/enum-as-text, etc.).
+    decode!(String, to_str);
+
+    // Last resort: many remaining types (enums, inet, etc.) send their value as
+    // UTF-8 text; surface that. If it isn't valid text, show the type name so
+    // the cell isn't blank.
+    if let Ok(bytes) = raw.as_bytes() {
+        if let Ok(s) = std::str::from_utf8(bytes) {
+            return Value::String(s.to_string());
+        }
+    }
+    Value::String(format!("<{type_name}>"))
+}
+
+/// Hex-encode bytes as a Postgres `\x…` bytea literal for display.
+fn bytea_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(2 + bytes.len() * 2);
+    s.push_str("\\x");
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+/// Map a decoded Postgres array into a JSON array via `conv`.
+fn json_array<T>(
+    items: Vec<T>,
+    conv: impl Fn(T) -> serde_json::Value,
+) -> serde_json::Value {
+    serde_json::Value::Array(items.into_iter().map(conv).collect())
 }
 
 fn urlencode(s: &str) -> String {

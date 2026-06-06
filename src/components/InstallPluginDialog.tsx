@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, errString } from "../api";
-import type { AvailablePlugin, GithubPreview, PluginInfo } from "../api";
+import type { AvailablePlugin, GithubPreview, PluginInfo, PluginStatus } from "../api";
 import { loadConfig } from "../store";
+import { Modal } from "./Modal";
 
 interface InstallPluginDialogProps {
   onClose: () => void;
@@ -15,13 +16,28 @@ function formatSize(bytes: number): string {
   return bytes + " B";
 }
 
-/** Install a plugin from the configured GitHub repo. The list of plugins (its
- *  rolling `<plugin>-latest` releases) is fetched up front, so there is no
- *  repo/tag to type — pick a plugin, confirm the checksum, install. */
+/** The action button label for a plugin's install/update status. */
+function actionLabel(status: PluginStatus): string {
+  switch (status) {
+    case "not_installed":
+      return "Install";
+    case "update_available":
+      return "Update";
+    case "up_to_date":
+      return "✓ Installed";
+    case "unknown":
+      return "Reinstall";
+  }
+}
+
+/** Install a plugin from the configured GitHub repo. The installable plugins
+ *  (the app channel's releases) are fetched up front with a per-plugin
+ *  install/update status, so there is no repo/tag to type — pick a plugin,
+ *  confirm the checksum, install. */
 export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialogProps) {
   const [repo, setRepo] = useState<string>("");
+  const [channel, setChannel] = useState<string>("");
   const [available, setAvailable] = useState<AvailablePlugin[] | null>(null);
-  const [installed, setInstalled] = useState<Set<string>>(new Set());
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // The plugin the user picked, plus its fetched preview (asset + checksum)
@@ -31,21 +47,19 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
   const [busy, setBusy] = useState<"preview" | "install" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Load the configured repo, then the available + installed plugin lists.
+  // Load the configured repo + app channel, then the available plugin list
+  // (each entry already carries its install/update status from the host).
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const cfg = await loadConfig();
+        const [cfg, ch] = await Promise.all([loadConfig(), api.appChannel()]);
         if (cancelled) return;
         setRepo(cfg.pluginRepo);
-        const [avail, inst] = await Promise.all([
-          api.listGithubPlugins(cfg.pluginRepo),
-          api.listPlugins(),
-        ]);
+        setChannel(ch);
+        const avail = await api.listGithubPlugins(cfg.pluginRepo);
         if (cancelled) return;
         setAvailable(avail);
-        setInstalled(new Set(inst.map((p) => p.id)));
       } catch (e) {
         if (!cancelled) setLoadError(errString(e));
       }
@@ -74,7 +88,7 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
   }
 
   async function onInstall() {
-    if (!preview) return;
+    if (!preview || !selected) return;
     setError(null);
     setBusy("install");
     try {
@@ -83,8 +97,14 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
         preview.tag,
         preview.sha256,
       );
-      // Reflect the new install in the list and close the confirm panel.
-      setInstalled((s) => new Set(s).add(info.id));
+      // Reflect the new install in the list: this plugin is now up to date.
+      setAvailable((list) =>
+        (list ?? []).map((p) =>
+          p.id === info.id
+            ? { ...p, status: "up_to_date", installedVersion: info.version }
+            : p,
+        ),
+      );
       setSelected(null);
       setPreview(null);
       onInstalled(info);
@@ -95,17 +115,33 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
     }
   }
 
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <header className="modal-header">
-          <span>Install plugin{repo ? ` from ${repo}` : ""}</span>
-          <button className="close-x" onClick={onClose} title="Close">
-            ×
-          </button>
-        </header>
+  /** Secondary line under a plugin name: size + install/update state. */
+  function statusNote(plugin: AvailablePlugin): string {
+    const size = formatSize(plugin.sizeBytes);
+    const v = plugin.installedVersion;
+    switch (plugin.status) {
+      case "up_to_date":
+        return `${size} · up to date${v ? ` (v${v})` : ""}`;
+      case "update_available":
+        return `${size} · update available${v ? ` (have v${v})` : ""}`;
+      case "unknown":
+        return `${size} · installed${v ? ` (v${v})` : ""}`;
+      case "not_installed":
+        return size;
+    }
+  }
 
-        {loadError && <p className="msg error">{loadError}</p>}
+  return (
+    <Modal
+      onClose={onClose}
+      title={
+        <>
+          Install plugin{repo ? ` from ${repo}` : ""}
+          {channel && <span className="channel-tag">{channel}</span>}
+        </>
+      }
+    >
+      {loadError && <p className="msg error">{loadError}</p>}
 
         {!available && !loadError && <p className="muted">Loading plugins…</p>}
 
@@ -118,26 +154,22 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
         {available && available.length > 0 && (
           <ul className="plugin-list">
             {available.map((plugin) => {
-              const isInstalled = installed.has(plugin.id);
               const active = selected?.tag === plugin.tag;
+              const upToDate = plugin.status === "up_to_date";
               return (
                 <li key={plugin.tag} className="plugin-row">
                   <div className="plugin-row-main">
                     <span className="plugin-name">{plugin.id}</span>
-                    <span className="muted small">
-                      {formatSize(plugin.sizeBytes)}
-                      {isInstalled && " · installed"}
-                    </span>
+                    <span className="muted small">{statusNote(plugin)}</span>
                   </div>
                   <button
                     onClick={() => onSelect(plugin)}
-                    disabled={busy !== null}
+                    disabled={busy !== null || upToDate}
+                    className={plugin.status === "update_available" ? "primary" : ""}
                   >
                     {active && busy === "preview"
                       ? "Fetching…"
-                      : isInstalled
-                      ? "Update"
-                      : "Install"}
+                      : actionLabel(plugin.status)}
                   </button>
                 </li>
               );
@@ -190,7 +222,6 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
         )}
 
         {error && <p className="msg error">{error}</p>}
-      </div>
-    </div>
+    </Modal>
   );
 }

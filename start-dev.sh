@@ -1,0 +1,1 @@
+RDB_PLUGINS_DIR=/home/pavan/workspace/rdb/dev-plugins npm run tauri dev

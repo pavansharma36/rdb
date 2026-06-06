@@ -1,6 +1,13 @@
-/* rdb desktop client — compact dark IDE theme. */
+/* rdb desktop client — compact IDE theme.
+ *
+ * The whole app is painted from the CSS custom properties below. The palette
+ * lives in per-theme `[data-theme]` blocks; `:root` carries the non-color
+ * defaults plus a copy of the default (mocha) palette so the app is styled
+ * before JS sets `data-theme` on <html> (see src/theme.ts). To add a theme:
+ * add a `[data-theme="<id>"]` block here and an entry in THEMES (src/theme.ts). */
 
 :root {
+  /* Default palette = Catppuccin Mocha (mirrors [data-theme="mocha"]). */
   --bg: #1e1e2e;
   --bg-2: #181825;
   --bg-3: #11111b;
@@ -15,6 +22,158 @@
   --warn: #f9e2af;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
+}
+
+/* Themes ----------------------------------------------------------------- */
+
+[data-theme="mocha"] {
+  --bg: #1e1e2e;
+  --bg-2: #181825;
+  --bg-3: #11111b;
+  --panel: #232334;
+  --border: #313244;
+  --text: #cdd6f4;
+  --muted: #7f849c;
+  --accent: #89b4fa;
+  --accent-2: #74c7ec;
+  --ok: #a6e3a1;
+  --err: #f38ba8;
+  --warn: #f9e2af;
+}
+
+[data-theme="dracula"] {
+  --bg: #282a36;
+  --bg-2: #21222c;
+  --bg-3: #191a21;
+  --panel: #343746;
+  --border: #44475a;
+  --text: #f8f8f2;
+  --muted: #6272a4;
+  --accent: #bd93f9;
+  --accent-2: #8be9fd;
+  --ok: #50fa7b;
+  --err: #ff5555;
+  --warn: #f1fa8c;
+}
+
+[data-theme="nord"] {
+  --bg: #2e3440;
+  --bg-2: #2b303b;
+  --bg-3: #242933;
+  --panel: #3b4252;
+  --border: #434c5e;
+  --text: #eceff4;
+  --muted: #7b88a1;
+  --accent: #88c0d0;
+  --accent-2: #81a1c1;
+  --ok: #a3be8c;
+  --err: #bf616a;
+  --warn: #ebcb8b;
+}
+
+[data-theme="tokyo-night"] {
+  --bg: #1a1b26;
+  --bg-2: #16161e;
+  --bg-3: #13131a;
+  --panel: #24283b;
+  --border: #2f3349;
+  --text: #c0caf5;
+  --muted: #565f89;
+  --accent: #7aa2f7;
+  --accent-2: #7dcfff;
+  --ok: #9ece6a;
+  --err: #f7768e;
+  --warn: #e0af68;
+}
+
+[data-theme="gruvbox"] {
+  --bg: #282828;
+  --bg-2: #1d2021;
+  --bg-3: #161616;
+  --panel: #3c3836;
+  --border: #504945;
+  --text: #ebdbb2;
+  --muted: #928374;
+  --accent: #83a598;
+  --accent-2: #8ec07c;
+  --ok: #b8bb26;
+  --err: #fb4934;
+  --warn: #fabd2f;
+}
+
+[data-theme="monokai"] {
+  --bg: #272822;
+  --bg-2: #1f201a;
+  --bg-3: #181910;
+  --panel: #3e3d32;
+  --border: #49483e;
+  --text: #f8f8f2;
+  --muted: #75715e;
+  --accent: #66d9ef;
+  --accent-2: #a6e22e;
+  --ok: #a6e22e;
+  --err: #f92672;
+  --warn: #e6db74;
+}
+
+[data-theme="solarized-dark"] {
+  --bg: #002b36;
+  --bg-2: #00252e;
+  --bg-3: #001f27;
+  --panel: #073642;
+  --border: #0a4b59;
+  --text: #93a1a1;
+  --muted: #586e75;
+  --accent: #268bd2;
+  --accent-2: #2aa198;
+  --ok: #859900;
+  --err: #dc322f;
+  --warn: #b58900;
+}
+
+[data-theme="solarized-light"] {
+  --bg: #fdf6e3;
+  --bg-2: #f4eeda;
+  --bg-3: #eee8d5;
+  --panel: #ffffff;
+  --border: #ddd6c1;
+  --text: #586e75;
+  --muted: #93a1a1;
+  --accent: #268bd2;
+  --accent-2: #2aa198;
+  --ok: #859900;
+  --err: #dc322f;
+  --warn: #b58900;
+}
+
+[data-theme="latte"] {
+  --bg: #eff1f5;
+  --bg-2: #e6e9ef;
+  --bg-3: #dce0e8;
+  --panel: #ffffff;
+  --border: #ccd0da;
+  --text: #4c4f69;
+  --muted: #8c8fa1;
+  --accent: #1e66f5;
+  --accent-2: #209fb5;
+  --ok: #40a02b;
+  --err: #d20f39;
+  --warn: #df8e1d;
+}
+
+[data-theme="github-light"] {
+  --bg: #ffffff;
+  --bg-2: #f6f8fa;
+  --bg-3: #eaeef2;
+  --panel: #ffffff;
+  --border: #d0d7de;
+  --text: #1f2328;
+  --muted: #656d76;
+  --accent: #0969da;
+  --accent-2: #1a7f37;
+  --ok: #1a7f37;
+  --err: #cf222e;
+  --warn: #9a6700;
 }
 
 * {
@@ -59,6 +218,13 @@ button.primary {
   font-weight: 600;
 }
 
+button.danger {
+  background: #c0392b;
+  color: #fff;
+  border-color: #c0392b;
+  font-weight: 600;
+}
+
 input,
 select,
 textarea {
@@ -75,6 +241,45 @@ select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+/* Native <select> chrome (the closed control's arrow on macOS/Windows and the
+ * popup list on Linux/WebKitGTK) doesn't follow our dark theme. Strip the
+ * native appearance, paint our own caret, and theme the options so dropdowns
+ * look identical across platforms. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  /* Room for the caret so long values don't sit under it. */
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='none' stroke='%237f849c' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px 6px;
+}
+
+select:focus {
+  border-color: var(--accent);
+}
+
+select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* WebKitGTK (Linux) renders the popup options from these rules; macOS/Windows
+ * use the OS popup and ignore them, which is fine. */
+select option,
+select optgroup {
+  color: var(--text);
+  background: var(--bg-2);
+}
+
+select option:checked,
+select option:hover {
+  color: var(--bg-3);
+  background: var(--accent);
 }
 
 .muted {
@@ -99,6 +304,20 @@ textarea:focus {
   gap: 10px;
 }
 
+/* Draggable divider between sidebar and main; widened hit area, accent on hover. */
+.sidebar-resizer {
+  flex-shrink: 0;
+  width: 5px;
+  margin-left: -3px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.12s;
+}
+
+.sidebar-resizer:hover {
+  background: var(--accent);
+}
+
 .sidebar-header {
   display: flex;
   align-items: baseline;
@@ -117,6 +336,159 @@ textarea:focus {
   color: var(--muted);
 }
 
+/* Nightly-build marker next to the logo, and the channel tag in the install
+   dialog header. */
+.logo-badge {
+  margin-left: auto;
+  align-self: center;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #1e1e2e;
+  background: #f9e2af;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.channel-tag {
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+/* Self-update: footer action, available-update toast, and "up to date" note. */
+.sidebar-footer {
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+}
+
+.footer-menu {
+  position: relative;
+  margin-left: auto;
+}
+
+.footer-menu .icon-btn {
+  opacity: 1;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 6px;
+}
+
+.footer-menu .icon-btn:hover {
+  color: var(--accent);
+}
+
+.footer-menu-popup {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4px);
+  min-width: 180px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  padding: 4px;
+  z-index: 10;
+}
+
+.footer-menu-theme {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.footer-menu-theme select {
+  width: 100%;
+  font-size: 12px;
+}
+
+.footer-menu-item {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  text-align: left;
+  color: var(--text);
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.footer-menu-item:hover {
+  background: var(--bg-3);
+  color: var(--accent);
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 2px;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  color: var(--accent);
+}
+
+.update-banner {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 320px;
+  padding: 14px 16px;
+  background: var(--panel, #1e1e2e);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.update-banner-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.update-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.update-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 50;
+  padding: 10px 14px;
+  font-size: 13px;
+  background: var(--panel, #1e1e2e);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
 .new-btn {
   text-align: left;
 }
@@ -126,8 +498,17 @@ textarea:focus {
 }
 
 .install-btn {
+  background: none;
+  border: none;
   text-align: left;
   color: var(--muted);
+  font-size: 13px;
+  padding: 5px 2px;
+  cursor: pointer;
+}
+
+.install-btn:hover {
+  color: var(--accent);
 }
 
 /* Install-plugin modal --------------------------------------------------- */
@@ -154,6 +535,30 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.cell-editor-modal {
+  width: 680px;
+}
+
+.cell-editor {
+  width: 100%;
+  min-height: 320px;
+  resize: vertical;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  tab-size: 2;
+}
+
+.cell-editor-actions {
+  align-items: center;
+}
+
+.cell-editor-actions .spacer {
+  flex: 1;
 }
 
 .modal-header {
@@ -289,19 +694,33 @@ textarea:focus {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: var(--muted);
+  background: var(--dot-color, var(--muted));
 }
 
+/* Per-kind fallback colors (used when a plugin id has no specific color). */
 .dot-rdbms {
-  background: var(--accent);
+  --dot-color: var(--accent);
 }
 
 .dot-document {
-  background: var(--ok);
+  --dot-color: var(--ok);
 }
 
-.dot-messaging {
-  background: var(--warn);
+.dot-rabbitmq {
+  --dot-color: var(--warn);
+}
+
+/* Per-plugin brand colors. */
+.dot-id-postgres {
+  --dot-color: #4a90d9;
+}
+
+.dot-id-rabbitmq {
+  --dot-color: #f60;
+}
+
+.dot-id-mongodb {
+  --dot-color: #00684a;
 }
 
 /* Dim saved connections that aren't currently open; light up the connected. */
@@ -309,8 +728,20 @@ textarea:focus {
   opacity: 0.35;
 }
 
+/* Connected: full opacity + a soft glow in the plugin's own color. */
 .dot.connected {
   opacity: 1;
+  box-shadow: 0 0 6px 1px var(--dot-color, var(--ok));
+}
+
+/* Dim disconnected rows; brighten connected ones. */
+.conn-item:not(.connected) .conn-name {
+  color: var(--muted);
+}
+
+.conn-item.connected .conn-name {
+  color: var(--text);
+  font-weight: 500;
 }
 
 .main {
@@ -412,13 +843,56 @@ textarea:focus {
   width: 240px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-2);
+}
+
+.tree-top {
+  flex-shrink: 0;
+  padding: 8px 8px 0;
+}
+
+.tree-schemas {
+  flex: 1;
   overflow-y: auto;
   padding: 8px;
-  background: var(--bg-2);
 }
 
 .tree-group {
   margin-bottom: 4px;
+}
+
+.tree-db-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tree-db-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.tree-refresh {
+  flex-shrink: 0;
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tree-refresh:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.tree-refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .tree-dbselect {
@@ -428,6 +902,58 @@ textarea:focus {
   padding: 2px 2px 8px;
   margin-bottom: 8px;
   border-bottom: 1px solid var(--border);
+}
+
+.tree-queries {
+  padding: 2px 2px 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* User-resizable list: drag the bottom edge to set the height; scrolls inside
+ * once the saved files exceed it. */
+.tree-queries-list {
+  height: 120px;
+  min-height: 32px;
+  max-height: 60vh;
+  overflow-y: auto;
+  resize: vertical;
+}
+
+.tree-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.tree-add {
+  background: none;
+  border: none;
+  padding: 0 4px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tree-add:hover {
+  color: var(--accent);
+}
+
+.tree-name-input {
+  width: 100%;
+  margin-bottom: 4px;
+  box-sizing: border-box;
+}
+
+.tree-node.leaf .close-x {
+  margin-left: auto;
+  opacity: 0;
+}
+
+.tree-node.leaf:hover .close-x {
+  opacity: 1;
 }
 
 .tree-dbselect select {
@@ -484,6 +1010,25 @@ textarea:focus {
   flex-wrap: wrap;
 }
 
+.editor-toolbar .running {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.editor-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.editor-file-dirty {
+  color: var(--accent);
+  font-size: 10px;
+}
+
 .code {
   font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
@@ -511,6 +1056,29 @@ textarea.code {
   border-radius: 6px;
 }
 
+/* Per-statement result tabs (multi-statement scripts). */
+.result-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.result-tabs button {
+  padding: 2px 10px;
+  font-size: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 5px 5px 0 0;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.result-tabs button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-3);
+}
+
 table.grid {
   border-collapse: collapse;
   width: 100%;
@@ -523,7 +1091,9 @@ table.grid td {
   border: 1px solid var(--border);
   padding: 4px 8px;
   text-align: left;
-  white-space: pre;
+  /* nowrap (not pre) so multi-line text/JSON stays on one line and every row
+     keeps the same height; the full value opens in the cell editor. */
+  white-space: nowrap;
   max-width: 360px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -539,6 +1109,51 @@ table.grid th {
 table.grid td.null {
   color: var(--muted);
   font-style: italic;
+}
+
+table.grid tr.empty-row td {
+  color: var(--muted);
+  font-style: italic;
+  text-align: center;
+  padding: 12px;
+}
+
+.structure-heading {
+  margin: 16px 8px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-2);
+}
+
+/* Roomier structure tables with chip-style cell values. */
+table.grid.structure-table th,
+table.grid.structure-table td {
+  padding: 4px 10px;
+  white-space: normal;
+}
+
+.chip {
+  display: inline-block;
+  margin: 1px 4px 1px 0;
+  padding: 1px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* Nullable column: nullable (YES) vs NOT NULL (NO). */
+.chip.chip-yes {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.chip.chip-no {
+  color: var(--warn);
+  border-color: var(--warn);
 }
 
 /* Editable grid ---------------------------------------------------------- */
@@ -656,6 +1271,77 @@ table.grid tr.new-row td {
 
 .edit-bar .spacer {
   flex: 1;
+}
+
+.grid-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+
+.grid-footer .spacer {
+  flex: 1;
+}
+
+.view-switch {
+  display: inline-flex;
+}
+
+.view-switch button {
+  padding: 3px 12px;
+  min-width: 64px;
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--muted);
+  cursor: pointer;
+  position: relative;
+}
+
+/* Collapse the shared border between adjacent segments. */
+.view-switch button + button {
+  margin-left: -1px;
+}
+
+.view-switch button:first-child {
+  border-radius: 5px 0 0 5px;
+}
+
+.view-switch button:last-child {
+  border-radius: 0 5px 5px 0;
+}
+
+/* Lift hovered/active segments so their full border draws over neighbors. */
+.view-switch button:hover:not(:disabled),
+.view-switch button.active {
+  z-index: 1;
+}
+
+.view-switch button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-3);
+}
+
+.ddl {
+  margin: 0;
+  padding: 10px;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  color: var(--text);
+}
+
+.grid-footer-table {
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  color: var(--text);
 }
 
 .doc-card {

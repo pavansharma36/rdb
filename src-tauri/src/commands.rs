@@ -25,6 +25,13 @@ pub fn list_plugins(manager: Manager<'_>) -> Vec<PluginInfo> {
     manager.list_plugins()
 }
 
+/// The release channel this app build tracks (`"nightly"` or `"stable"`). Gates
+/// the installer's plugin channel and drives the nightly logo badge.
+#[tauri::command]
+pub fn app_channel() -> String {
+    crate::release_channel().to_string()
+}
+
 #[tauri::command]
 pub async fn test_connection(
     manager: Manager<'_>,
@@ -65,6 +72,15 @@ pub async fn plugin_call(
         .plugin_call(connection_id, op, params)
         .await
         .map_err(err)
+}
+
+/// Cancel the in-flight `plugin_call` for `connection_id`, if any.
+#[tauri::command]
+pub async fn cancel_last_plugin_call(
+    manager: Manager<'_>,
+    connection_id: ConnectionId,
+) -> Result<(), String> {
+    manager.cancel(connection_id).await.map_err(err)
 }
 
 /// List the plugins installable from `repo` (`owner/name`): its rolling

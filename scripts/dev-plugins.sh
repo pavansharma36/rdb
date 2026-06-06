@@ -41,7 +41,16 @@ for i in "${!PLUGINS[@]}"; do
   [ "$(uname)" = "Windows_NT" ] && bin_name="$crate.exe"
   src_bin="$ROOT/target/$TARGET_SUBDIR/$bin_name"
   dest_bin="$PLUGINS_DIR/$bin_name"
+  # Replace the destination with a fresh inode rather than overwriting in place:
+  # on macOS the kernel caches a Mach-O's code-signature hash per inode, so
+  # overwriting a binary that was already executed makes the new content fail
+  # signature validation and get SIGKILL'd ("Killed: 9"). Removing first gives
+  # `cp` a new inode; then re-sign ad-hoc on macOS for good measure.
+  rm -f "$dest_bin"
   cp "$src_bin" "$dest_bin"
+  if [ "$(uname)" = "Darwin" ]; then
+    codesign --force --sign - "$dest_bin" >/dev/null 2>&1 || true
+  fi
 
   # Generate the manifest: wrap the plugin's own --describe output.
   describe_tmp="$PLUGINS_DIR/$id.describe.json"

@@ -129,6 +129,15 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Stamp the build's release channel so the app knows whether to track
+          # nightly or stable plugin releases (read via option_env! in the host).
+          RDB_RELEASE_CHANNEL: ${{ github.ref_type == 'tag' && 'stable' || 'nightly' }}
+          # Sign the updater artifacts so the in-app self-updater can verify
+          # them. tauri-action then generates + uploads latest.json to the
+          # release. Set these as repo secrets (private key from
+          # `tauri signer generate`).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ steps.meta.outputs.tag }}
           releaseName: ${{ steps.meta.outputs.name }}

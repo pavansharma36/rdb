@@ -280,7 +280,7 @@ impl MongoPlugin {
             Some(s) if !s.trim().is_empty() => {
                 let v: serde_json::Value = serde_json::from_str(s)
                     .map_err(|e| PluginError::Config(format!("invalid filter: {e}")))?;
-                bson::to_document(&v).map_err(|e| PluginError::Config(e.to_string()))?
+                bson::serialize_to_document(&v).map_err(|e| PluginError::Config(e.to_string()))?
             }
             _ => doc! {},
         };
@@ -297,7 +297,7 @@ impl MongoPlugin {
         while let Some(next) = cursor.next().await {
             let doc = next.map_err(|e| PluginError::Backend(e.to_string()))?;
             let v: serde_json::Value =
-                bson::from_document(doc).map_err(|e| PluginError::Backend(e.to_string()))?;
+                bson::deserialize_from_document(doc).map_err(|e| PluginError::Backend(e.to_string()))?;
             out.push(v);
         }
         Ok(FindResult {

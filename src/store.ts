@@ -63,6 +63,10 @@ export interface AppConfig {
   pluginsDialogShown: boolean;
   /** GitHub repo (`owner/name`) the in-app plugin installer fetches from. */
   pluginRepo: string;
+  /** Sidebar width in CSS pixels, set by dragging the sidebar's resize handle. */
+  sidebarWidth: number;
+  /** Active UI theme id (see `THEMES` in `src/theme.ts`). */
+  theme: string;
 }
 
 /** Load the app config, creating it with defaults on first run. */
@@ -73,4 +77,43 @@ export function loadConfig(): Promise<AppConfig> {
 /** Persist the full app config. */
 export function saveConfig(config: AppConfig): Promise<void> {
   return invoke<void>("save_config", { config });
+}
+
+// --- Per-connection workspace files ---------------------------------------
+//
+// Plain `.sql` files saved per connection profile at
+// <app_data_dir>/workspace/<connectionId>/<name>.sql. See
+// src-tauri/src/workspace_files.rs. `connectionId` here is the stable
+// saved-profile id, so files persist across sessions (not the per-session live
+// connection id).
+
+/** A saved workspace file. Mirrors the Rust `WorkspaceFile` (camelCase). */
+export interface WorkspaceFile {
+  /** File name without the `.sql` extension. */
+  name: string;
+  content: string;
+}
+
+/** List the saved workspace files for a connection profile, sorted by name. */
+export function listWorkspaceFiles(
+  connectionId: string,
+): Promise<WorkspaceFile[]> {
+  return invoke<WorkspaceFile[]>("list_workspace_files", { connectionId });
+}
+
+/** Create or overwrite a named workspace file for a connection profile. */
+export function saveWorkspaceFile(
+  connectionId: string,
+  name: string,
+  content: string,
+): Promise<void> {
+  return invoke<void>("save_workspace_file", { connectionId, name, content });
+}
+
+/** Delete a named workspace file from a connection profile. */
+export function deleteWorkspaceFile(
+  connectionId: string,
+  name: string,
+): Promise<void> {
+  return invoke<void>("delete_workspace_file", { connectionId, name });
 }
