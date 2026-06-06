@@ -146,7 +146,14 @@ export function ConnectionForm({
       {error && <div className="msg error">{error}</div>}
       <label className="field">
         <span className="field-label">Type</span>
-        <select value={pluginId} onChange={(e) => selectPlugin(e.target.value)}>
+        {/* The plugin type is fixed once a profile is saved — its config schema
+         * (and the live connection mapping) is tied to it, so editing only
+         * changes the connection's settings, not its backend. */}
+        <select
+          value={pluginId}
+          disabled={editing}
+          onChange={(e) => selectPlugin(e.target.value)}
+        >
           <option value="" disabled>
             Select a connection type…
           </option>

@@ -65,6 +65,8 @@ export interface AppConfig {
   pluginRepo: string;
   /** Sidebar width in CSS pixels, set by dragging the sidebar's resize handle. */
   sidebarWidth: number;
+  /** Active UI theme id (see `THEMES` in `src/theme.ts`). */
+  theme: string;
 }
 
 /** Load the app config, creating it with defaults on first run. */

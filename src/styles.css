@@ -1,6 +1,13 @@
-/* rdb desktop client — compact dark IDE theme. */
+/* rdb desktop client — compact IDE theme.
+ *
+ * The whole app is painted from the CSS custom properties below. The palette
+ * lives in per-theme `[data-theme]` blocks; `:root` carries the non-color
+ * defaults plus a copy of the default (mocha) palette so the app is styled
+ * before JS sets `data-theme` on <html> (see src/theme.ts). To add a theme:
+ * add a `[data-theme="<id>"]` block here and an entry in THEMES (src/theme.ts). */
 
 :root {
+  /* Default palette = Catppuccin Mocha (mirrors [data-theme="mocha"]). */
   --bg: #1e1e2e;
   --bg-2: #181825;
   --bg-3: #11111b;
@@ -15,6 +22,158 @@
   --warn: #f9e2af;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
+}
+
+/* Themes ----------------------------------------------------------------- */
+
+[data-theme="mocha"] {
+  --bg: #1e1e2e;
+  --bg-2: #181825;
+  --bg-3: #11111b;
+  --panel: #232334;
+  --border: #313244;
+  --text: #cdd6f4;
+  --muted: #7f849c;
+  --accent: #89b4fa;
+  --accent-2: #74c7ec;
+  --ok: #a6e3a1;
+  --err: #f38ba8;
+  --warn: #f9e2af;
+}
+
+[data-theme="dracula"] {
+  --bg: #282a36;
+  --bg-2: #21222c;
+  --bg-3: #191a21;
+  --panel: #343746;
+  --border: #44475a;
+  --text: #f8f8f2;
+  --muted: #6272a4;
+  --accent: #bd93f9;
+  --accent-2: #8be9fd;
+  --ok: #50fa7b;
+  --err: #ff5555;
+  --warn: #f1fa8c;
+}
+
+[data-theme="nord"] {
+  --bg: #2e3440;
+  --bg-2: #2b303b;
+  --bg-3: #242933;
+  --panel: #3b4252;
+  --border: #434c5e;
+  --text: #eceff4;
+  --muted: #7b88a1;
+  --accent: #88c0d0;
+  --accent-2: #81a1c1;
+  --ok: #a3be8c;
+  --err: #bf616a;
+  --warn: #ebcb8b;
+}
+
+[data-theme="tokyo-night"] {
+  --bg: #1a1b26;
+  --bg-2: #16161e;
+  --bg-3: #13131a;
+  --panel: #24283b;
+  --border: #2f3349;
+  --text: #c0caf5;
+  --muted: #565f89;
+  --accent: #7aa2f7;
+  --accent-2: #7dcfff;
+  --ok: #9ece6a;
+  --err: #f7768e;
+  --warn: #e0af68;
+}
+
+[data-theme="gruvbox"] {
+  --bg: #282828;
+  --bg-2: #1d2021;
+  --bg-3: #161616;
+  --panel: #3c3836;
+  --border: #504945;
+  --text: #ebdbb2;
+  --muted: #928374;
+  --accent: #83a598;
+  --accent-2: #8ec07c;
+  --ok: #b8bb26;
+  --err: #fb4934;
+  --warn: #fabd2f;
+}
+
+[data-theme="monokai"] {
+  --bg: #272822;
+  --bg-2: #1f201a;
+  --bg-3: #181910;
+  --panel: #3e3d32;
+  --border: #49483e;
+  --text: #f8f8f2;
+  --muted: #75715e;
+  --accent: #66d9ef;
+  --accent-2: #a6e22e;
+  --ok: #a6e22e;
+  --err: #f92672;
+  --warn: #e6db74;
+}
+
+[data-theme="solarized-dark"] {
+  --bg: #002b36;
+  --bg-2: #00252e;
+  --bg-3: #001f27;
+  --panel: #073642;
+  --border: #0a4b59;
+  --text: #93a1a1;
+  --muted: #586e75;
+  --accent: #268bd2;
+  --accent-2: #2aa198;
+  --ok: #859900;
+  --err: #dc322f;
+  --warn: #b58900;
+}
+
+[data-theme="solarized-light"] {
+  --bg: #fdf6e3;
+  --bg-2: #f4eeda;
+  --bg-3: #eee8d5;
+  --panel: #ffffff;
+  --border: #ddd6c1;
+  --text: #586e75;
+  --muted: #93a1a1;
+  --accent: #268bd2;
+  --accent-2: #2aa198;
+  --ok: #859900;
+  --err: #dc322f;
+  --warn: #b58900;
+}
+
+[data-theme="latte"] {
+  --bg: #eff1f5;
+  --bg-2: #e6e9ef;
+  --bg-3: #dce0e8;
+  --panel: #ffffff;
+  --border: #ccd0da;
+  --text: #4c4f69;
+  --muted: #8c8fa1;
+  --accent: #1e66f5;
+  --accent-2: #209fb5;
+  --ok: #40a02b;
+  --err: #d20f39;
+  --warn: #df8e1d;
+}
+
+[data-theme="github-light"] {
+  --bg: #ffffff;
+  --bg-2: #f6f8fa;
+  --bg-3: #eaeef2;
+  --panel: #ffffff;
+  --border: #d0d7de;
+  --text: #1f2328;
+  --muted: #656d76;
+  --accent: #0969da;
+  --accent-2: #1a7f37;
+  --ok: #1a7f37;
+  --err: #cf222e;
+  --warn: #9a6700;
 }
 
 * {
@@ -82,6 +241,45 @@ select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+/* Native <select> chrome (the closed control's arrow on macOS/Windows and the
+ * popup list on Linux/WebKitGTK) doesn't follow our dark theme. Strip the
+ * native appearance, paint our own caret, and theme the options so dropdowns
+ * look identical across platforms. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  /* Room for the caret so long values don't sit under it. */
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='none' stroke='%237f849c' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px 6px;
+}
+
+select:focus {
+  border-color: var(--accent);
+}
+
+select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* WebKitGTK (Linux) renders the popup options from these rules; macOS/Windows
+ * use the OS popup and ignore them, which is fine. */
+select option,
+select optgroup {
+  color: var(--text);
+  background: var(--bg-2);
+}
+
+select option:checked,
+select option:hover {
+  color: var(--bg-3);
+  background: var(--accent);
 }
 
 .muted {
@@ -197,13 +395,26 @@ textarea:focus {
   position: absolute;
   right: 0;
   bottom: calc(100% + 4px);
-  min-width: 150px;
+  min-width: 180px;
   background: var(--bg-2);
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
   padding: 4px;
   z-index: 10;
+}
+
+.footer-menu-theme {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.footer-menu-theme select {
+  width: 100%;
+  font-size: 12px;
 }
 
 .footer-menu-item {

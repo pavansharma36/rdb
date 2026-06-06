@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { OpenConnection } from "../App";
 import type { PluginInfo, ConnectionId } from "../api";
 import type { SavedConnection } from "../store";
+import { THEMES } from "../theme";
 
 interface SidebarProps {
   saved: SavedConnection[];
@@ -13,6 +14,9 @@ interface SidebarProps {
   openConnections: OpenConnection[];
   activeId: ConnectionId | null;
   creating: boolean;
+  /** Active UI theme id (one of THEMES). */
+  theme: string;
+  onThemeChange: (theme: string) => void;
   onSelect: (profile: SavedConnection) => void;
   onNew: () => void;
   onEdit: (id: string) => void;
@@ -30,6 +34,8 @@ export function Sidebar({
   openConnections,
   activeId,
   creating,
+  theme,
+  onThemeChange,
   onSelect,
   onNew,
   onEdit,
@@ -153,6 +159,19 @@ export function Sidebar({
           </button>
           {menuOpen && (
             <div className="footer-menu-popup">
+              <label className="footer-menu-theme">
+                <span className="muted">Theme</span>
+                <select
+                  value={theme}
+                  onChange={(e) => onThemeChange(e.target.value)}
+                >
+                  {THEMES.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <button
                 className="footer-menu-item"
                 onClick={() => {

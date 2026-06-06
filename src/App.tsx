@@ -14,6 +14,7 @@ import type { SavedConnection } from "./store";
 import { loadConnections, saveConnections, upsert, remove } from "./store";
 import { loadConfig, saveConfig } from "./store";
 import type { AppConfig } from "./store";
+import { applyTheme, resolveTheme } from "./theme";
 
 /** Min/max sidebar width (px) enforced while dragging the resize handle. */
 const SIDEBAR_MIN = 180;
@@ -74,6 +75,7 @@ export function App() {
           ? cfg
           : { ...cfg, pluginsDialogShown: true };
         setConfig(effective);
+        applyTheme(cfg.theme);
         if (cfg.sidebarWidth) {
           setSidebarWidth(
             Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, cfg.sidebarWidth)),
@@ -282,6 +284,16 @@ export function App() {
     document.body.style.cursor = "col-resize";
   }
 
+  /** Switch the UI theme: apply it immediately and persist to config. */
+  function changeTheme(theme: string) {
+    applyTheme(theme);
+    setConfig((c) => {
+      const next = { ...(c ?? ({} as AppConfig)), theme };
+      saveConfig(next).catch(() => {});
+      return next;
+    });
+  }
+
   return (
     <div className="app">
       <Sidebar
@@ -292,6 +304,8 @@ export function App() {
         openConnections={open}
         activeId={activeId}
         creating={creating || editingId !== null}
+        theme={resolveTheme(config?.theme)}
+        onThemeChange={changeTheme}
         onSelect={connectSaved}
         onNew={() => {
           setCreating(true);

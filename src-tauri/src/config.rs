@@ -24,6 +24,9 @@ pub struct AppConfig {
     pub plugin_repo: String,
     /// Sidebar width in CSS pixels, set by dragging the sidebar's resize handle.
     pub sidebar_width: u32,
+    /// Active UI theme id (matches a `[data-theme]` block in `styles.css` and an
+    /// entry in the frontend `THEMES` list). Defaults to the built-in dark theme.
+    pub theme: String,
 }
 
 impl Default for AppConfig {
@@ -32,6 +35,7 @@ impl Default for AppConfig {
             plugins_dialog_shown: false,
             plugin_repo: "pavansharma36/rdb".to_string(),
             sidebar_width: 240,
+            theme: "mocha".to_string(),
         }
     }
 }
