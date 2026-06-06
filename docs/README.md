@@ -16,7 +16,7 @@ website/
 Open `index.html` directly in a browser, or serve the folder:
 
 ```bash
-cd website
+cd docs
 python3 -m http.server 8080   # http://localhost:8080
 ```
 
