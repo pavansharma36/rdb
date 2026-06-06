@@ -520,7 +520,7 @@ impl PluginManager {
 
         // Record install provenance (channel from the tag, plus the release's
         // publish date) so the installer can later detect a newer release.
-        let source = github::plugin_tag_parts(&release.tag_name).map(|(_, channel, _)| {
+        let source = github::is_plugins_release(&release.tag_name).map(|(channel, _)| {
             InstallSource {
                 repo: repo.to_string(),
                 tag: release.tag_name.clone(),

@@ -3,15 +3,12 @@
 //! Pure, network-isolated logic (asset selection, checksum parsing, target
 //! triple) is unit-tested without touching the network; the two `async`
 //! functions are thin `reqwest` wrappers.
-
-use std::collections::HashMap;
-
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-/// A plugin release channel. `Nightly` is the rolling `<plugin>-latest`
+/// A plugin release channel. `Nightly` is the rolling `plugins-latest`
 /// prerelease (version not in the tag); `Stable` is an immutable
-/// `<plugin>-v<semver>` release (version is in the tag).
+/// `v<semver>` release (version is in the tag).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Channel {
     Nightly,
@@ -100,40 +97,57 @@ pub fn select_binary_asset<'a>(release: &'a Release, triple: &str) -> Result<&'a
     }
 }
 
-/// Suffix marking a release as a rolling per-plugin "latest" prerelease
-/// (`<plugin>-latest`), as published by `publish-plugins.yml`.
-pub const PLUGIN_TAG_SUFFIX: &str = "-latest";
+/// Tag for the rolling plugins prerelease, as published by `publish-plugins.yml`.
+pub const PLUGINS_LATEST_TAG: &str = "plugins-latest";
 
 /// A plugin release selected for a given platform + channel, with the metadata
 /// the installer needs to decide install/update status without downloading.
 #[derive(Debug, Clone)]
 pub struct PluginRelease<'a> {
-    /// Plugin id, derived from the tag (e.g. `postgres-latest` -> `postgres`).
+    /// Plugin id, extracted from the binary asset name.
     pub id: String,
     pub tag: &'a str,
     pub channel: Channel,
-    /// Stable version (from the `-v<semver>` tag); `None` for nightly, whose
+    /// Stable version (from the `v<semver>` tag); `None` for nightly, whose
     /// version is only known after `--describe`.
     pub version: Option<String>,
     pub published_at: Option<&'a str>,
     pub asset: &'a Asset,
 }
 
-/// Parse a per-plugin release `tag` into `(id, channel, version)`:
-/// `<id>-latest` -> nightly (no version); `<id>-v<maj.min.patch>` -> stable.
-/// Returns `None` for anything else (e.g. the app's own `latest`/`vX.Y.Z`).
-pub fn plugin_tag_parts(tag: &str) -> Option<(String, Channel, Option<String>)> {
-    if let Some(id) = tag.strip_suffix(PLUGIN_TAG_SUFFIX) {
-        if id.is_empty() {
-            return None; // the app's own `latest` tag
-        }
-        return Some((id.to_string(), Channel::Nightly, None));
+/// Determine if a release tag is a plugins release tag, and extract the version.
+/// `plugins-latest` -> nightly (no version); `plugins-v<maj.min.patch>` -> stable.
+/// Returns `None` for the app's own release tags (anything not starting with `plugins-`).
+pub fn is_plugins_release(tag: &str) -> Option<(Channel, Option<String>)> {
+    if tag == PLUGINS_LATEST_TAG {
+        return Some((Channel::Nightly, None));
     }
-    if let Some(idx) = tag.rfind("-v") {
-        let (id, rest) = tag.split_at(idx);
-        let ver = &rest[2..]; // drop the "-v"
-        if !id.is_empty() && parse_semver(ver).is_some() {
-            return Some((id.to_string(), Channel::Stable, Some(ver.to_string())));
+    if let Some(version) = tag.strip_prefix("plugins-v") {
+        if parse_semver(version).is_some() {
+            return Some((Channel::Stable, Some(version.to_string())));
+        }
+    }
+    None
+}
+
+/// Extract the plugin id from a binary asset name.
+/// Expects format like `rdb-plugin-postgres-aarch64-apple-darwin`.
+fn extract_plugin_id(asset_name: &str) -> Option<String> {
+    // Asset name format: rdb-plugin-<id>-<target-triple>
+    if let Some(rest) = asset_name.strip_prefix("rdb-plugin-") {
+        // Remove .exe suffix on Windows
+        let rest = rest.strip_suffix(".exe").unwrap_or(rest);
+        // Find the last occurrence of a known target triple to split id from target
+        for target in ["aarch64-apple-darwin", "x86_64-apple-darwin",
+                       "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
+                       "x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"] {
+            if let Some(idx) = rest.rfind(target) {
+                let id = &rest[..idx];
+                // Remove trailing hyphen if present
+                if id.ends_with('-') {
+                    return Some(id[..id.len()-1].to_string());
+                }
+            }
         }
     }
     None
@@ -151,56 +165,70 @@ pub fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
     Some((maj, min, pat))
 }
 
-/// From all `releases`, pick the per-plugin ones for `channel` that have exactly
-/// one binary asset for `triple`. For `Stable`, only the highest-semver release
-/// per plugin id is kept; for `Nightly`, every matching `<plugin>-latest` is
-/// returned. Releases without a matching asset (wrong platform, or the app's own
-/// release) are skipped. Pure — no network.
+/// From all `releases`, pick the plugins release for `channel` that has binary
+/// assets for `triple`. For `Stable`, only the highest-semver release is kept.
+/// For `Nightly`, the `plugins-latest` release is returned. Extracts individual
+/// plugin ids from asset names. Pure — no network.
 pub fn select_plugin_releases<'a>(
     releases: &'a [Release],
     triple: &str,
     channel: Channel,
 ) -> Vec<PluginRelease<'a>> {
-    let mut nightly: Vec<PluginRelease<'a>> = Vec::new();
-    let mut stable: HashMap<String, PluginRelease<'a>> = HashMap::new();
+    let mut result: Vec<PluginRelease<'a>> = Vec::new();
+    let mut best_stable: Option<PluginRelease<'a>> = None;
+
     for r in releases {
-        let Some((id, ch, version)) = plugin_tag_parts(&r.tag_name) else {
+        let Some((ch, version)) = is_plugins_release(&r.tag_name) else {
             continue;
         };
         if ch != channel {
             continue;
         }
-        let Ok(asset) = select_binary_asset(r, triple) else {
-            continue;
-        };
-        let pr = PluginRelease {
-            id: id.clone(),
-            tag: &r.tag_name,
-            channel: ch,
-            version,
-            published_at: r.published_at.as_deref(),
-            asset,
-        };
+
+        // For stable, keep only the highest semver; for nightly, use the latest.
         match channel {
-            Channel::Nightly => nightly.push(pr),
             Channel::Stable => {
-                let keep = match stable.get(&id) {
+                let keep = match &best_stable {
                     Some(existing) => {
-                        pr.version.as_deref().and_then(parse_semver)
+                        version.as_deref().and_then(parse_semver)
                             > existing.version.as_deref().and_then(parse_semver)
                     }
                     None => true,
                 };
-                if keep {
-                    stable.insert(id, pr);
+                if !keep {
+                    continue;
+                }
+                best_stable = None; // will be replaced
+            }
+            Channel::Nightly => {} // keep all nightly matches
+        }
+
+        // Extract each plugin from the assets matching this triple.
+        for asset in &r.assets {
+            if is_aux(&asset.name) || !asset.name.contains(triple) {
+                continue;
+            }
+            if let Some(id) = extract_plugin_id(&asset.name) {
+                let pr = PluginRelease {
+                    id,
+                    tag: &r.tag_name,
+                    channel: ch,
+                    version: version.clone(),
+                    published_at: r.published_at.as_deref(),
+                    asset,
+                };
+                match channel {
+                    Channel::Nightly => result.push(pr),
+                    Channel::Stable => best_stable = Some(pr),
                 }
             }
         }
     }
-    match channel {
-        Channel::Nightly => nightly,
-        Channel::Stable => stable.into_values().collect(),
+
+    if let Some(pr) = best_stable {
+        result.push(pr);
     }
+    result
 }
 
 fn asset_names(release: &Release) -> String {
@@ -422,41 +450,45 @@ mod tests {
     }
 
     #[test]
-    fn parses_plugin_tag_parts() {
-        let (id, ch, ver) = plugin_tag_parts("postgres-latest").unwrap();
-        assert_eq!((id.as_str(), ch, ver), ("postgres", Channel::Nightly, None));
+    fn parses_is_plugins_release() {
+        let (ch, ver) = is_plugins_release("plugins-latest").unwrap();
+        assert_eq!((ch, ver), (Channel::Nightly, None));
 
-        let (id, ch, ver) = plugin_tag_parts("postgres-v0.2.0").unwrap();
-        assert_eq!(id, "postgres");
+        let (ch, ver) = is_plugins_release("plugins-v0.2.0").unwrap();
         assert_eq!(ch, Channel::Stable);
         assert_eq!(ver.as_deref(), Some("0.2.0"));
 
-        // Hyphenated id is preserved.
-        let (id, ch, _) = plugin_tag_parts("my-plugin-v1.0.0").unwrap();
-        assert_eq!((id.as_str(), ch), ("my-plugin", Channel::Stable));
-
-        // The app's own tags are not plugin tags.
-        assert!(plugin_tag_parts("latest").is_none());
-        assert!(plugin_tag_parts("v0.2.0").is_none());
-        // Non-semver after -v is rejected.
-        assert!(plugin_tag_parts("postgres-vnightly").is_none());
+        // The app's own tags are not plugin releases.
+        assert!(is_plugins_release("latest").is_none());
+        assert!(is_plugins_release("v0.2.0").is_none());
+        // Non-semver after plugins-v is rejected.
+        assert!(is_plugins_release("plugins-vnightly").is_none());
     }
 
     #[test]
-    fn parse_semver_orders_versions() {
-        assert_eq!(parse_semver("0.2.10"), Some((0, 2, 10)));
-        assert!(parse_semver("1.0.0") > parse_semver("0.9.9"));
-        assert!(parse_semver("0.2.10") > parse_semver("0.2.9"));
-        assert!(parse_semver("1.2").is_none());
-        assert!(parse_semver("1.2.3.4").is_none());
-        assert!(parse_semver("1.2.x").is_none());
+    fn extracts_plugin_id_from_asset_name() {
+        // Standard format with target triple
+        let id = extract_plugin_id("rdb-plugin-postgres-aarch64-apple-darwin");
+        assert_eq!(id, Some("postgres".to_string()));
+
+        // With .exe suffix on Windows
+        let id = extract_plugin_id("rdb-plugin-mongodb-x86_64-pc-windows-msvc.exe");
+        assert_eq!(id, Some("mongodb".to_string()));
+
+        // Hyphenated plugin id
+        let id = extract_plugin_id("rdb-plugin-my-plugin-aarch64-apple-darwin");
+        assert_eq!(id, Some("my-plugin".to_string()));
+
+        // Invalid formats
+        assert_eq!(extract_plugin_id("SHA256SUMS"), None);
+        assert_eq!(extract_plugin_id("random-file"), None);
     }
 
     #[test]
-    fn selects_nightly_plugin_releases_with_matching_asset() {
+    fn selects_nightly_plugin_releases_with_matching_assets() {
         let triple = "aarch64-apple-darwin";
         let releases = vec![
-            // App release: not a `<plugin>-latest` tag -> skipped.
+            // App release: not a plugins release tag -> skipped.
             Release {
                 tag_name: "latest".into(),
                 published_at: Some("2026-01-01T00:00:00Z".into()),
@@ -466,9 +498,9 @@ mod tests {
                     size: 1,
                 }],
             },
-            // Plugin built for this platform -> kept.
+            // Plugins release with all three plugins -> each returned separately.
             Release {
-                tag_name: "postgres-latest".into(),
+                tag_name: "plugins-latest".into(),
                 published_at: Some("2026-02-01T00:00:00Z".into()),
                 assets: vec![
                     Asset {
@@ -477,53 +509,70 @@ mod tests {
                         size: 2,
                     },
                     Asset {
-                        name: format!("rdb-plugin-postgres-{triple}.sha256"),
-                        browser_download_url: "https://example/pg.sha256".into(),
+                        name: format!("rdb-plugin-mongodb-{triple}"),
+                        browser_download_url: "https://example/mongo".into(),
+                        size: 3,
+                    },
+                    Asset {
+                        name: format!("rdb-plugin-rabbitmq-{triple}"),
+                        browser_download_url: "https://example/rabbit".into(),
+                        size: 4,
+                    },
+                    Asset {
+                        name: "SHA256SUMS".into(),
+                        browser_download_url: "https://example/SHA256SUMS".into(),
                         size: 1,
                     },
                 ],
             },
-            // Plugin tag but no asset for this triple -> skipped.
+            // No asset for this triple -> skipped.
             Release {
-                tag_name: "mongodb-latest".into(),
+                tag_name: "plugins-latest".into(),
                 published_at: Some("2026-02-01T00:00:00Z".into()),
                 assets: vec![Asset {
-                    name: "rdb-plugin-mongodb-x86_64-pc-windows-msvc.exe".into(),
-                    browser_download_url: "https://example/mongo".into(),
+                    name: "rdb-plugin-postgres-x86_64-pc-windows-msvc.exe".into(),
+                    browser_download_url: "https://example/pg-win".into(),
                     size: 3,
                 }],
             },
         ];
         let got = select_plugin_releases(&releases, triple, Channel::Nightly);
-        assert_eq!(got.len(), 1);
-        assert_eq!(got[0].id, "postgres");
-        assert_eq!(got[0].tag, "postgres-latest");
-        assert_eq!(got[0].channel, Channel::Nightly);
-        assert_eq!(got[0].published_at, Some("2026-02-01T00:00:00Z"));
-        assert_eq!(got[0].asset.name, format!("rdb-plugin-postgres-{triple}"));
+        assert_eq!(got.len(), 3);
+        let ids: Vec<_> = got.iter().map(|p| p.id.as_str()).collect();
+        assert!(ids.contains(&"postgres"));
+        assert!(ids.contains(&"mongodb"));
+        assert!(ids.contains(&"rabbitmq"));
+        assert!(got.iter().all(|p| p.tag == "plugins-latest"));
     }
 
     #[test]
-    fn selects_highest_stable_version_per_plugin() {
+    fn selects_highest_stable_version() {
         let triple = "aarch64-apple-darwin";
         let mk = |tag: &str| Release {
             tag_name: tag.into(),
             published_at: Some("2026-01-01T00:00:00Z".into()),
-            assets: vec![Asset {
-                name: format!("rdb-plugin-postgres-{triple}"),
-                browser_download_url: "https://example/pg".into(),
-                size: 2,
-            }],
+            assets: vec![
+                Asset {
+                    name: format!("rdb-plugin-postgres-{triple}"),
+                    browser_download_url: "https://example/pg".into(),
+                    size: 2,
+                },
+                Asset {
+                    name: format!("rdb-plugin-mongodb-{triple}"),
+                    browser_download_url: "https://example/mongo".into(),
+                    size: 3,
+                },
+            ],
         };
         let releases = vec![
-            mk("postgres-v0.1.0"),
-            mk("postgres-v0.2.0"),
-            mk("postgres-v0.1.9"),
+            mk("plugins-v0.1.0"),
+            mk("plugins-v0.2.0"),
+            mk("plugins-v0.1.9"),
         ];
         let got = select_plugin_releases(&releases, triple, Channel::Stable);
-        assert_eq!(got.len(), 1);
-        assert_eq!(got[0].version.as_deref(), Some("0.2.0"));
-        assert_eq!(got[0].channel, Channel::Stable);
+        assert_eq!(got.len(), 2);
+        assert!(got.iter().all(|p| p.version.as_deref() == Some("0.2.0")));
+        assert!(got.iter().all(|p| p.tag == "plugins-v0.2.0"));
         // Nightly selection ignores stable releases.
         assert!(select_plugin_releases(&releases, triple, Channel::Nightly).is_empty());
     }

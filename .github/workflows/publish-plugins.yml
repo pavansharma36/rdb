@@ -5,16 +5,15 @@ name: Publish plugins
 # (src-tauri/src/github.rs) can fetch them.
 #
 # Two modes:
-#   - push to master  -> nightly: rolling `<plugin>-latest` prereleases,
+#   - push to master  -> nightly: rolling `plugins-latest` prerelease,
 #                        version `<major>.<minor>.<commit-count>`.
-#   - push a `v*` tag -> stable: immutable `<plugin>-v<version>` releases,
+#   - push a `v*` tag -> stable: immutable `v<version>` release,
 #                        version taken from the tag (e.g. v0.2.0 -> 0.2.0).
 #
-# Release layout: the installer's `select_binary_asset` expects EXACTLY ONE
-# binary matching a given target triple per release, so each plugin gets its own
-# release. Each release holds one binary per platform (named with the target
+# Release layout: all three plugins are published as assets in a single release.
+# Each release holds all plugin binaries (one per platform, named with the target
 # triple) plus an aggregate `SHA256SUMS`. Install in-app by pointing at this
-# repo and choosing the matching tag.
+# repo and choosing the tag (e.g., `v0.2.0` or `plugins-latest`).
 
 on:
   push:
@@ -128,62 +127,39 @@ jobs:
           path: staging
           merge-multiple: true
 
-      # Decide the per-plugin tag suffix and prerelease flag from the trigger.
+      # Decide the tag suffix and prerelease flag from the trigger.
       - name: Release metadata
         id: meta
         shell: bash
         run: |
           set -euo pipefail
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            echo "suffix=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-            echo "label=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "tag=plugins-${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "label=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           else
-            echo "suffix=latest" >> "$GITHUB_OUTPUT"
+            echo "tag=plugins-latest" >> "$GITHUB_OUTPUT"
             echo "label=nightly" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Group assets per plugin and generate checksums
+      - name: Stage all assets and generate checksums
         shell: bash
         run: |
           set -euo pipefail
-          for crate in rdb-plugin-postgres rdb-plugin-mongodb rdb-plugin-rabbitmq; do
-            outdir="release/${crate}"
-            mkdir -p "$outdir"
-            cp staging/${crate}-* "$outdir"/
-            # Aggregate SHA256SUMS listing bare filenames, as github.rs expects.
-            ( cd "$outdir" && sha256sum ${crate}-* > SHA256SUMS )
-            echo "== ${crate} =="
-            cat "$outdir/SHA256SUMS"
-          done
+          mkdir -p release
+          cp staging/* release/
+          # Generate aggregate SHA256SUMS for all plugins
+          ( cd release && sha256sum * > SHA256SUMS )
+          echo "== All plugins =="
+          cat release/SHA256SUMS
 
-      - name: Publish postgres release
+      - name: Publish all plugins release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: postgres-${{ steps.meta.outputs.suffix }}
-          name: "PostgreSQL plugin (${{ steps.meta.outputs.label }})"
-          body: "PostgreSQL plugin build from ${{ github.sha }}."
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: "Plugins (${{ steps.meta.outputs.label }})"
+          body: "All plugins build from ${{ github.sha }}."
           prerelease: ${{ steps.meta.outputs.prerelease }}
           make_latest: false
-          files: release/rdb-plugin-postgres/*
-
-      - name: Publish mongodb release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: mongodb-${{ steps.meta.outputs.suffix }}
-          name: "MongoDB plugin (${{ steps.meta.outputs.label }})"
-          body: "MongoDB plugin build from ${{ github.sha }}."
-          prerelease: ${{ steps.meta.outputs.prerelease }}
-          make_latest: false
-          files: release/rdb-plugin-mongodb/*
-
-      - name: Publish rabbitmq release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: rabbitmq-${{ steps.meta.outputs.suffix }}
-          name: "RabbitMQ plugin (${{ steps.meta.outputs.label }})"
-          body: "RabbitMQ plugin build from ${{ github.sha }}."
-          prerelease: ${{ steps.meta.outputs.prerelease }}
-          make_latest: false
-          files: release/rdb-plugin-rabbitmq/*
+          files: release/*
