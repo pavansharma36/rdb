@@ -9,6 +9,7 @@ use rdb_rdbms_common::{
 };
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column as _, Executor, Row, TypeInfo};
+use sqlx::{AssertSqlSafe, SqlSafeStr};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -426,7 +427,7 @@ impl RdbmsPlugin for PostgresPlugin {
                     elapsed_ms: start.elapsed().as_millis(),
                 });
             } else {
-                let res = sqlx::query(&stmt)
+                let res = sqlx::query(AssertSqlSafe(stmt.clone()))
                     .execute(&pool)
                     .await
                     .map_err(|e| PluginError::Backend(e.to_string()))?;
@@ -484,7 +485,7 @@ async fn run_dml(
     sql: &str,
     params: &[String],
 ) -> Result<u64> {
-    let mut q = sqlx::query(sql);
+    let mut q = sqlx::query(AssertSqlSafe(sql));
     for p in params {
         q = q.bind(p);
     }
@@ -648,7 +649,7 @@ async fn select_result(
     pool: &PgPool,
     stmt: &str,
 ) -> Result<(Vec<ColumnMeta>, Vec<Vec<serde_json::Value>>)> {
-    let rows = sqlx::query(stmt)
+    let rows = sqlx::query(AssertSqlSafe(stmt))
         .fetch_all(pool)
         .await
         .map_err(|e| PluginError::Backend(e.to_string()))?;
@@ -662,7 +663,7 @@ async fn select_result(
             })
             .collect()
     } else {
-        match pool.describe(stmt).await {
+        match pool.describe(AssertSqlSafe(stmt).into_sql_str()).await {
             Ok(d) => d
                 .columns
                 .iter()
