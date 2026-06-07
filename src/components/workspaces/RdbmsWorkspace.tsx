@@ -28,7 +28,7 @@ import {
 } from "./rdbms/columns";
 import { CellEditorModal } from "./rdbms/CellEditorModal";
 import { SchemaTree } from "./rdbms/SchemaTree";
-import { SqlFileList } from "./rdbms/SqlFileList";
+import { WorkspaceFileList } from "./WorkspaceFileList";
 import { StructureTable } from "./rdbms/StructureTable";
 
 interface Props {
@@ -670,7 +670,7 @@ export function RdbmsWorkspace({ connectionId, savedId, database }: Props) {
     <div className="workspace">
       <div className="tree">
         <div className="tree-top">
-        <SqlFileList
+        <WorkspaceFileList
           files={sqlFiles}
           activeFile={activeFile}
           newName={newSqlName}
@@ -680,6 +680,10 @@ export function RdbmsWorkspace({ connectionId, savedId, database }: Props) {
           onCancelAdd={() => setNewSqlName(null)}
           onLoad={loadSqlFile}
           onRequestDelete={setConfirmDelete}
+          label="SQL files"
+          ext="sql"
+          addTitle="Save current SQL as a file"
+          emptyText="No SQL files."
         />
         <div className="tree-dbselect">
           {databases.length > 0 && (
@@ -820,18 +824,23 @@ export function RdbmsWorkspace({ connectionId, savedId, database }: Props) {
           {tableView === "structure" && edit ? (
             <div className="structure">
               <StructureTable
-                headers={["Column", "Type", "Nullable", "Key"]}
+                headers={["Column", "Type", "Default", "Constraints"]}
                 rows={edit.columns.map((c) => ({
                   key: c.name,
                   cells: [
                     c.name,
                     displayType(c),
-                    <span
-                      className={"chip chip-" + (c.nullable ? "yes" : "no")}
-                    >
-                      {c.nullable ? "YES" : "NO"}
-                    </span>,
-                    c.primary_key ? "🔑 PK" : "",
+                    c.default_value ?? "",
+                    <>
+                      {c.primary_key && <span className="chip chip-pk">PRIMARY KEY</span>}
+                      {!c.nullable && <span className="chip chip-notnull">NOT NULL</span>}
+                      {c.unique && <span className="chip chip-unique">UNIQUE</span>}
+                      {c.foreign_key && (
+                        <span className="chip chip-fk">
+                          {`→ ${c.foreign_key.table}.${c.foreign_key.column}`}
+                        </span>
+                      )}
+                    </>,
                   ],
                 }))}
               />

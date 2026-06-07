@@ -40,6 +40,7 @@ pub enum PluginKind {
     Rdbms,
     Document,
     Rabbitmq,
+    Cli,
     Other,
 }
 
@@ -79,6 +80,9 @@ pub enum ConfigFieldType {
     Number,
     Boolean,
     Select { options: Vec<String> },
+    /// A file-path field: the UI shows a text input + "Browse…" button that
+    /// opens a native file picker. The stored value is the absolute path string.
+    FilePath,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +104,42 @@ pub struct PluginInfo {
 }
 
 pub type ConnectionConfig = HashMap<String, serde_json::Value>;
+
+/// How a `cli`-kind plugin tells the host to launch its terminal process.
+///
+/// The host knows nothing about ssh/telnet/etc.; it asks the plugin (via the
+/// `cli.spawn_spec` op) for this spec, then runs `program` with `args`/`env` in
+/// a PTY and streams the I/O to the frontend. Keeping command construction in
+/// the plugin means all backend-specific knowledge (flags, auth handling,
+/// prompt detection) stays out of the generic host.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PtySpawnSpec {
+    /// Executable to run (e.g. `"ssh"`).
+    pub program: String,
+    /// Arguments, in order.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Extra environment variables to set for the child (`(key, value)`).
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
+    /// Optional one-shot auto-answer to an interactive prompt (e.g. feeding a
+    /// saved password when the server prints `password:`). The host watches the
+    /// PTY output for `pattern` and, on the first match, writes `send` followed
+    /// by a newline — then stops watching.
+    #[serde(default)]
+    pub prompt_response: Option<PtyPromptResponse>,
+}
+
+/// A one-shot prompt auto-answer for a [`PtySpawnSpec`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PtyPromptResponse {
+    /// Case-insensitive substring that identifies the prompt (e.g. `"password:"`).
+    pub pattern: String,
+    /// Text to send (a trailing newline is added by the host).
+    pub send: String,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct ConnectionId(pub Uuid);

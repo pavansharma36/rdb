@@ -3,6 +3,7 @@ import { api, errString } from "../api";
 import type { PluginInfo, ConfigField, ConnectionConfig } from "../api";
 import type { SavedConnection } from "../store";
 import { genId } from "../store";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 
 interface ConnectionFormProps {
   plugins: PluginInfo[];
@@ -239,6 +240,24 @@ function Field({
             </option>
           ))}
         </select>
+      ) : t.kind === "filepath" ? (
+        <div className="file-path-field">
+          <input
+            type="text"
+            readOnly
+            value={value === undefined || value === null ? "" : String(value)}
+            placeholder={field.placeholder ?? "No file selected"}
+          />
+          <button
+            type="button"
+            onClick={async () => {
+              const selected = await openFileDialog({ multiple: false, directory: false });
+              if (selected) onChange(selected);
+            }}
+          >
+            Browse…
+          </button>
+        </div>
       ) : (
         <input
           type={

@@ -8,14 +8,15 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-export type PluginKind = "rdbms" | "document" | "rabbitmq" | "other";
+export type PluginKind = "rdbms" | "document" | "rabbitmq" | "cli" | "other";
 
 export type ConfigFieldType =
   | { kind: "text" }
   | { kind: "password" }
   | { kind: "number" }
   | { kind: "boolean" }
-  | { kind: "select"; options: string[] };
+  | { kind: "select"; options: string[] }
+  | { kind: "filepath" };
 
 export interface ShowIf {
   field: string;
@@ -103,6 +104,11 @@ export interface Table {
   kind: TableKind;
 }
 
+export interface ForeignKey {
+  table: string;
+  column: string;
+}
+
 export interface Column {
   name: string;
   data_type: string;
@@ -110,6 +116,12 @@ export interface Column {
   udt_name?: string | null;
   nullable: boolean;
   primary_key: boolean;
+  /** True when a single-column UNIQUE constraint covers this column. */
+  unique?: boolean;
+  /** Default value expression from the catalog, if any. */
+  default_value?: string | null;
+  /** Foreign-key reference this column participates in, if any. */
+  foreign_key?: ForeignKey | null;
   /** Declared length for character types (`varchar(n)`/`char(n)`), if any. */
   char_max_length?: number | null;
   /** Precision/scale for `numeric`/`decimal` columns, if declared. */
@@ -476,4 +488,48 @@ export function errString(e: unknown): string {
   if (typeof e === "string") return e;
   if (e instanceof Error) return e.message;
   return JSON.stringify(e);
+}
+
+// ---------------------------------------------------------------------------
+// PTY (CLI / SSH workspace)
+// ---------------------------------------------------------------------------
+
+/** Spawn the CLI plugin's terminal process in a PTY for a connection. The host
+ * asks the owning plugin how to launch it (`cli.spawn_spec`), so no config is
+ * sent from here. Idempotent: a no-op if the PTY is already running. */
+export function ptySpawn(connectionId: ConnectionId): Promise<void> {
+  return invoke("pty_spawn", { connectionId });
+}
+
+/** Send raw bytes (keystrokes / paste) to the PTY. */
+export function ptyWrite(
+  connectionId: ConnectionId,
+  data: number[],
+): Promise<void> {
+  return invoke("pty_write", { connectionId, data });
+}
+
+/** Notify the PTY of a terminal resize. */
+export function ptyResize(
+  connectionId: ConnectionId,
+  cols: number,
+  rows: number,
+): Promise<void> {
+  return invoke("pty_resize", { connectionId, cols, rows });
+}
+
+/** Close and drop the PTY for a connection. */
+export function ptyClose(connectionId: ConnectionId): Promise<void> {
+  return invoke("pty_close", { connectionId });
+}
+
+/** Retained scrollback (recent output bytes) for a connection's PTY, so a
+ * remounted terminal can repaint its history. Empty if no live PTY. */
+export function ptySnapshot(connectionId: ConnectionId): Promise<number[]> {
+  return invoke("pty_snapshot", { connectionId });
+}
+
+/** Whether a live PTY (ssh session) exists for this connection. */
+export function ptyAlive(connectionId: ConnectionId): Promise<boolean> {
+  return invoke("pty_alive", { connectionId });
 }

@@ -153,29 +153,32 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
         )}
 
         {available && available.length > 0 && (
-          <ul className="plugin-list">
-            {available.map((plugin) => {
-              const active = selected?.id === plugin.id;
-              const upToDate = plugin.status === "up_to_date";
-              return (
-                <li key={plugin.id} className="plugin-row">
-                  <div className="plugin-row-main">
-                    <span className="plugin-name">{plugin.id}</span>
-                    <span className="muted small">{statusNote(plugin)}</span>
-                  </div>
-                  <button
-                    onClick={() => onSelect(plugin)}
-                    disabled={busy !== null || upToDate}
-                    className={plugin.status === "update_available" ? "primary" : ""}
-                  >
-                    {active && busy === "preview"
-                      ? "Fetching…"
-                      : actionLabel(plugin.status)}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+          <div>
+            <p className="msg warn">Make sure no connections are open while updating plugin.</p>
+            <ul className="plugin-list">
+              {available.map((plugin) => {
+                const active = selected?.id === plugin.id;
+                const upToDate = plugin.status === "up_to_date";
+                return (
+                  <li key={plugin.id} className="plugin-row">
+                    <div className="plugin-row-main">
+                      <span className="plugin-name">{plugin.id}</span>
+                      <span className="muted small">{statusNote(plugin)}</span>
+                    </div>
+                    <button
+                      onClick={() => onSelect(plugin)}
+                      disabled={busy !== null || upToDate}
+                      className={plugin.status === "update_available" ? "primary" : ""}
+                    >
+                      {active && busy === "preview"
+                        ? "Fetching…"
+                        : actionLabel(plugin.status)}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         )}
 
         {selected && preview && (

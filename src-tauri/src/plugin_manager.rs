@@ -78,17 +78,58 @@ struct PluginProcess {
 }
 
 impl PluginProcess {
-    fn spawn(executable: &Path) -> std::result::Result<Self, String> {
+    fn spawn(
+        executable: &Path,
+        log_path: Option<PathBuf>,
+    ) -> std::result::Result<Self, String> {
+        // In release builds we capture the plugin's stderr to a per-plugin log
+        // file; in dev (`log_path == None`) we inherit it so it shows on the
+        // console alongside the host's logs.
+        let stderr = if log_path.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::inherit()
+        };
         let mut child = Command::new(executable)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(stderr)
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| format!("failed to spawn plugin {}: {e}", executable.display()))?;
 
         let mut stdin = child.stdin.take().expect("stdin piped");
         let stdout = child.stdout.take().expect("stdout piped");
+
+        // Forward captured stderr to the plugin's log file (release builds).
+        if let Some(path) = log_path {
+            if let Some(stderr) = child.stderr.take() {
+                tokio::spawn(async move {
+                    let file = match tokio::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&path)
+                        .await
+                    {
+                        Ok(f) => f,
+                        Err(e) => {
+                            tracing::warn!("cannot open plugin log {}: {e}", path.display());
+                            return;
+                        }
+                    };
+                    let mut file = file;
+                    let mut lines = BufReader::new(stderr).lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        if file.write_all(line.as_bytes()).await.is_err()
+                            || file.write_all(b"\n").await.is_err()
+                        {
+                            break;
+                        }
+                        let _ = file.flush().await;
+                    }
+                });
+            }
+        }
 
         let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel::<String>();
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
@@ -198,6 +239,9 @@ pub struct PluginManager {
     /// Directory holding plugin executables + `*.plugin.json` manifests; also
     /// the install target for plugins fetched from GitHub.
     plugins_dir: PathBuf,
+    /// Where to write captured plugin stderr (`<logs_dir>/plugin-<id>.log`).
+    /// `None` in dev builds, where plugin stderr is inherited to the console.
+    logs_dir: Option<PathBuf>,
     plugins: RwLock<HashMap<String, DiscoveredPlugin>>,
     processes: Mutex<HashMap<String, Arc<PluginProcess>>>,
     routes: Mutex<HashMap<ConnectionId, String>>,
@@ -262,7 +306,7 @@ impl PluginManager {
     /// Scan `dir` for `*.plugin.json` manifests, caching each plugin's info and
     /// executable. Never spawns a process. Malformed or version-incompatible
     /// manifests are logged and skipped.
-    pub fn discover(dir: &Path) -> Self {
+    pub fn discover(dir: &Path, logs_dir: Option<PathBuf>) -> Self {
         let mut plugins = HashMap::new();
         match std::fs::read_dir(dir) {
             Ok(entries) => {
@@ -288,6 +332,7 @@ impl PluginManager {
         }
         Self {
             plugins_dir: dir.to_path_buf(),
+            logs_dir,
             plugins: RwLock::new(plugins),
             processes: Mutex::new(HashMap::new()),
             routes: Mutex::new(HashMap::new()),
@@ -321,9 +366,20 @@ impl PluginManager {
                 .map(|p| p.executable.clone())
                 .ok_or_else(|| PluginError::NotFound(format!("plugin {plugin_id}")))?
         };
-        let proc = Arc::new(PluginProcess::spawn(&executable).map_err(PluginError::Backend)?);
+        let proc = Arc::new(
+            PluginProcess::spawn(&executable, self.plugin_log_path(plugin_id))
+                .map_err(PluginError::Backend)?,
+        );
         procs.insert(plugin_id.to_string(), proc.clone());
         Ok(proc)
+    }
+
+    /// Path to a plugin's stderr log file (`<logs_dir>/plugin-<id>.log`), or
+    /// `None` in dev builds where stderr is inherited to the console.
+    fn plugin_log_path(&self, plugin_id: &str) -> Option<PathBuf> {
+        self.logs_dir
+            .as_ref()
+            .map(|d| d.join(format!("plugin-{plugin_id}.log")))
     }
 
     pub async fn test_connection(
@@ -702,7 +758,7 @@ mod tests {
         std::fs::write(dir.join("x.plugin.json"), manifest_json(999, "x")).unwrap();
         std::fs::write(dir.join("ignore.txt"), "not a manifest").unwrap();
 
-        let mgr = PluginManager::discover(&dir);
+        let mgr = PluginManager::discover(&dir, None);
         assert!(mgr.list_plugins().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, errString } from "./api";
+import { api, errString, ptyClose } from "./api";
 import type { PluginInfo, ConnectionId, PluginKind } from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { ConnectionForm } from "./components/ConnectionForm";
@@ -10,6 +10,7 @@ import { checkForUpdate, type UpdateInfo } from "./updater";
 import { RdbmsWorkspace } from "./components/workspaces/RdbmsWorkspace";
 import { DocumentWorkspace } from "./components/workspaces/DocumentWorkspace";
 import { RabbitMqWorkspace } from "./components/workspaces/RabbitMqWorkspace";
+import { CliWorkspace } from "./components/workspaces/CliWorkspace";
 import type { SavedConnection } from "./store";
 import { loadConnections, saveConnections, upsert, remove } from "./store";
 import { loadConfig, saveConfig } from "./store";
@@ -159,6 +160,7 @@ export function App() {
     const prevLive = open.find((o) => o.savedId === profile.id);
     if (prevLive) {
       try {
+        await ptyClose(prevLive.id);
         await api.closeConnection(prevLive.id);
       } catch {
         // Best effort.
@@ -203,6 +205,9 @@ export function App() {
     const live = open.find((o) => o.savedId === savedId);
     if (!live) return;
     try {
+      // Close the ssh PTY too (no-op for non-CLI connections); the host keeps
+      // it alive across UI unmounts, so disconnect is the explicit teardown.
+      await ptyClose(live.id);
       await api.closeConnection(live.id);
     } catch {
       // Best effort — drop it locally regardless.
@@ -215,6 +220,7 @@ export function App() {
     const live = open.find((o) => o.savedId === id);
     if (live) {
       try {
+        await ptyClose(live.id);
         await api.closeConnection(live.id);
       } catch {
         // Best effort.
@@ -245,6 +251,20 @@ export function App() {
         return <DocumentWorkspace key={conn.id} connectionId={conn.id} />;
       case "rabbitmq":
         return <RabbitMqWorkspace key={conn.id} connectionId={conn.id} />;
+      case "cli": {
+        // The ssh PTY lives in the host and survives this component
+        // unmounting, so the workspace can mount/unmount like any other; it
+        // reattaches to the running session (and replays scrollback) on mount.
+        // The host gets the launch command from the plugin (cli.spawn_spec), so
+        // no config is passed from here.
+        return (
+          <CliWorkspace
+            key={conn.id}
+            connectionId={conn.id}
+            savedId={conn.savedId}
+          />
+        );
+      }
       default:
         return (
           <div className="placeholder">No workspace available for “{mod}”.</div>

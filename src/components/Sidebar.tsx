@@ -4,6 +4,7 @@ import type { PluginInfo, ConnectionId } from "../api";
 import type { SavedConnection } from "../store";
 import { THEMES } from "../theme";
 import { getVersion } from '@tauri-apps/api/app'; // v2 Import
+import { open } from '@tauri-apps/plugin-shell';
 
 
 interface SidebarProps {
@@ -158,6 +159,13 @@ export function Sidebar({
         <button className="install-btn" onClick={onInstallPlugin}>
           ⤓ Install plugin
         </button>
+        {/*<button*/}
+        {/*  className="support-btn"*/}
+        {/*  title="Support / Donate"*/}
+        {/*  onClick={() => open("https://github.com/sponsors/pavansharma36")}*/}
+        {/*>*/}
+        {/*  ♥*/}
+        {/*</button>*/}
         <div className="footer-menu" ref={menuRef}>
           <button
             className="icon-btn"

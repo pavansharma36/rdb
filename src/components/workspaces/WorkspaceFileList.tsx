@@ -1,6 +1,6 @@
-import type { WorkspaceFile } from "../../../store";
+import type { WorkspaceFile } from "../../store";
 
-interface SqlFileListProps {
+interface WorkspaceFileListProps {
   files: WorkspaceFile[];
   activeFile: string | null;
   /** The in-progress new-file name, or null when the add input is hidden. */
@@ -11,10 +11,22 @@ interface SqlFileListProps {
   onCancelAdd: () => void;
   onLoad: (file: WorkspaceFile) => void;
   onRequestDelete: (name: string) => void;
+  /** Optional per-file run action; when set, each row shows a ▶ button. */
+  onRun?: (file: WorkspaceFile) => void;
+  /** Section header label (e.g. "SQL files", "Scripts"). */
+  label: string;
+  /** File extension shown after each name (e.g. "sql", "sh"). */
+  ext: string;
+  /** Title for the add (＋) button. */
+  addTitle?: string;
+  /** Text shown when there are no files. */
+  emptyText?: string;
 }
 
-/** The saved-SQL-file list with its inline "new file" name input. */
-export function SqlFileList({
+/** A saved-workspace-file list with an inline "new file" name input, plus
+ * optional per-file load/run/delete actions. Shared by the RDBMS (SQL files)
+ * and SSH/CLI (shell scripts) workspaces. */
+export function WorkspaceFileList({
   files,
   activeFile,
   newName,
@@ -24,14 +36,19 @@ export function SqlFileList({
   onCancelAdd,
   onLoad,
   onRequestDelete,
-}: SqlFileListProps) {
+  onRun,
+  label,
+  ext,
+  addTitle,
+  emptyText,
+}: WorkspaceFileListProps) {
   return (
     <div className="tree-queries">
       <div className="tree-section-head">
-        <span className="field-label">SQL files</span>
+        <span className="field-label">{label}</span>
         <button
           className="tree-add"
-          title="Save current SQL as a file"
+          title={addTitle ?? `Save current ${label} as a file`}
           onClick={onToggleAdd}
         >
           ＋
@@ -53,7 +70,7 @@ export function SqlFileList({
       )}
       <div className="tree-queries-list">
         {files.length === 0 ? (
-          <p className="muted">No SQL files.</p>
+          <p className="muted">{emptyText ?? "No files."}</p>
         ) : (
           files.map((f) => (
             <div
@@ -64,10 +81,24 @@ export function SqlFileList({
               onClick={() => onLoad(f)}
               title="Load into editor"
             >
-              <span className="conn-name">{f.name}.sql</span>
+              <span className="conn-name">
+                {f.name}.{ext}
+              </span>
+              {onRun && (
+                <button
+                  className="icon-btn"
+                  title="Run in terminal"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRun(f);
+                  }}
+                >
+                  ▶
+                </button>
+              )}
               <button
                 className="close-x"
-                title="Delete SQL file"
+                title="Delete file"
                 onClick={(e) => {
                   e.stopPropagation();
                   onRequestDelete(f.name);

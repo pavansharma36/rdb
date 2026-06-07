@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`rdb` is a cross-platform desktop database/message-broker client built with **Tauri 2** (Rust backend) and **React 18 + TypeScript + Vite** (frontend). One window connects to relational DBs, document stores, and queues through a **plugin architecture**. Ships with three plugins: PostgreSQL (`rdbms`, via `sqlx`), MongoDB (`document`), RabbitMQ (`rabbitmq`, via the HTTP Management API).
+`rdb` is a cross-platform desktop database/message-broker client built with **Tauri 2** (Rust backend) and **React 18 + TypeScript + Vite** (frontend). One window connects to relational DBs, document stores, and queues through a **plugin architecture**. Ships with three plugins: PostgreSQL (`rdbms`, via `sqlx`), MongoDB (`document`), RabbitMQ (`rabbitmq`, via the HTTP Management API), and **SSH** (`cli`, PTY terminal + script runner).
 
 ## Commands
 
@@ -13,8 +13,12 @@ npm install                              # frontend deps (Rust deps fetch on fir
 
 # Run the app end-to-end. Plugins are out-of-process executables the host
 # discovers at runtime, so build + install them first, then point the host at them:
-npm run plugins:dev                      # builds the 3 bundled plugins into dev-plugins/ (debug)
+npm run plugins:dev                      # builds the 4 bundled plugins into dev-plugins/ (debug)
 RDB_PLUGINS_DIR=$PWD/dev-plugins npm run tauri dev
+# Or use the convenience script:
+./start-dev.sh              # uses dev-plugins/ as-is
+./start-dev.sh --build      # rebuild plugins first
+./start-dev.sh --debug      # set RUST_LOG=debug
 # Without plugins installed the connection form is empty — plugins:dev is required.
 
 npm run dev                              # frontend-only Vite dev server (:1420)
@@ -44,11 +48,12 @@ React frontend  ──@tauri-apps/api invoke()──▶  Tauri host (src-tauri)
 
 ### Three layers, three boundaries
 
-1. **Frontend → host** (`src/api.ts` ⇄ `src-tauri/src/commands.rs`): just **8 generic Tauri commands** —
+1. **Frontend → host** (`src/api.ts` ⇄ `src-tauri/src/commands.rs`): just **13 Tauri commands** —
    `list_plugins`, `test_connection`, `open_connection`, `close_connection`, `plugin_call`,
-   `preview_github_plugin`, `install_github_plugin`, plus persistence (`load_connections`/`save_connections`).
-   Every capability (run SQL, find docs, publish to a queue) funnels through the single `plugin_call`
-   command with an **opaque `op` string** (e.g. `"rdbms.execute"`) + JSON `params`. The host passes
+   `preview_github_plugin`, `install_github_plugin`, plus persistence (`load_connections`/`save_connections`),
+   and PTY commands for CLI workspaces (`pty_spawn`, `pty_write`, `pty_resize`, `pty_close`, `pty_snapshot`).
+   Every DB/queue/terminal capability funnels through `plugin_call` with an **opaque `op` string**
+   (e.g. `"rdbms.execute"`, `"cli.spawn_spec"`) + JSON `params`. The host passes
    `op`/`params` through untouched.
 
 2. **Host → plugin** (`crates/rdb-core/src/protocol.rs`): line-delimited JSON-RPC over stdio. The host
@@ -80,11 +85,11 @@ serialize a pool/client across the pipe.
 
 | Crate | Role |
 | --- | --- |
-| `crates/rdb-core` | Backend-agnostic foundation: `Plugin`/`Connection` traits, `PluginKind`, config-schema types the UI builds forms from (`PluginInfo`, `ConfigField`, `ShowIf`), `ConnectionId`, `PluginError`, and the wire `protocol`. |
+| `crates/rdb-core` | Backend-agnostic foundation: `Plugin`/`Connection` traits, `PluginKind` (`Rdbms`, `Document`, `Rabbitmq`, `Cli`, `Other`), config-schema types the UI builds forms from (`PluginInfo`, `ConfigField`, `ShowIf`, `ConfigFieldType` including `FilePath`), `ConnectionId`, `PluginError`, the wire `protocol`, and PTY contract types (`PtySpawnSpec`, `PtyPromptResponse`). |
 | `crates/rdb-plugin-runtime` | Plugin SDK: the stdio JSON-RPC server loop (`run`/`serve`) + the `Dispatcher` trait. |
 | `crates/rdb-rdbms-common` | `RdbmsPlugin` trait + shared relational types (`Schema`, `Table`, `Column`, `QueryResult`, `RowChanges`, `ApplyResult`), and `dispatch_rdbms`/`RdbmsDispatcher` mapping `"rdbms.*"` ops to trait methods. |
-| `crates/plugins/{postgres,mongodb,rabbitmq}` | One binary crate per backend. `lib.rs` = the `Plugin` impl; `main.rs` = `rdb_plugin_runtime::run(plugin, dispatcher)`. |
-| `src-tauri` | The Tauri host: `lib.rs` (registry/commands), `commands.rs` (Tauri command surface), `plugin_manager.rs` (discovery + multiplexing), `github.rs` (release fetch/verify), `persistence.rs` (saved profiles). |
+| `crates/plugins/{postgres,mongodb,rabbitmq,ssh}` | One binary crate per backend. `lib.rs` = the `Plugin` impl; `main.rs` = `rdb_plugin_runtime::run(plugin, dispatcher)`. The `ssh` plugin uses `PluginKind::Cli` and returns a `PtySpawnSpec` from the `cli.spawn_spec` op; the PTY itself is managed by the host. |
+| `src-tauri` | The Tauri host: `lib.rs` (registry/commands), `commands.rs` (Tauri command surface), `plugin_manager.rs` (discovery + multiplexing), `pty.rs` (PTY lifecycle for CLI workspaces), `logging.rs` (log file setup), `github.rs` (release fetch/verify), `persistence.rs` (saved profiles). |
 
 ## The type contract is mirrored in two places
 
@@ -109,8 +114,10 @@ serde casing conventions to match:
 4. `main.rs` calls `rdb_plugin_runtime::run(plugin, dispatcher)`. For RDBMS use `RdbmsDispatcher(plugin)`.
 5. Add the crate to `scripts/dev-plugins.sh` (`PLUGINS`/`CRATES` arrays) so `npm run plugins:dev` builds it.
 
-Non-relational backends pick a different `PluginKind` (`Document`, `Rabbitmq`, `Other`); the frontend
+Non-relational backends pick a different `PluginKind` (`Document`, `Rabbitmq`, `Cli`, `Other`); the frontend
 renders the matching workspace component (`src/components/workspaces/`) based on `kind`/`ui_module`.
+`Cli`-kind plugins must handle the `cli.spawn_spec` op and return a `PtySpawnSpec`; the host spawns
+that process in a PTY and streams I/O to the `CliWorkspace` component via Tauri events.
 
 There is **no `build_registry()`** anymore — plugins are not statically linked. Discovery is purely from
 manifests at runtime.
