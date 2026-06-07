@@ -511,6 +511,20 @@ select option:hover {
   color: var(--accent);
 }
 
+.support-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 14px;
+  padding: 5px 4px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.support-btn:hover {
+  color: #e05c7a;
+}
+
 /* Install-plugin modal --------------------------------------------------- */
 
 .modal-backdrop {
@@ -710,7 +724,14 @@ select option:hover {
   --dot-color: var(--warn);
 }
 
+.dot-cli {
+  --dot-color: var(--ok);
+}
+
 /* Per-plugin brand colors. */
+.dot-id-ssh {
+  --dot-color: #7ec8e3;
+}
 .dot-id-postgres {
   --dot-color: #4a90d9;
 }
@@ -809,6 +830,21 @@ select option:hover {
   margin-left: 2px;
 }
 
+.file-path-field {
+  display: flex;
+  gap: 6px;
+}
+
+.file-path-field input {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-path-field button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .form-actions {
   display: flex;
   gap: 8px;
@@ -826,6 +862,11 @@ select option:hover {
   color: var(--err);
 }
 
+.msg.warn {
+  background: rgba(255, 214, 102, 0.12);
+  color: var(--warn);
+}
+
 .msg.ok {
   background: rgba(166, 227, 161, 0.12);
   color: var(--ok);
@@ -837,6 +878,121 @@ select option:hover {
   flex: 1;
   display: flex;
   min-height: 0;
+}
+
+/* CLI / SSH terminal workspace.
+   Row 1 (`cli-top`): scripts list + editor side by side.
+   Row 2 (`cli-terminal`): full-width terminal. */
+.cli-workspace {
+  flex-direction: column;
+}
+
+.cli-top {
+  display: flex;
+  flex-direction: row;
+  /* Compact top row; the terminal below takes the remaining (larger) space. */
+  flex: 0 0 auto;
+  height: 200px;
+  min-height: 90px;
+  max-height: 60%;
+  resize: vertical;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+}
+
+.cli-scripts {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-2);
+  overflow-y: auto;
+  padding: 6px;
+}
+
+/* The scripts panel reuses the RDBMS tree's `.tree-queries` markup, but here it
+ * stands alone — drop the separator border/margin and let the list fill the
+ * panel instead of reserving a fixed height. */
+.cli-scripts .tree-queries {
+  border-bottom: none;
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.cli-scripts .tree-queries-list {
+  height: auto;
+  flex: 1;
+  max-height: none;
+  resize: none;
+}
+
+.cli-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-2);
+}
+
+.cli-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cli-editor-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.cli-save-status {
+  font-size: 11px;
+}
+
+.cli-editor-area {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  border: none;
+  outline: none;
+  padding: 8px 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Cascadia Code", "JetBrains Mono", Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  tab-size: 2;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+  white-space: pre;
+  overflow: auto;
+}
+
+.cli-terminal {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  padding: 6px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+/* xterm.js resets: let the terminal fill the container */
+.cli-terminal .xterm {
+  height: 100%;
+}
+
+.cli-terminal .xterm-viewport,
+.cli-terminal .xterm-screen {
+  width: 100% !important;
 }
 
 .tree {
@@ -1154,6 +1310,29 @@ table.grid.structure-table td {
 .chip.chip-no {
   color: var(--warn);
   border-color: var(--warn);
+}
+
+/* Structure view: per-constraint-type chip colors. */
+.chip.chip-pk {
+  color: var(--warn);
+  border-color: var(--warn);
+  font-weight: 600;
+}
+
+.chip.chip-notnull {
+  color: var(--err);
+  border-color: var(--err);
+}
+
+.chip.chip-unique {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.chip.chip-fk {
+  color: var(--ok);
+  border-color: var(--ok);
+  font-family: monospace;
 }
 
 /* Editable grid ---------------------------------------------------------- */

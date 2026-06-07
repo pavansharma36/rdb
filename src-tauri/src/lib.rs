@@ -9,8 +9,10 @@
 mod commands;
 mod config;
 mod github;
+mod logging;
 mod persistence;
 mod plugin_manager;
+mod pty;
 mod update;
 mod workspace_files;
 
@@ -19,6 +21,12 @@ use std::sync::Arc;
 
 use plugin_manager::PluginManager;
 use tauri::Manager;
+
+/// Holds the file-appender's `WorkerGuard` (release builds only) in Tauri's
+/// managed state so it lives for the process lifetime; dropping it flushes and
+/// stops the background log writer. `None` in dev builds (console logging).
+#[allow(dead_code)]
+struct LogGuard(std::sync::Mutex<Option<tracing_appender::non_blocking::WorkerGuard>>);
 
 /// The release channel this app binary was built for. Stamped at build time by
 /// `publish-app.yml` via `RDB_RELEASE_CHANNEL`; defaults to `nightly` for
@@ -52,26 +60,42 @@ fn plugins_dir(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> 
 }
 
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
-
     tauri::Builder::default()
         .setup(|app| {
+            // Initialize logging first. Dev builds log to the console; release
+            // builds log to `<app-data-dir>/logs/rdb-app.log`. The file
+            // appender's guard must live for the process lifetime, so stash it
+            // in managed state.
+            let logs_dir = app
+                .path()
+                .app_data_dir()
+                .map(|d| logging::logs_dir(&d))
+                .ok();
+            let guard = logging::init(logs_dir.as_deref().unwrap_or(std::path::Path::new(".")));
+            app.manage(LogGuard(std::sync::Mutex::new(guard)));
+
             #[cfg(target_os = "macos")]
             disable_macos_text_substitutions();
 
+            // In release builds, plugin stderr is captured to per-plugin log
+            // files in the same logs dir; in dev it's inherited (console).
+            let plugin_logs = if logging::logs_to_file() {
+                logs_dir
+            } else {
+                None
+            };
             let dir = plugins_dir(app)?;
             tracing::info!("discovering plugins in {}", dir.display());
-            let manager = Arc::new(PluginManager::discover(&dir));
+            let manager = Arc::new(PluginManager::discover(&dir, plugin_logs));
             app.manage(manager);
+            app.manage(Arc::new(pty::PtyManager::new()));
 
             // Self-update: register the updater + process plugins. The
             // channel-aware endpoint is applied per-call in `update::*` via
             // `updater_builder()` (the init Builder has no `.endpoints`).
+            app.handle().plugin(tauri_plugin_shell::init())?;
+            app.handle().plugin(tauri_plugin_dialog::init())?;
+
             #[cfg(desktop)]
             {
                 app.handle().plugin(tauri_plugin_process::init())?;
@@ -99,6 +123,12 @@ pub fn run() {
             workspace_files::list_workspace_files,
             workspace_files::save_workspace_file,
             workspace_files::delete_workspace_file,
+            commands::pty_spawn,
+            commands::pty_write,
+            commands::pty_resize,
+            commands::pty_close,
+            commands::pty_snapshot,
+            commands::pty_alive,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

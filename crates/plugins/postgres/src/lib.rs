@@ -4,8 +4,8 @@ use rdb_core::{
     PluginKind, Result,
 };
 use rdb_rdbms_common::{
-    downcast_conn, ApplyResult, Column, ColumnMeta, ColumnValue, Index, QueryResult, RdbmsPlugin,
-    RowChanges, Schema, Table, TableKind,
+    downcast_conn, ApplyResult, Column, ColumnMeta, ColumnValue, ForeignKey, Index, QueryResult,
+    RdbmsPlugin, RowChanges, Schema, Table, TableKind,
 };
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column as _, Executor, Row, TypeInfo};
@@ -96,6 +96,28 @@ async fn make_pool(url: &str) -> Result<PgPool> {
         .map_err(|e| PluginError::Connection(e.to_string()))
 }
 
+/// Replace the database path segment in a `postgres://` URL with `database`.
+/// Finds the path component (after the authority) and replaces it.
+fn swap_database_in_url(base: &str, database: &str) -> Result<String> {
+    // A postgres URL looks like: postgres://user:pass@host:port/dbname[?params]
+    // Find the third '/' (end of authority) and replace everything up to '?'.
+    let after_scheme = base
+        .find("://")
+        .map(|i| i + 3)
+        .ok_or_else(|| PluginError::Config("invalid connection string: no scheme".into()))?;
+    let path_start = base[after_scheme..]
+        .find('/')
+        .map(|i| after_scheme + i)
+        .ok_or_else(|| PluginError::Config("invalid connection string: no database path".into()))?;
+    let query_start = base[path_start..].find('?').map(|i| path_start + i);
+    let suffix = query_start.map(|i| &base[i..]).unwrap_or("");
+    Ok(format!(
+        "{}/{}{suffix}",
+        &base[..path_start],
+        urlencode(database),
+    ))
+}
+
 #[async_trait]
 impl Plugin for PostgresPlugin {
     fn info(&self) -> PluginInfo {
@@ -109,13 +131,39 @@ impl Plugin for PostgresPlugin {
             protocol_version: rdb_core::PROTOCOL_VERSION,
             config_schema: vec![
                 ConfigField {
+                    key: "mode".into(),
+                    label: "Input mode".into(),
+                    field_type: ConfigFieldType::Select {
+                        options: vec!["individual".into(), "url".into()],
+                    },
+                    required: false,
+                    default: Some(serde_json::json!("individual")),
+                    placeholder: None,
+                    show_if: None,
+                },
+                ConfigField {
+                    key: "connection_string".into(),
+                    label: "Connection string".into(),
+                    field_type: ConfigFieldType::Text,
+                    required: true,
+                    default: Some("postgres://user:password@localhost:5432/dbname".into()),
+                    placeholder: Some("postgres://user:password@localhost:5432/dbname".into()),
+                    show_if: Some(rdb_core::ShowIf {
+                        field: "mode".into(),
+                        equals: "url".into(),
+                    }),
+                },
+                ConfigField {
                     key: "host".into(),
                     label: "Host".into(),
                     field_type: ConfigFieldType::Text,
                     required: true,
                     default: Some(serde_json::json!("localhost")),
                     placeholder: Some("localhost".into()),
-                    show_if: None,
+                    show_if: Some(rdb_core::ShowIf {
+                        field: "mode".into(),
+                        equals: "individual".into(),
+                    }),
                 },
                 ConfigField {
                     key: "port".into(),
@@ -124,7 +172,10 @@ impl Plugin for PostgresPlugin {
                     required: true,
                     default: Some(serde_json::json!(5432)),
                     placeholder: None,
-                    show_if: None,
+                    show_if: Some(rdb_core::ShowIf {
+                        field: "mode".into(),
+                        equals: "individual".into(),
+                    }),
                 },
                 ConfigField {
                     key: "database".into(),
@@ -133,7 +184,10 @@ impl Plugin for PostgresPlugin {
                     required: true,
                     default: None,
                     placeholder: Some("postgres".into()),
-                    show_if: None,
+                    show_if: Some(rdb_core::ShowIf {
+                        field: "mode".into(),
+                        equals: "individual".into(),
+                    }),
                 },
                 ConfigField {
                     key: "user".into(),
@@ -142,7 +196,10 @@ impl Plugin for PostgresPlugin {
                     required: true,
                     default: None,
                     placeholder: Some("postgres".into()),
-                    show_if: None,
+                    show_if: Some(rdb_core::ShowIf {
+                        field: "mode".into(),
+                        equals: "individual".into(),
+                    }),
                 },
                 ConfigField {
                     key: "password".into(),
@@ -151,7 +208,10 @@ impl Plugin for PostgresPlugin {
                     required: false,
                     default: None,
                     placeholder: None,
-                    show_if: None,
+                    show_if: Some(rdb_core::ShowIf {
+                        field: "mode".into(),
+                        equals: "individual".into(),
+                    }),
                 },
                 ConfigField {
                     key: "ssl".into(),
@@ -162,15 +222,22 @@ impl Plugin for PostgresPlugin {
                     required: false,
                     default: Some(serde_json::json!("prefer")),
                     placeholder: None,
-                    show_if: None,
+                    show_if: Some(rdb_core::ShowIf {
+                        field: "mode".into(),
+                        equals: "individual".into(),
+                    }),
                 },
             ],
         }
     }
 
     async fn connect(&self, cfg: ConnectionConfig) -> Result<Arc<dyn Connection>> {
-        let database = cfg_str(&cfg, "database")?;
-        let url = build_url(&cfg, &database)?;
+        let url = if cfg_str_opt(&cfg, "mode").as_deref() == Some("url") {
+            cfg_str(&cfg, "connection_string")?
+        } else {
+            let database = cfg_str(&cfg, "database")?;
+            build_url(&cfg, &database)?
+        };
         let pool = make_pool(&url).await?;
         Ok(Arc::new(PostgresConnection {
             pool: RwLock::new(pool),
@@ -212,7 +279,12 @@ impl RdbmsPlugin for PostgresPlugin {
         let conn = downcast_conn::<PostgresConnection>(&conn)?;
         // Build and validate the new pool before swapping, so a failed switch
         // leaves the existing connection untouched.
-        let url = build_url(&conn.config, database)?;
+        let url = if cfg_str_opt(&conn.config, "mode").as_deref() == Some("url") {
+            let base = cfg_str(&conn.config, "connection_string")?;
+            swap_database_in_url(&base, database)?
+        } else {
+            build_url(&conn.config, database)?
+        };
         let pool = make_pool(&url).await?;
         *conn.pool.write().unwrap() = pool;
         Ok(())
@@ -251,26 +323,83 @@ impl RdbmsPlugin for PostgresPlugin {
     ) -> Result<Vec<Column>> {
         let conn = downcast_conn::<PostgresConnection>(&conn)?;
         let rows: Vec<(
-            String,
-            String,
-            String,
-            String,
-            Option<i32>,
-            Option<i32>,
-            Option<i32>,
-            Option<String>,
+            String,         // column_name
+            String,         // data_type
+            String,         // udt_name
+            String,         // is_nullable
+            Option<i32>,    // character_maximum_length
+            Option<i32>,    // numeric_precision
+            Option<i32>,    // numeric_scale
+            Option<String>, // pk
+            Option<String>, // column_default
+            Option<String>, // unique (single-col UNIQUE constraint)
+            Option<String>, // fk_table
+            Option<String>, // fk_column
         )> = sqlx::query_as(
-            "select c.column_name, c.data_type, c.udt_name, c.is_nullable, \
-                    c.character_maximum_length, c.numeric_precision, c.numeric_scale, \
-                    (select 'YES' from information_schema.table_constraints tc \
-                     join information_schema.key_column_usage kcu using (constraint_name, table_schema) \
-                     where tc.constraint_type = 'PRIMARY KEY' \
-                       and tc.table_schema = c.table_schema \
-                       and tc.table_name = c.table_name \
-                       and kcu.column_name = c.column_name limit 1) \
-             from information_schema.columns c \
-             where c.table_schema = $1 and c.table_name = $2 \
-             order by c.ordinal_position",
+            "select
+               c.column_name,
+               c.data_type,
+               c.udt_name,
+               c.is_nullable,
+               c.character_maximum_length,
+               c.numeric_precision,
+               c.numeric_scale,
+               -- primary key
+               (select 'YES'
+                  from information_schema.table_constraints tc
+                  join information_schema.key_column_usage kcu
+                       using (constraint_name, table_schema)
+                 where tc.constraint_type = 'PRIMARY KEY'
+                   and tc.table_schema = c.table_schema
+                   and tc.table_name   = c.table_name
+                   and kcu.column_name = c.column_name
+                 limit 1),
+               c.column_default,
+               -- single-column unique constraint (excludes PK-backed unique indexes)
+               (select 'YES'
+                  from information_schema.table_constraints tc
+                  join information_schema.key_column_usage kcu
+                       using (constraint_name, table_schema)
+                 where tc.constraint_type = 'UNIQUE'
+                   and tc.table_schema = c.table_schema
+                   and tc.table_name   = c.table_name
+                   and kcu.column_name = c.column_name
+                   and (select count(*)
+                          from information_schema.key_column_usage kcu2
+                         where kcu2.constraint_name = tc.constraint_name
+                           and kcu2.table_schema    = tc.table_schema) = 1
+                 limit 1),
+               -- foreign key: referenced table (via pg_catalog for correctness)
+               (select ref_cls.relname
+                  from pg_constraint con
+                  join pg_class     src_cls on src_cls.oid = con.conrelid
+                  join pg_namespace src_ns  on src_ns.oid  = src_cls.relnamespace
+                  join pg_attribute src_att on src_att.attrelid = con.conrelid
+                                           and src_att.attnum   = any(con.conkey)
+                  join pg_class     ref_cls on ref_cls.oid = con.confrelid
+                 where con.contype = 'f'
+                   and src_ns.nspname  = c.table_schema
+                   and src_cls.relname = c.table_name
+                   and src_att.attname = c.column_name
+                 limit 1),
+               -- foreign key: referenced column
+               (select ref_att.attname
+                  from pg_constraint con
+                  join pg_class     src_cls on src_cls.oid = con.conrelid
+                  join pg_namespace src_ns  on src_ns.oid  = src_cls.relnamespace
+                  join pg_attribute src_att on src_att.attrelid = con.conrelid
+                                           and src_att.attnum   = any(con.conkey)
+                  join pg_attribute ref_att on ref_att.attrelid = con.confrelid
+                                           and ref_att.attnum   = con.confkey[
+                                                 array_position(con.conkey, src_att.attnum)]
+                 where con.contype = 'f'
+                   and src_ns.nspname  = c.table_schema
+                   and src_cls.relname = c.table_name
+                   and src_att.attname = c.column_name
+                 limit 1)
+             from information_schema.columns c
+            where c.table_schema = $1 and c.table_name = $2
+            order by c.ordinal_position",
         )
         .bind(schema)
         .bind(table)
@@ -281,18 +410,21 @@ impl RdbmsPlugin for PostgresPlugin {
         Ok(rows
             .into_iter()
             .map(
-                |(name, dtype, udt, nullable, char_len, precision, scale, pk)| {
+                |(name, dtype, udt, nullable, char_len, precision, scale,
+                  pk, default_value, unique_flag, fk_table, fk_col)| {
                     let u = udt.to_ascii_lowercase();
                     let json = u == "json" || u == "jsonb";
-                    // Long-text-ish columns get the modal editor instead of an
-                    // inline input. Classified here so the UI stays dialect-free.
                     let large = json || dtype == "text" || dtype == "xml" || u == "citext";
+                    let foreign_key = fk_table.zip(fk_col).map(|(table, column)| ForeignKey { table, column });
                     Column {
                         name,
                         data_type: dtype,
                         udt_name: Some(udt),
                         nullable: nullable == "YES",
                         primary_key: pk.is_some(),
+                        unique: unique_flag.is_some(),
+                        default_value,
+                        foreign_key,
                         char_max_length: char_len,
                         numeric_precision: precision,
                         numeric_scale: scale,
@@ -339,10 +471,13 @@ impl RdbmsPlugin for PostgresPlugin {
             lines.push(format!("  PRIMARY KEY ({})", pks.join(", ")));
         }
         let mut ddl = format!(
-            "CREATE TABLE \"{schema}\".\"{table}\" (\n{}\n);",
+            "-- Generated DDL statements -- \n\n\n\
+            -- Table: {schema}.{table} Definition -- \n\n\
+            CREATE TABLE IF NOT EXISTS \"{schema}\".\"{table}\" (\n{}\n);",
             lines.join(",\n")
         );
 
+        ddl.push_str("\n\n\n -- Indexes --");
         // Append non-primary-key indexes via pg_get_indexdef.
         let indexes: Vec<(String,)> = sqlx::query_as(
             "select pg_get_indexdef(ix.indexrelid) \

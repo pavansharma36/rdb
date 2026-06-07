@@ -5,13 +5,14 @@ A cross-platform desktop client for databases and message brokers, built with
 One app to connect to relational databases, document stores, and queues through
 a unified, plugin-based architecture.
 
-Ships today with three plugins:
+Ships today with four plugins:
 
 | Plugin | Kind | What it talks to |
 | --- | --- | --- |
 | **PostgreSQL** | `rdbms` | PostgreSQL 12+ databases (via `sqlx`) |
 | **MongoDB** | `document` | MongoDB and Atlas clusters |
 | **RabbitMQ** | `rabbitmq` | RabbitMQ brokers via the HTTP Management API (requires the `rabbitmq_management` plugin) |
+| **SSH** | `cli` | Remote hosts over SSH; opens a full PTY terminal + script runner |
 
 ---
 
@@ -28,6 +29,9 @@ Ships today with three plugins:
 - **Document & RabbitMQ surfaces** — query MongoDB collections; browse a
   RabbitMQ broker's overview, queues, exchanges, connections, and channels
   (management-UI style), and publish/get/purge messages.
+- **CLI / SSH workspace** — full PTY terminal for SSH connections, with a
+  side-by-side script editor (saved `.sh` files per profile) and run
+  selection/line/all shortcuts. The session survives workspace remounts.
 - **Saved connections** — connection profiles persist across restarts as
   human-readable JSON in the OS app-data directory.
 
@@ -61,6 +65,7 @@ Ships today with three plugins:
 │   crates/plugins/postgres    sqlx               │
 │   crates/plugins/mongodb     mongodb            │
 │   crates/plugins/rabbitmq    reqwest (mgmt API) │
+│   crates/plugins/ssh         PTY / SSH          │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -72,10 +77,13 @@ over line-delimited JSON-RPC on stdio.
 ### Crates
 
 - **`rdb-core`** — backend-agnostic foundation. Defines `Plugin` and
-  `Connection` traits, `PluginKind`, the serializable config-schema types
-  (`PluginInfo`, `ConfigField`, …) the UI builds forms from, `ConnectionId`,
-  `PluginError`, and the line-delimited JSON-RPC `protocol` (`Request`/`Response`,
-  `PROTOCOL_VERSION`) the host and plugins speak.
+  `Connection` traits, `PluginKind` (`Rdbms`, `Document`, `Rabbitmq`, `Cli`,
+  `Other`), the serializable config-schema types (`PluginInfo`, `ConfigField`,
+  `ConfigFieldType` including `FilePath` for native file-picker fields, …) the
+  UI builds forms from, `ConnectionId`, `PluginError`, the line-delimited
+  JSON-RPC `protocol` (`Request`/`Response`, `PROTOCOL_VERSION`) the host and
+  plugins speak, and the PTY contract types (`PtySpawnSpec`,
+  `PtyPromptResponse`) used by `cli`-kind plugins.
 - **`rdb-plugin-runtime`** — the plugin SDK. `run(plugin, dispatcher)` handles
   the `--describe` flag and runs the stdio JSON-RPC server loop that turns an
   in-process `rdb_core::Plugin` into a standalone sidecar; the `Dispatcher` trait
@@ -87,7 +95,8 @@ over line-delimited JSON-RPC on stdio.
   reuses the same `rdbms` UI module.
 - **`crates/plugins/*`** — one binary crate per backend, each implementing
   `Plugin` (and `RdbmsPlugin` for relational backends) and shipping a `main`
-  that calls `rdb_plugin_runtime::run`.
+  that calls `rdb_plugin_runtime::run`. Includes `postgres`, `mongodb`,
+  `rabbitmq`, and `ssh` (the `Cli`-kind plugin).
 
 > **The plugin model:** plugins are **out-of-process sidecar executables** the
 > host discovers and loads at runtime over line-delimited JSON-RPC on stdio. The
@@ -119,7 +128,8 @@ rdb/
 │   └── plugins/
 │       ├── postgres/       PostgreSQL plugin (sqlx)
 │       ├── mongodb/        MongoDB plugin
-│       └── rabbitmq/       RabbitMQ plugin (HTTP management API)
+│       ├── rabbitmq/       RabbitMQ plugin (HTTP management API)
+│       └── ssh/            SSH plugin (cli kind; PTY spawned by host)
 ├── scripts/
 │   └── dev-plugins.sh      Build bundled plugins + manifests into dev-plugins/
 ├── src/                    React + TypeScript frontend
@@ -139,6 +149,8 @@ rdb/
         ├── lib.rs          Discovers plugins on startup, registers commands
         ├── commands.rs     Generic #[tauri::command] surface
         ├── plugin_manager.rs  Plugin discovery, process spawning, multiplexing
+        ├── pty.rs          PTY manager: spawn/write/resize/close for CLI workspaces
+        ├── logging.rs      Log file setup
         ├── github.rs       GitHub release fetch / checksum / install
         ├── persistence.rs  Saved connection profiles (per-plugin JSON)
         └── main.rs
@@ -170,8 +182,17 @@ Plugins are out-of-process executables the host discovers at runtime, so build
 and install them first, then point the host at the same directory:
 
 ```bash
-npm run plugins:dev                     # builds the 3 bundled plugins + manifests
+npm run plugins:dev                     # builds the 4 bundled plugins + manifests
 RDB_PLUGINS_DIR=$PWD/dev-plugins npm run tauri dev
+```
+
+Or use the convenience script, which handles the `$PWD` resolution for you:
+
+```bash
+./start-dev.sh              # launch with already-built plugins
+./start-dev.sh --build      # rebuild plugins first, then launch
+./start-dev.sh --debug      # enable RUST_LOG=debug
+./start-dev.sh --build --debug   # combine flags
 ```
 
 This starts the Vite dev server on `http://localhost:1420` and launches the
@@ -196,6 +217,7 @@ Produces platform installers/bundles under `src-tauri/target/release/bundle/`.
 | `cargo build` | Build the full Rust workspace |
 | `cargo test` | Run Rust tests across the workspace |
 | `npm run plugins:dev` | Build the bundled plugins and install them into `dev-plugins/` |
+| `./start-dev.sh` | Launch the app (uses `dev-plugins/`; pass `--build` to rebuild plugins first, `--debug` for `RUST_LOG=debug`) |
 
 ---
 
@@ -315,6 +337,11 @@ Set `RDB_PLUGINS_DIR=$PWD/dev-plugins` when launching the app.
    - **Document** — browse databases/collections and run `find` queries.
    - **RabbitMQ** — browse the broker overview, queues, exchanges, and
      connections; declare queues and publish/get/purge messages.
+   - **CLI (SSH)** — full PTY terminal for the SSH session, with a script
+     editor pane on the right. Save scripts as `.sh` files scoped to the
+     profile. Run a selection, the current line (`Cmd/Ctrl+Enter`), or the
+     whole script. The SSH session survives switching connections and
+     remounts.
 
 ### Where data is stored
 
@@ -349,8 +376,11 @@ The shared traits make new backends small to add. For a relational backend:
    `scripts/dev-plugins.sh` so `npm run plugins:dev` builds and installs it.
 
 Non-relational backends pick a different `PluginKind` (`Document`, `Rabbitmq`,
-or `Other`) and the frontend renders the matching workspace. See the existing
-MongoDB and RabbitMQ plugins as references.
+`Cli`, or `Other`) and the frontend renders the matching workspace. `Cli`-kind
+plugins return a `PtySpawnSpec` from the `cli.spawn_spec` op; the host spawns
+that program in a PTY and streams I/O via Tauri events. See the SSH plugin
+(`crates/plugins/ssh`) and the existing MongoDB and RabbitMQ plugins as
+references.
 
 ---
 
@@ -366,17 +396,18 @@ MongoDB and RabbitMQ plugins as references.
   casing.
 - **The host is a generic pipe.** It exposes a small set of generic
   `#[tauri::command]`s (`list_plugins`, `test_connection`, `open_connection`,
-  `close_connection`, `plugin_call`, the GitHub install pair, and persistence).
+  `close_connection`, `plugin_call`, the GitHub install pair, persistence, and
+  PTY commands: `pty_spawn`/`pty_write`/`pty_resize`/`pty_close`/`pty_snapshot`).
   Every capability funnels through `plugin_call` with an opaque `op` string
-  (e.g. `"rdbms.execute"`) — only the typed wrappers in `src/api.ts` know the op
-  names. Plugins are **out-of-process sidecars** discovered from
-  `*.plugin.json` manifests at runtime; there is no static registry. See
-  `plugin-architecture.md` for the design.
+  (e.g. `"rdbms.execute"`, `"cli.spawn_spec"`) — only the typed wrappers in
+  `src/api.ts` know the op names. Plugins are **out-of-process sidecars**
+  discovered from `*.plugin.json` manifests at runtime; there is no static
+  registry. See `plugin-architecture.md` for the design.
 - **Live connection handles never cross the IPC boundary.** They stay inside the
   plugin process keyed by `ConnectionId` (a UUID); the host only tracks the
   `ConnectionId → plugin_id` route. Don't try to serialize a pool or client.
-- **Build/run:** `npm run plugins:dev` then
-  `RDB_PLUGINS_DIR=$PWD/dev-plugins npm run tauri dev` for end-to-end (the form
+- **Build/run:** `./start-dev.sh --build` (or `npm run plugins:dev` then
+  `RDB_PLUGINS_DIR=$PWD/dev-plugins npm run tauri dev`) for end-to-end (the form
   is empty without plugins installed); `cargo test` for backend unit tests;
   `npm run build` to type-check the frontend.
 

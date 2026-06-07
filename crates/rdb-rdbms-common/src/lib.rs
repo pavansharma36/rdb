@@ -40,6 +40,13 @@ pub enum TableKind {
     MaterializedView,
 }
 
+/// Foreign-key reference on a column: the table and column it points to.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForeignKey {
+    pub table: String,
+    pub column: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Column {
     pub name: String,
@@ -51,6 +58,15 @@ pub struct Column {
     pub udt_name: Option<String>,
     pub nullable: bool,
     pub primary_key: bool,
+    /// True when a UNIQUE constraint covers only this column.
+    #[serde(default)]
+    pub unique: bool,
+    /// Default value expression as stored in the catalog, if any.
+    #[serde(default)]
+    pub default_value: Option<String>,
+    /// Foreign-key reference this column participates in, if any.
+    #[serde(default)]
+    pub foreign_key: Option<ForeignKey>,
     /// Declared length for character types (`varchar(n)`, `char(n)`), if any.
     #[serde(default)]
     pub char_max_length: Option<i32>,

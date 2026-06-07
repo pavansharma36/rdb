@@ -81,15 +81,16 @@ export function saveConfig(config: AppConfig): Promise<void> {
 
 // --- Per-connection workspace files ---------------------------------------
 //
-// Plain `.sql` files saved per connection profile at
-// <app_data_dir>/workspace/<connectionId>/<name>.sql. See
+// Plain files saved per connection profile at
+// <app_data_dir>/workspace/<connectionId>/<name>.<ext>. See
 // src-tauri/src/workspace_files.rs. `connectionId` here is the stable
 // saved-profile id, so files persist across sessions (not the per-session live
-// connection id).
+// connection id). `ext` is the file extension (default "sql"; the SSH/CLI
+// workspace uses "sh").
 
 /** A saved workspace file. Mirrors the Rust `WorkspaceFile` (camelCase). */
 export interface WorkspaceFile {
-  /** File name without the `.sql` extension. */
+  /** File name without the extension. */
   name: string;
   content: string;
 }
@@ -97,8 +98,9 @@ export interface WorkspaceFile {
 /** List the saved workspace files for a connection profile, sorted by name. */
 export function listWorkspaceFiles(
   connectionId: string,
+  ext = "sql",
 ): Promise<WorkspaceFile[]> {
-  return invoke<WorkspaceFile[]>("list_workspace_files", { connectionId });
+  return invoke<WorkspaceFile[]>("list_workspace_files", { connectionId, ext });
 }
 
 /** Create or overwrite a named workspace file for a connection profile. */
@@ -106,14 +108,16 @@ export function saveWorkspaceFile(
   connectionId: string,
   name: string,
   content: string,
+  ext = "sql",
 ): Promise<void> {
-  return invoke<void>("save_workspace_file", { connectionId, name, content });
+  return invoke<void>("save_workspace_file", { connectionId, name, content, ext });
 }
 
 /** Delete a named workspace file from a connection profile. */
 export function deleteWorkspaceFile(
   connectionId: string,
   name: string,
+  ext = "sql",
 ): Promise<void> {
-  return invoke<void>("delete_workspace_file", { connectionId, name });
+  return invoke<void>("delete_workspace_file", { connectionId, name, ext });
 }
