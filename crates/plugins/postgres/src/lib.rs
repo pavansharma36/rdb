@@ -339,10 +339,13 @@ impl RdbmsPlugin for PostgresPlugin {
             lines.push(format!("  PRIMARY KEY ({})", pks.join(", ")));
         }
         let mut ddl = format!(
-            "CREATE TABLE \"{schema}\".\"{table}\" (\n{}\n);",
+            "-- Generated DDL statements -- \n\n\n\
+            -- Table: {schema}.{table} Definition -- \n\n\
+            CREATE TABLE IF NOT EXISTS \"{schema}\".\"{table}\" (\n{}\n);",
             lines.join(",\n")
         );
 
+        ddl.push_str("\n\n\n -- Indexes --");
         // Append non-primary-key indexes via pg_get_indexdef.
         let indexes: Vec<(String,)> = sqlx::query_as(
             "select pg_get_indexdef(ix.indexrelid) \
