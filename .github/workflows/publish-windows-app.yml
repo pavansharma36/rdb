@@ -64,7 +64,7 @@ jobs:
             let v = process.env.VERSION;
             if (!v) {
               const [maj, min, patch] = c.version.split(".");
-              v = `${maj}.${min}.${patch}-nightly.${process.env.COUNT}`;
+              v = `${maj}.${min}.${patch}-${process.env.COUNT}`;
             }
             c.version = v;
             fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
