@@ -61,7 +61,7 @@ jobs:
           fi
 
   build:
-    name: build ${{ matrix.os }}
+    name: build ${{ matrix.os }} ${{ matrix.rust-target }}
     runs-on: ${{ matrix.os }}
     needs: cleanup
     if: |
@@ -74,11 +74,11 @@ jobs:
           - os: macos-14   # Apple Silicon (arm64)
             rust-target: aarch64-apple-darwin
             args: "--target aarch64-apple-darwin"
-#          - os: macos-14   # Intel (x86_64), cross-compiled on arm64 — macos-13 Intel runners are scarce
-#            rust-target: x86_64-apple-darwin
-#            args: "--target x86_64-apple-darwin"
+          - os: macos-14   # Intel (x86_64), cross-compiled on arm64 — macos-13 Intel runners are scarce
+            rust-target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin"
           - os: ubuntu-22.04
-#          - os: windows-latest
+          - os: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -139,7 +139,7 @@ jobs:
             let v = process.env.VERSION;
             if (!v) {
               const [maj, min, patch] = c.version.split(".");
-              v = `${maj}.${min}.${patch}-nightly.${process.env.COUNT}`;
+              v = `${maj}.${min}.${patch}-${process.env.COUNT}`;
             }
             c.version = v;
             fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
