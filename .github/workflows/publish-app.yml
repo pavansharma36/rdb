@@ -24,48 +24,11 @@ permissions:
   contents: write
 
 jobs:
-  cleanup:
-    name: cleanup nightly release
-    runs-on: ubuntu-latest
-    if: |
-      github.ref_type != 'tag'
-      && !contains(github.event.head_commit.message, '[skip ci]')
-
-    permissions:
-      contents: write
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Remove existing assets from latest release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          
-          gh release view latest
-  
-          if gh release view latest >/dev/null 2>&1; then
-            echo "Cleaning existing assets from latest release..."
-  
-            gh release view latest --json assets \
-              --jq '.assets[].name' | while read -r asset; do
-                [ -n "$asset" ] || continue
-                echo "Deleting asset: $asset"
-                gh release delete-asset latest "$asset" --yes
-              done
-          else
-            echo "latest release does not exist yet"
-          fi
-
   build:
     name: build ${{ matrix.os }} ${{ matrix.rust-target }}
     runs-on: ${{ matrix.os }}
-    needs: cleanup
     if: |
-      always() && !cancelled() &&
+      !cancelled() &&
       (github.ref_type == 'tag' || !contains(github.event.head_commit.message, '[skip ci]'))
     strategy:
       fail-fast: false
@@ -190,7 +153,6 @@ jobs:
     needs: build
     if: |
       always() &&
-      github.ref_type == 'tag' &&
       needs.build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
@@ -200,46 +162,99 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node
+      - name: Setup Node to bump version
+        if: |
+          always()
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
 
-      - name: Commit version change back to master
+      - name: Find current latest version
+        id: latest-version
+        if: |
+          always() && github.ref_type != 'tag'
         shell: bash
         run: |
-          set -euo pipefail
-          
-          export VERSION="${GITHUB_REF_NAME#v}"
-          IFS='.' read -r maj min pat <<< "$VERSION"
-          pat=${pat:-0}
-          pat=$((pat+1))
-          export VERSION="${maj}.${min}.${pat}"
-          
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          git fetch origin master
-          git checkout master
-          git pull --ff-only origin master
-          
-          # Update tauri.conf.json to the released version.
-          # If checkout got the pre-release version, stamp it again.
-          
+          echo "Exporting latest version from latest-tag"
+          export COUNT=$(git rev-list --count HEAD)
           node -e '
             const fs = require("fs");
             const p = "src-tauri/tauri.conf.json";
             const c = JSON.parse(fs.readFileSync(p, "utf8"));
-            c.version = process.env.VERSION;
-            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            const [maj, min, patch] = c.version.split(".");
+            const v = `${maj}.${min}.${patch}-${process.env.COUNT}`;
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `latest_version=${v}\n`, 'utf8');
+            console.log("Stamped version", c.version);
           '
-          
-          git add src-tauri/tauri.conf.json
-          
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: update version to ${VERSION} [skip ci]"
-            git push origin master
+      - name: Run latest-tag
+        if: |
+          always() &&
+          github.ref_type != 'tag'
+        uses: EndBug/latest-tag@v1
+        with:
+          description: "Points to the most recent commit on main"
+          tag-name: "latest"
+
+      - name: Commit version change for tag or delete older file for latest tag.
+        if: |
+          always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            export VERSION="${GITHUB_REF_NAME#v}"
+            IFS='.' read -r maj min pat <<< "$VERSION"
+            pat=${pat:-0}
+            pat=$((pat+1))
+            export VERSION="${maj}.${min}.${pat}"
+            
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            
+            git fetch origin master
+            git checkout master
+            git pull --ff-only origin master
+            
+            # Update tauri.conf.json to the released version.
+            # If checkout got the pre-release version, stamp it again.
+            
+            node -e '
+              const fs = require("fs");
+              const p = "src-tauri/tauri.conf.json";
+              const c = JSON.parse(fs.readFileSync(p, "utf8"));
+              c.version = process.env.VERSION;
+              fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            '
+            
+            git add src-tauri/tauri.conf.json
+            
+            if ! git diff --cached --quiet; then
+              git commit -m "chore: update version to ${VERSION} [skip ci]"
+              git push origin master
+            else
+              echo "No version changes to commit"
+            fi
           else
-            echo "No version changes to commit"
+            echo "Cleaning older assets from latest release..."
+            CURRENT_VERSION=${{ steps.latest-version.outputs.latest_version }}
+            if gh release view latest >/dev/null 2>&1; then
+              echo "Cleaning existing assets from latest release..."
+            
+              gh release view latest --json assets \
+                --jq '.assets[].name' | while read -r asset; do
+                  [ -n "$asset" ] || continue
+                  if [[ "$asset" != *"$CURRENT_VERSION"* ]]; then
+                    echo "Deleting asset: $asset"
+                    gh release delete-asset latest "$asset" --yes
+                  else
+                    echo "Keeping asset: $asset"
+                  fi
+                done
+            else
+              echo "latest release does not exist yet"
+            fi
           fi
+          
+          
+      
