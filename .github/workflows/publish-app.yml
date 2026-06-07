@@ -1,15 +1,5 @@
 name: Publish desktop app
 
-# Build the Tauri desktop app for macOS, Linux, and Windows and publish the
-# installers/bundles to a GitHub release. The plugin sidecars are published
-# separately by publish-plugins.yml and installed in-app at runtime.
-#
-# Two modes:
-#   - push to master  -> nightly: rolling `latest` prerelease,
-#                        version `<major>.<minor>.<commit-count>`.
-#   - push a `v*` tag -> stable: release at the tag (e.g. v0.2.0),
-#                        version taken from the tag.
-
 on:
   push:
     branches: [master]
@@ -25,7 +15,7 @@ permissions:
 
 jobs:
   build:
-    name: build ${{ matrix.os }} ${{ matrix.rust-target }}
+    name: build ${{ matrix.os }} (${{ matrix.rust-target }})
     runs-on: ${{ matrix.os }}
     if: |
       !cancelled() &&
@@ -37,11 +27,15 @@ jobs:
           - os: macos-14   # Apple Silicon (arm64)
             rust-target: aarch64-apple-darwin
             args: "--target aarch64-apple-darwin"
-          - os: macos-14   # Intel (x86_64), cross-compiled on arm64 — macos-13 Intel runners are scarce
+          - os: macos-14   # Intel (x86_64) cross-compiled
             rust-target: x86_64-apple-darwin
             args: "--target x86_64-apple-darwin"
           - os: ubuntu-22.04
+            rust-target: x86_64-unknown-linux-gnu
+            args: ""
           - os: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+            args: ""
     steps:
       - uses: actions/checkout@v4
         with:
@@ -80,11 +74,6 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      # Auto-version. On a tag, use the tag's version. On master, keep
-      # major.minor from tauri.conf.json and set the patch to the git commit
-      # count, so each push produces a higher version shared with the plugins.
-      # Stamped only for this build, not committed back, to avoid a
-      # push -> build -> push loop.
       - name: Stamp version
         shell: bash
         run: |
@@ -92,7 +81,7 @@ jobs:
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             export VERSION="${GITHUB_REF_NAME#v}"
           else
-            export VERSION=""   # empty -> derive major.minor.count in node
+            export VERSION=""
           fi
           export COUNT=$(git rev-list --count HEAD)
           node -e '
@@ -109,7 +98,6 @@ jobs:
             console.log("Stamped version", c.version);
           '
 
-      # Decide the release tag/name/prerelease flag from the trigger.
       - name: Release metadata
         id: meta
         shell: bash
@@ -125,20 +113,11 @@ jobs:
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # tauri-action runs the beforeBuildCommand (npm run build) to produce the
-      # frontend, builds the app, then uploads the bundles to the release for
-      # `tagName`, creating/updating it as needed.
       - name: Build and publish app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Stamp the build's release channel so the app knows whether to track
-          # nightly or stable plugin releases (read via option_env! in the host).
           RDB_RELEASE_CHANNEL: ${{ github.ref_type == 'tag' && 'stable' || 'nightly' }}
-          # Sign the updater artifacts so the in-app self-updater can verify
-          # them. tauri-action then generates + uploads latest.json to the
-          # release. Set these as repo secrets (private key from
-          # `tauri signer generate`).
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
@@ -151,9 +130,7 @@ jobs:
   finalize:
     name: finalize release
     needs: build
-    if: |
-      always() &&
-      needs.build.result == 'success'
+    if: needs.build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -163,8 +140,6 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Node to bump version
-        if: |
-          always()
         uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -172,8 +147,7 @@ jobs:
 
       - name: Find current latest version
         id: latest-version
-        if: |
-          always() && github.ref_type != 'tag'
+        if: github.ref_type != 'tag'
         shell: bash
         run: |
           echo "Exporting latest version from latest-tag"
@@ -184,21 +158,20 @@ jobs:
             const c = JSON.parse(fs.readFileSync(p, "utf8"));
             const [maj, min, patch] = c.version.split(".");
             const v = `${maj}.${min}.${patch}-${process.env.COUNT}`;
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, `latest_version=${v}\n`, 'utf8');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `latest_version=${v}\n`, "utf8");
             console.log("Stamped version", c.version);
           '
+
       - name: Run latest-tag
-        if: |
-          always() &&
-          github.ref_type != 'tag'
+        if: github.ref_type != 'tag'
         uses: EndBug/latest-tag@v1
         with:
           description: "Points to the most recent commit on main"
           tag-name: "latest"
 
-      - name: Commit version change for tag or delete older file for latest tag.
-        if: |
-          always()
+      - name: Commit version change or clean old assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -208,17 +181,14 @@ jobs:
             pat=${pat:-0}
             pat=$((pat+1))
             export VERSION="${maj}.${min}.${pat}"
-            
+          
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            
+          
             git fetch origin master
             git checkout master
             git pull --ff-only origin master
-            
-            # Update tauri.conf.json to the released version.
-            # If checkout got the pre-release version, stamp it again.
-            
+          
             node -e '
               const fs = require("fs");
               const p = "src-tauri/tauri.conf.json";
@@ -226,9 +196,9 @@ jobs:
               c.version = process.env.VERSION;
               fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
             '
-            
+          
             git add src-tauri/tauri.conf.json
-            
+          
             if ! git diff --cached --quiet; then
               git commit -m "chore: update version to ${VERSION} [skip ci]"
               git push origin master
@@ -237,24 +207,18 @@ jobs:
             fi
           else
             echo "Cleaning older assets from latest release..."
-            CURRENT_VERSION=${{ steps.latest-version.outputs.latest_version }}
+            CURRENT_VERSION="${{ steps.latest-version.outputs.latest_version }}"
             if gh release view latest >/dev/null 2>&1; then
-              echo "Cleaning existing assets from latest release..."
-            
-              gh release view latest --json assets \
-                --jq '.assets[].name' | while read -r asset; do
-                  [ -n "$asset" ] || continue
-                  if [[ "$asset" != *"$CURRENT_VERSION"* ]]; then
-                    echo "Deleting asset: $asset"
-                    gh release delete-asset latest "$asset" --yes
-                  else
-                    echo "Keeping asset: $asset"
-                  fi
-                done
+              gh release view latest --json assets --jq '.assets[].name' | while read -r asset; do
+                [ -n "$asset" ] || continue
+                if [[ "$asset" != *"$CURRENT_VERSION"* ]]; then
+                  echo "Deleting asset: $asset"
+                  gh release delete-asset latest "$asset" --yes
+                else
+                  echo "Keeping asset: $asset"
+                fi
+              done
             else
               echo "latest release does not exist yet"
             fi
           fi
-          
-          
-      
