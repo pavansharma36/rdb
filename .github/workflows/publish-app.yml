@@ -46,10 +46,12 @@ jobs:
         with:
           targets: ${{ matrix.rust-target }}
 
+      # 1. Optimized Rust Caching
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
-          key: ${{ matrix.os }}-${{ matrix.rust-target }}
+          # Included the target in the key so cross-compilation shares cleanly
+          key: ${{ matrix.os }}-${{ matrix.rust-target }}-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       - name: Install Linux system dependencies
         if: startsWith(matrix.os, 'ubuntu')
@@ -69,11 +71,26 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
+          cache: npm # Activates global npm cache
+
+      # 2. Advanced Frontend Caching (node_modules & build artifacts)
+      - name: Cache Node Modules & Frontend Build
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            dist
+            build
+          key: ${{ matrix.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ matrix.os }}-node-
 
       - name: Install frontend dependencies
         run: npm ci
 
+      # 3. Cache the Tauri frontend build pipeline
+      # Tauri runs a 'beforeBuildCommand' (usually npm run build).
+      # Caching this directory keeps the Rust step fast.
       - name: Stamp version
         shell: bash
         run: |
@@ -143,7 +160,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
+          cache: npm # Speeds up Node initialization for the finalizing job
 
       - name: Find current latest version
         id: latest-version
