@@ -117,7 +117,12 @@ impl Plugin for SftpPlugin {
                     key: "auth_mode".into(),
                     label: "Auth".into(),
                     field_type: ConfigFieldType::Select {
+                        // ssh-agent auth relies on a Unix socket (SSH_AUTH_SOCK)
+                        // and is only offered on Unix targets.
+                        #[cfg(unix)]
                         options: vec!["password".into(), "key".into(), "agent".into()],
+                        #[cfg(not(unix))]
+                        options: vec!["password".into(), "key".into()],
                     },
                     required: false,
                     default: Some(serde_json::json!("password")),
@@ -201,6 +206,18 @@ impl Plugin for SftpPlugin {
                     .map_err(|e| PluginError::Connection(format!("key auth failed: {e}")))?
                     .success()
             }
+            #[cfg(not(unix))]
+            "agent" => {
+                // `AgentClient::connect_env` connects over the `SSH_AUTH_SOCK`
+                // Unix socket and only exists on Unix targets, so ssh-agent
+                // auth is unavailable on Windows.
+                return Err(PluginError::Connection(
+                    "ssh-agent authentication is not supported on this platform; \
+                     use key or password auth instead"
+                        .into(),
+                ));
+            }
+            #[cfg(unix)]
             "agent" => {
                 // Try each identity the running ssh-agent offers, signing the
                 // auth request through the agent, until one succeeds.
