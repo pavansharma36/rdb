@@ -324,7 +324,7 @@ export function FileManagerWorkspace({
       current: entry.name,
       done: 0,
       total: 1,
-      cancelable: false,
+      cancelable: true,
     });
     try {
       await api.sftpDownloadFileTo(connectionId, entry.path, local);
@@ -332,7 +332,11 @@ export function FileManagerWorkspace({
       setDownloadNote(`Downloaded “${entry.name}” to ${local}`);
     } catch (e) {
       setDownload(null);
-      setError(errString(e));
+      if (cancelDownload.current) {
+        setDownloadNote(`Download of “${entry.name}” cancelled.`);
+      } else {
+        setError(errString(e));
+      }
     }
   }
 
@@ -381,6 +385,7 @@ export function FileManagerWorkspace({
       cancelable: true,
     });
 
+    let done = 0;
     try {
       const files = await walkFiles(entry.path, "");
       if (cancelDownload.current) {
@@ -396,7 +401,6 @@ export function FileManagerWorkspace({
         cancelable: true,
       });
 
-      let done = 0;
       for (const f of files) {
         if (cancelDownload.current) break;
         setDownload({
@@ -426,19 +430,30 @@ export function FileManagerWorkspace({
       }
     } catch (e) {
       setDownload(null);
-      setError(errString(e));
+      if (cancelDownload.current) {
+        setDownloadNote(
+          `Download of “${entry.name}” cancelled after ${done} file${done === 1 ? "" : "s"}.`,
+        );
+      } else {
+        setError(errString(e));
+      }
     }
   }
 
   function cancelFolderDownload() {
     cancelDownload.current = true;
     setCancelling(true);
+    // Also abort the in-flight backend request. The download loop transfers one
+    // file per call so the flag check between files is enough, but an upload
+    // delegates the whole (possibly recursive) transfer to a single plugin call
+    // — without this the modal stays up until that call finishes on its own.
+    api.cancelLastPluginCall(connectionId).catch(() => {});
   }
 
   /** Upload one or more local paths (files or directories) into the current
    *  directory. Shared by the toolbar dialog and drag-and-drop. Directories are
    *  mirrored recursively by the plugin. Shows the blocking progress modal and
-   *  supports cancel between top-level items. */
+   *  supports cancel, which aborts the in-flight transfer via the backend. */
   async function uploadPaths(localPaths: string[]) {
     if (localPaths.length === 0) return;
     cancelDownload.current = false;
@@ -459,7 +474,7 @@ export function FileManagerWorkspace({
           current: name,
           done,
           total: localPaths.length,
-          cancelable: localPaths.length > 1,
+          cancelable: true,
         });
         const res = await api.sftpUploadFileFrom(
           connectionId,
@@ -483,7 +498,15 @@ export function FileManagerWorkspace({
     } catch (e) {
       setDownload(null);
       fetchDir(currentPath);
-      setError(errString(e));
+      // A cancel aborts the in-flight upload, which surfaces here as an error;
+      // report it as a cancellation, not a failure.
+      if (cancelDownload.current) {
+        setDownloadNote(
+          `Upload cancelled after ${files} file${files === 1 ? "" : "s"}.`,
+        );
+      } else {
+        setError(errString(e));
+      }
     }
   }
 
