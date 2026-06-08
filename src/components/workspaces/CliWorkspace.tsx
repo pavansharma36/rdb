@@ -12,20 +12,39 @@ import {
 } from "../../store";
 import { WorkspaceFileList } from "./WorkspaceFileList";
 import { ConfirmDialog } from "../Modal";
+import { useResizable, TREE_MIN, TREE_MAX } from "../../useResizable";
 import "@xterm/xterm/css/xterm.css";
 
 interface Props {
   connectionId: ConnectionId;
   /** Stable saved-profile id; scopes saved scripts to this profile. */
   savedId: string;
+  /** Initial width (px) of the scripts list, restored from per-connection config. */
+  scriptsWidth: number;
+  /** Called with the final width (px) when the user finishes dragging. */
+  onScriptsWidthChange: (width: number) => void;
 }
 
 /** Scripts are stored as `.sh` workspace files (vs `.sql` for RDBMS). */
 const SCRIPT_EXT = "sh";
 
-export function CliWorkspace({ connectionId, savedId }: Props) {
+export function CliWorkspace({
+  connectionId,
+  savedId,
+  scriptsWidth,
+  onScriptsWidthChange,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  // Scripts list width (px); restored from per-connection config, resizable.
+  const [width, setWidth] = useState(scriptsWidth);
+  const scriptsResize = useResizable({
+    width,
+    min: TREE_MIN,
+    max: TREE_MAX,
+    onChange: setWidth,
+    onCommit: onScriptsWidthChange,
+  });
   // The PTY writer is the live terminal: "Run" pipes a script into ssh's stdin.
   const writeToPty = useRef<(text: string) => void>(() => {});
 
@@ -221,7 +240,7 @@ export function CliWorkspace({ connectionId, savedId }: Props) {
   return (
     <div className="workspace cli-workspace">
       <div className="cli-top">
-        <div className="cli-scripts">
+        <div className="cli-scripts" style={{ width }}>
           <WorkspaceFileList
             files={files}
             activeFile={activeFile}
@@ -239,6 +258,11 @@ export function CliWorkspace({ connectionId, savedId }: Props) {
             emptyText="No scripts."
           />
         </div>
+        <div
+          className="tree-resizer"
+          onMouseDown={scriptsResize.onMouseDown}
+          title="Drag to resize"
+        />
         <div className="cli-editor">
           <div className="cli-editor-head">
             <span className="editor-file-name">

@@ -8,7 +8,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-export type PluginKind = "rdbms" | "document" | "rabbitmq" | "cli" | "other";
+export type PluginKind = "rdbms" | "document" | "rabbitmq" | "cli" | "filemanager" | "other";
 
 export type ConfigFieldType =
   | { kind: "text" }
@@ -297,6 +297,19 @@ export interface MqPurgeResult {
   queue: string;
 }
 
+// --- SFTP (FileManager) ---------------------------------------------------
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+  /** Unix timestamp seconds */
+  modified: number;
+  /** Unix mode bits */
+  permissions: number;
+}
+
 // --- Commands -------------------------------------------------------------
 
 /** Forward an opaque capability call to the plugin owning the connection. */
@@ -481,6 +494,59 @@ export const api = {
 
   mqDeleteQueue: (connectionId: ConnectionId, vhost: string, queue: string) =>
     pluginCall<void>(connectionId, "rabbitmq.delete_queue", { vhost, queue }),
+
+  // SFTP (FileManager)
+  /** The session's home directory (canonicalized cwd); a writable starting
+   *  point, unlike "/". */
+  sftpHomeDir: (connectionId: ConnectionId) =>
+    pluginCall<string>(connectionId, "filemanager.home_dir", {}),
+
+  sftpListDir: (connectionId: ConnectionId, path: string) =>
+    pluginCall<FileEntry[]>(connectionId, "filemanager.list_dir", { path }),
+
+  sftpStat: (connectionId: ConnectionId, path: string) =>
+    pluginCall<FileEntry>(connectionId, "filemanager.stat", { path }),
+
+  sftpReadFile: (connectionId: ConnectionId, path: string) =>
+    pluginCall<string>(connectionId, "filemanager.read_file", { path }),
+
+  /** Read a remote file and write it straight to `local_path` on disk (the
+   *  plugin runs locally, so bytes never cross the JSON pipe). */
+  sftpDownloadFileTo: (
+    connectionId: ConnectionId,
+    remote_path: string,
+    local_path: string,
+  ) =>
+    pluginCall<null>(connectionId, "filemanager.download_file_to", {
+      remote_path,
+      local_path,
+    }),
+
+  /** Upload a local path to the remote via SFTP. If `local_path` is a
+   *  directory, its whole tree is mirrored. Returns the number of files
+   *  written. Bytes never cross the JSON pipe (inverse of sftpDownloadFileTo). */
+  sftpUploadFileFrom: (
+    connectionId: ConnectionId,
+    local_path: string,
+    remote_path: string,
+  ) =>
+    pluginCall<{ files: number }>(
+      connectionId,
+      "filemanager.upload_file_from",
+      { local_path, remote_path },
+    ),
+
+  sftpWriteFile: (connectionId: ConnectionId, path: string, data_base64: string) =>
+    pluginCall<null>(connectionId, "filemanager.write_file", { path, data_base64 }),
+
+  sftpDelete: (connectionId: ConnectionId, path: string) =>
+    pluginCall<null>(connectionId, "filemanager.delete", { path }),
+
+  sftpMkdir: (connectionId: ConnectionId, path: string) =>
+    pluginCall<null>(connectionId, "filemanager.mkdir", { path }),
+
+  sftpRename: (connectionId: ConnectionId, from: string, to: string) =>
+    pluginCall<null>(connectionId, "filemanager.rename", { from, to }),
 };
 
 /** Normalize a thrown Tauri command error into a string. */

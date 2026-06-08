@@ -1,12 +1,30 @@
 import { useEffect, useState } from "react";
 import { api, errString } from "../../api";
 import type { ConnectionId, MongoCollection, FindResult } from "../../api";
+import { useResizable, TREE_MIN, TREE_MAX } from "../../useResizable";
 
 interface Props {
   connectionId: ConnectionId;
+  /** Initial width (px) of the tree panel, restored from per-connection config. */
+  treeWidth: number;
+  /** Called with the final width (px) when the user finishes dragging. */
+  onTreeWidthChange: (width: number) => void;
 }
 
-export function DocumentWorkspace({ connectionId }: Props) {
+export function DocumentWorkspace({
+  connectionId,
+  treeWidth,
+  onTreeWidthChange,
+}: Props) {
+  // Tree panel width (px); restored from per-connection config, resizable.
+  const [width, setWidth] = useState(treeWidth);
+  const treeResize = useResizable({
+    width,
+    min: TREE_MIN,
+    max: TREE_MAX,
+    onChange: setWidth,
+    onCommit: onTreeWidthChange,
+  });
   const [databases, setDatabases] = useState<string[]>([]);
   const [openDb, setOpenDb] = useState<string | null>(null);
   const [collections, setCollections] = useState<
@@ -73,7 +91,7 @@ export function DocumentWorkspace({ connectionId }: Props) {
 
   return (
     <div className="workspace">
-      <div className="tree">
+      <div className="tree" style={{ width }}>
         {databases.length === 0 && <p className="muted">No databases.</p>}
         {databases.map((db) => (
           <div key={db} className="tree-group">
@@ -102,6 +120,11 @@ export function DocumentWorkspace({ connectionId }: Props) {
           </div>
         ))}
       </div>
+      <div
+        className="tree-resizer"
+        onMouseDown={treeResize.onMouseDown}
+        title="Drag to resize"
+      />
       <div className="editor-pane">
         <div className="row">
           <span className="muted">

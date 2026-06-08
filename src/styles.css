@@ -293,6 +293,59 @@ select option:hover {
   height: 100%;
 }
 
+/* Collapsible sidebar: a narrow rail that overlays the main content and
+   expands to its configured width (`--sidebar-expanded`) on hover. The rail
+   keeps a fixed slot in the flex layout so expanding doesn't reflow `.main`. */
+.sidebar.collapsible {
+  width: var(--sidebar-rail, 64px) !important;
+  position: relative;
+  z-index: 20;
+  overflow: hidden;
+  transition: width 0.16s ease;
+}
+
+.sidebar.collapsible:hover {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--sidebar-expanded, 240px) !important;
+  overflow: visible;
+  box-shadow: 2px 0 16px rgba(0, 0, 0, 0.35);
+}
+
+/* In the collapsed (non-hovered) state, hide everything but the connection
+   dots so the rail stays tidy; labels and chrome reappear on hover. */
+.sidebar.collapsible:not(:hover) .logo-sub,
+.sidebar.collapsible:not(:hover) .logo-badge,
+.sidebar.collapsible:not(:hover) .new-btn,
+.sidebar.collapsible:not(:hover) .conn-name,
+.sidebar.collapsible:not(:hover) .conn-item .icon-btn,
+.sidebar.collapsible:not(:hover) .conn-item .close-x,
+.sidebar.collapsible:not(:hover) .conn-list .muted,
+.sidebar.collapsible:not(:hover) .install-btn,
+.sidebar.collapsible:not(:hover) .footer-menu {
+  display: none;
+}
+
+/* In the collapsed rail the logo is the only identifier, so enlarge it and
+   center it. Trim the item's horizontal padding so the highlight box (inset a
+   little from the rail by its margin) still fully contains the logo. Reverts on
+   hover. */
+.sidebar.collapsible:not(:hover) .conn-item {
+  justify-content: center;
+  margin-left: 3px;
+  margin-right: 3px;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sidebar.collapsible:not(:hover) .plugin-logo {
+  width: 26px;
+  height: 26px;
+  margin: 0;
+}
+
 .sidebar {
   width: 240px;
   flex-shrink: 0;
@@ -433,6 +486,21 @@ select option:hover {
 .footer-menu-item:hover {
   background: var(--bg-3);
   color: var(--accent);
+}
+
+.footer-menu-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.footer-menu-toggle input {
+  margin: 0;
+  cursor: pointer;
 }
 
 .link-btn {
@@ -708,6 +776,7 @@ select option:hover {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  margin-left: 2px;
   background: var(--dot-color, var(--muted));
 }
 
@@ -753,6 +822,25 @@ select option:hover {
 .dot.connected {
   opacity: 1;
   box-shadow: 0 0 6px 1px var(--dot-color, var(--ok));
+}
+
+/* Plugin logo (bundled SVG, resolved by id then kind). Sits in the same slot
+   as the connection dot. Generic kind glyphs use `currentColor`, so the muted
+   text color applies until the connection is live. Mirrors the dot's
+   dim/connected states. */
+.plugin-logo {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-left: 2px;
+  object-fit: contain;
+  color: var(--muted);
+  opacity: 0.45;
+}
+
+.plugin-logo.connected {
+  color: var(--text);
+  opacity: 1;
 }
 
 /* Dim disconnected rows; brighten connected ones. */
@@ -1004,6 +1092,24 @@ select option:hover {
   background: var(--bg-2);
 }
 
+/* Draggable divider to the right of a workspace tree / scripts panel; widened
+   hit area, accent on hover. Mirrors `.sidebar-resizer`. The panel's width is
+   driven inline by React (see useResizable); the CSS width above is just the
+   initial default before mount. */
+.tree-resizer {
+  flex-shrink: 0;
+  width: 5px;
+  margin-left: -3px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.12s;
+  z-index: 1;
+}
+
+.tree-resizer:hover {
+  background: var(--accent);
+}
+
 .tree-top {
   flex-shrink: 0;
   padding: 8px 8px 0;
@@ -1171,6 +1277,11 @@ select option:hover {
   color: var(--muted);
 }
 
+.editor-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .editor-file {
   display: flex;
   align-items: center;
@@ -1245,7 +1356,9 @@ table.grid {
 table.grid th,
 table.grid td {
   border: 1px solid var(--border);
-  padding: 4px 8px;
+  /* extra right padding (~3 chars) so values have breathing room before the
+     next column; taller vertical padding spaces the rows apart. */
+  padding: 7px 3ch 7px 8px;
   text-align: left;
   /* nowrap (not pre) so multi-line text/JSON stays on one line and every row
      keeps the same height; the full value opens in the cell editor. */
@@ -1364,12 +1477,18 @@ table.grid td.editing {
   position: relative;
 }
 
+.cell-edit {
+  display: flex;
+  align-items: stretch;
+}
+
 .cell-input {
+  flex: 1;
   width: 100%;
   min-width: 80px;
   border: none;
   border-radius: 0;
-  padding: 4px 8px;
+  padding: 7px 8px;
   background: var(--bg);
   font: inherit;
   font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
@@ -1381,15 +1500,14 @@ table.grid td.editing {
 }
 
 .cell-null {
-  position: absolute;
-  right: 2px;
-  top: 50%;
-  transform: translateY(-50%);
-  padding: 0 5px;
+  flex: none;
+  padding: 0 8px;
   font-size: 11px;
-  line-height: 18px;
   color: var(--muted);
   background: var(--panel);
+  border: none;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
 }
 
 .row-del,
@@ -1739,4 +1857,540 @@ table.grid tr.new-row td {
   font-size: 11px;
   color: var(--muted);
   margin-top: 2px;
+}
+
+/* ── SFTP File Manager (GNOME Files / Nautilus-style) ─────────────────────── */
+
+.fm-workspace {
+  background: var(--bg);
+}
+
+/* Places sidebar */
+.fm-sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg-2);
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.fm-sidebar-section {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 4px 8px;
+  font-weight: 600;
+}
+
+.fm-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.fm-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border-radius: 7px;
+  padding: 4px 8px 4px 0;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.fm-tree-row:hover {
+  background: var(--panel);
+}
+
+.fm-tree-row.active {
+  background: var(--accent);
+  color: var(--bg-3);
+}
+
+.fm-tree-row.active .fm-icon-folder {
+  fill: var(--bg-3);
+}
+
+.fm-tree-twisty {
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.fm-tree-row.active .fm-tree-twisty {
+  color: var(--bg-3);
+}
+
+.fm-tree-twisty:not(.empty):hover {
+  color: var(--text);
+}
+
+.fm-tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Main column */
+.fm-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Header bar */
+.fm-headerbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+  flex-shrink: 0;
+}
+
+.fm-nav {
+  display: flex;
+  gap: 2px;
+}
+
+.fm-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 7px;
+  border-radius: 7px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.fm-iconbtn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.fm-iconbtn.active {
+  background: var(--accent);
+  color: var(--bg-3);
+  border-color: var(--accent);
+}
+
+/* Pill pathbar (breadcrumb) */
+.fm-pathbar {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+  scrollbar-width: thin;
+}
+
+.fm-crumb {
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  color: var(--text);
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.fm-crumb:hover:not(:disabled) {
+  background: var(--panel);
+  border-color: transparent;
+}
+
+.fm-crumb.current {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.fm-crumb:not(:last-child)::after {
+  content: "›";
+  color: var(--muted);
+  margin-left: 8px;
+  margin-right: -6px;
+  font-weight: 400;
+}
+
+.fm-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fm-viewtoggle {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-3);
+  border-radius: 8px;
+}
+
+.fm-viewtoggle .fm-iconbtn {
+  background: transparent;
+  border-color: transparent;
+}
+
+.fm-viewtoggle .fm-iconbtn.active {
+  background: var(--accent);
+  color: var(--bg-3);
+}
+
+/* Spinner */
+.fm-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  display: inline-block;
+  animation: fm-spin 0.7s linear infinite;
+}
+
+@keyframes fm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.fm-error {
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+  padding: 8px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* New-folder inline bar */
+.fm-newfolder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+}
+
+.fm-newfolder input {
+  flex: 0 1 280px;
+}
+
+/* Content area */
+.fm-content {
+  flex: 1;
+  overflow-y: auto;
+  position: relative;
+  padding: 16px;
+}
+
+.fm-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 14px;
+  pointer-events: none;
+}
+
+/* Icons */
+.fm-icon-folder {
+  fill: var(--accent);
+}
+
+.fm-icon-file {
+  fill: var(--panel);
+  stroke: var(--muted);
+  stroke-width: 1.2;
+}
+
+.fm-icon-file-fold {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+}
+
+/* Grid (icon) view */
+.fm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 6px;
+}
+
+.fm-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 6px;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  user-select: none;
+}
+
+.fm-tile:hover {
+  background: var(--panel);
+}
+
+.fm-tile.selected {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: var(--accent);
+}
+
+.fm-tile-icon {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fm-tile-label {
+  width: 100%;
+  text-align: center;
+}
+
+.fm-tile-label .fm-label-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+/* List view */
+.fm-list {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.fm-list thead th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: -16px;
+  background: var(--bg);
+}
+
+.fm-list-row {
+  cursor: pointer;
+  user-select: none;
+}
+
+.fm-list-row td {
+  padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.fm-list-row:hover {
+  background: var(--panel);
+}
+
+.fm-list-row.selected {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.fm-list-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fm-list-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.fm-col-size {
+  width: 110px;
+  white-space: nowrap;
+}
+
+.fm-col-date {
+  width: 150px;
+  white-space: nowrap;
+}
+
+.fm-col-perms {
+  width: 110px;
+  white-space: nowrap;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* Rename input (shared grid/list) */
+.fm-rename-input {
+  width: 100%;
+  font: inherit;
+  padding: 1px 4px;
+  text-align: inherit;
+}
+
+/* Status bar */
+.fm-statusbar {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+  padding: 5px 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Context menu */
+.fm-context {
+  position: fixed;
+  z-index: 1000;
+  min-width: 170px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 5px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.fm-context button {
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 12px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.fm-context button:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--bg-3);
+  border-color: transparent;
+}
+
+.fm-context-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.fm-context-danger:hover:not(:disabled) {
+  background: var(--err) !important;
+  color: #fff !important;
+}
+
+/* Folder-download progress (indeterminate bar) */
+.fm-progress {
+  min-width: 380px;
+}
+
+.fm-progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  overflow: hidden;
+  margin: 14px 0 10px;
+}
+
+.fm-progress-fill {
+  height: 100%;
+  width: 40%;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: fm-progress-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes fm-progress-slide {
+  0% {
+    margin-left: -40%;
+  }
+  100% {
+    margin-left: 100%;
+  }
+}
+
+.fm-progress-status {
+  font-size: 12px;
+  margin: 0 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fm-progress-file {
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+/* Status-bar download note */
+.fm-statusbar-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+.fm-statusbar-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.fm-statusbar-dismiss:hover {
+  color: var(--text);
+  border-color: transparent;
+}
+
+/* Drag-and-drop upload target */
+.fm-content.drag-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -8px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.fm-drop-overlay {
+  position: absolute;
+  inset: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 5;
 }

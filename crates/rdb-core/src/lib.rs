@@ -41,6 +41,7 @@ pub enum PluginKind {
     Document,
     Rabbitmq,
     Cli,
+    FileManager,
     Other,
 }
 

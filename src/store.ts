@@ -57,6 +57,13 @@ export function remove(list: SavedConnection[], id: string): SavedConnection[] {
 // App-wide UI state (not tied to any plugin/connection), persisted by the Rust
 // backend at <app_data_dir>/config.json. See src-tauri/src/config.rs.
 
+/** Per-connection UI preferences. Mirrors the Rust `ConnectionSettings`
+ * (camelCase). Keyed by stable saved-profile id in `AppConfig.connectionSettings`. */
+export interface ConnectionSettings {
+  /** Workspace tree-panel width in CSS pixels (set by dragging its resize handle). */
+  treeWidth?: number;
+}
+
 /** App-wide configuration. Mirrors the Rust `AppConfig` (camelCase). */
 export interface AppConfig {
   /** Whether the first-run plugin install step has been shown to the user. */
@@ -65,6 +72,10 @@ export interface AppConfig {
   pluginRepo: string;
   /** Sidebar width in CSS pixels, set by dragging the sidebar's resize handle. */
   sidebarWidth: number;
+  /** When true, the sidebar collapses to a narrow rail and expands on hover. */
+  sidebarCollapsible: boolean;
+  /** Per-connection UI preferences, keyed by stable saved-profile id. */
+  connectionSettings: Record<string, ConnectionSettings>;
   /** Active UI theme id (see `THEMES` in `src/theme.ts`). */
   theme: string;
 }
