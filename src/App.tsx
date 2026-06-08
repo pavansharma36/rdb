@@ -11,6 +11,7 @@ import { RdbmsWorkspace } from "./components/workspaces/RdbmsWorkspace";
 import { DocumentWorkspace } from "./components/workspaces/DocumentWorkspace";
 import { RabbitMqWorkspace } from "./components/workspaces/RabbitMqWorkspace";
 import { CliWorkspace } from "./components/workspaces/CliWorkspace";
+import { FileManagerWorkspace } from "./components/workspaces/FileManagerWorkspace";
 import type { SavedConnection } from "./store";
 import { loadConnections, saveConnections, upsert, remove } from "./store";
 import { loadConfig, saveConfig } from "./store";
@@ -283,6 +284,16 @@ export function App() {
           />
         );
       }
+      case "filemanager":
+        return (
+          <FileManagerWorkspace
+            key={conn.id}
+            connectionId={conn.id}
+            savedId={conn.savedId}
+            treeWidth={treeWidthFor(conn.savedId, TREE_DEFAULT)}
+            onTreeWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
+          />
+        );
       default:
         return (
           <div className="placeholder">No workspace available for “{mod}”.</div>
