@@ -93,7 +93,7 @@ jobs:
             -p rdb-plugin-postgres \
             -p rdb-plugin-mongodb \
             -p rdb-plugin-rabbitmq \
-            -p rdb-plugin-ssh
+            -p rdb-plugin-ssh \
             -p rdb-plugin-sftp
 
       - name: Stage assets (rename with target triple)
