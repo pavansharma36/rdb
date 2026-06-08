@@ -293,6 +293,59 @@ select option:hover {
   height: 100%;
 }
 
+/* Collapsible sidebar: a narrow rail that overlays the main content and
+   expands to its configured width (`--sidebar-expanded`) on hover. The rail
+   keeps a fixed slot in the flex layout so expanding doesn't reflow `.main`. */
+.sidebar.collapsible {
+  width: var(--sidebar-rail, 64px) !important;
+  position: relative;
+  z-index: 20;
+  overflow: hidden;
+  transition: width 0.16s ease;
+}
+
+.sidebar.collapsible:hover {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--sidebar-expanded, 240px) !important;
+  overflow: visible;
+  box-shadow: 2px 0 16px rgba(0, 0, 0, 0.35);
+}
+
+/* In the collapsed (non-hovered) state, hide everything but the connection
+   dots so the rail stays tidy; labels and chrome reappear on hover. */
+.sidebar.collapsible:not(:hover) .logo-sub,
+.sidebar.collapsible:not(:hover) .logo-badge,
+.sidebar.collapsible:not(:hover) .new-btn,
+.sidebar.collapsible:not(:hover) .conn-name,
+.sidebar.collapsible:not(:hover) .conn-item .icon-btn,
+.sidebar.collapsible:not(:hover) .conn-item .close-x,
+.sidebar.collapsible:not(:hover) .conn-list .muted,
+.sidebar.collapsible:not(:hover) .install-btn,
+.sidebar.collapsible:not(:hover) .footer-menu {
+  display: none;
+}
+
+/* In the collapsed rail the logo is the only identifier, so enlarge it and
+   center it. Trim the item's horizontal padding so the highlight box (inset a
+   little from the rail by its margin) still fully contains the logo. Reverts on
+   hover. */
+.sidebar.collapsible:not(:hover) .conn-item {
+  justify-content: center;
+  margin-left: 3px;
+  margin-right: 3px;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sidebar.collapsible:not(:hover) .plugin-logo {
+  width: 26px;
+  height: 26px;
+  margin: 0;
+}
+
 .sidebar {
   width: 240px;
   flex-shrink: 0;
@@ -433,6 +486,21 @@ select option:hover {
 .footer-menu-item:hover {
   background: var(--bg-3);
   color: var(--accent);
+}
+
+.footer-menu-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.footer-menu-toggle input {
+  margin: 0;
+  cursor: pointer;
 }
 
 .link-btn {
@@ -708,6 +776,7 @@ select option:hover {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  margin-left: 2px;
   background: var(--dot-color, var(--muted));
 }
 
@@ -753,6 +822,25 @@ select option:hover {
 .dot.connected {
   opacity: 1;
   box-shadow: 0 0 6px 1px var(--dot-color, var(--ok));
+}
+
+/* Plugin logo (bundled SVG, resolved by id then kind). Sits in the same slot
+   as the connection dot. Generic kind glyphs use `currentColor`, so the muted
+   text color applies until the connection is live. Mirrors the dot's
+   dim/connected states. */
+.plugin-logo {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-left: 2px;
+  object-fit: contain;
+  color: var(--muted);
+  opacity: 0.45;
+}
+
+.plugin-logo.connected {
+  color: var(--text);
+  opacity: 1;
 }
 
 /* Dim disconnected rows; brighten connected ones. */
@@ -1004,6 +1092,24 @@ select option:hover {
   background: var(--bg-2);
 }
 
+/* Draggable divider to the right of a workspace tree / scripts panel; widened
+   hit area, accent on hover. Mirrors `.sidebar-resizer`. The panel's width is
+   driven inline by React (see useResizable); the CSS width above is just the
+   initial default before mount. */
+.tree-resizer {
+  flex-shrink: 0;
+  width: 5px;
+  margin-left: -3px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.12s;
+  z-index: 1;
+}
+
+.tree-resizer:hover {
+  background: var(--accent);
+}
+
 .tree-top {
   flex-shrink: 0;
   padding: 8px 8px 0;
@@ -1171,6 +1277,11 @@ select option:hover {
   color: var(--muted);
 }
 
+.editor-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .editor-file {
   display: flex;
   align-items: center;
@@ -1245,7 +1356,9 @@ table.grid {
 table.grid th,
 table.grid td {
   border: 1px solid var(--border);
-  padding: 4px 8px;
+  /* extra right padding (~3 chars) so values have breathing room before the
+     next column; taller vertical padding spaces the rows apart. */
+  padding: 7px 3ch 7px 8px;
   text-align: left;
   /* nowrap (not pre) so multi-line text/JSON stays on one line and every row
      keeps the same height; the full value opens in the cell editor. */
@@ -1364,12 +1477,18 @@ table.grid td.editing {
   position: relative;
 }
 
+.cell-edit {
+  display: flex;
+  align-items: stretch;
+}
+
 .cell-input {
+  flex: 1;
   width: 100%;
   min-width: 80px;
   border: none;
   border-radius: 0;
-  padding: 4px 8px;
+  padding: 7px 8px;
   background: var(--bg);
   font: inherit;
   font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
@@ -1381,15 +1500,14 @@ table.grid td.editing {
 }
 
 .cell-null {
-  position: absolute;
-  right: 2px;
-  top: 50%;
-  transform: translateY(-50%);
-  padding: 0 5px;
+  flex: none;
+  padding: 0 8px;
   font-size: 11px;
-  line-height: 18px;
   color: var(--muted);
   background: var(--panel);
+  border: none;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
 }
 
 .row-del,

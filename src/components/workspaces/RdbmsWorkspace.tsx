@@ -17,6 +17,7 @@ import {
   deleteWorkspaceFile,
 } from "../../store";
 import { ConfirmDialog } from "../Modal";
+import { useResizable, TREE_MIN, TREE_MAX } from "../../useResizable";
 import { normalizeQuotes, parseSingleTable, statementAtCursor } from "./rdbms/sql";
 import {
   castType,
@@ -38,6 +39,10 @@ interface Props {
   /** The database this connection was opened against; the initial selection for
    * the database picker. Null when the profile didn't specify one. */
   database?: string | null;
+  /** Initial width (px) of the tree panel, restored from per-connection config. */
+  treeWidth: number;
+  /** Called with the final width (px) when the user finishes dragging. */
+  onTreeWidthChange: (width: number) => void;
 }
 
 /** Identifies the table currently being browsed, enabling inline editing.
@@ -60,7 +65,22 @@ type Edits = Record<number, Record<string, string | null>>;
 /** Rows fetched when browsing a table from the tree. */
 const BROWSE_LIMIT = 100;
 
-export function RdbmsWorkspace({ connectionId, savedId, database }: Props) {
+export function RdbmsWorkspace({
+  connectionId,
+  savedId,
+  database,
+  treeWidth,
+  onTreeWidthChange,
+}: Props) {
+  // Tree panel width (px); restored from per-connection config, resizable.
+  const [width, setWidth] = useState(treeWidth);
+  const treeResize = useResizable({
+    width,
+    min: TREE_MIN,
+    max: TREE_MAX,
+    onChange: setWidth,
+    onCommit: onTreeWidthChange,
+  });
   const [schemas, setSchemas] = useState<Schema[]>([]);
   // Databases on the server (empty when the backend doesn't support listing,
   // which hides the picker) and the one currently selected.
@@ -668,7 +688,7 @@ export function RdbmsWorkspace({ connectionId, savedId, database }: Props) {
 
   return (
     <div className="workspace">
-      <div className="tree">
+      <div className="tree" style={{ width }}>
         <div className="tree-top">
         <WorkspaceFileList
           files={sqlFiles}
@@ -733,6 +753,11 @@ export function RdbmsWorkspace({ connectionId, savedId, database }: Props) {
           onPickTable={pickTable}
         />
       </div>
+      <div
+        className="tree-resizer"
+        onMouseDown={treeResize.onMouseDown}
+        title="Drag to resize"
+      />
       <div className="editor-pane">
         {activeFile && (
           <div className="editor-file">
@@ -775,6 +800,11 @@ export function RdbmsWorkspace({ connectionId, savedId, database }: Props) {
             >
               Run
             </button>
+          )}
+          {activeFile && !busy && (
+            <span className="editor-hint">
+              ⌘/Ctrl+Enter runs the selection, or the statement at the cursor
+            </span>
           )}
           {busy && (
             <>
@@ -910,30 +940,32 @@ export function RdbmsWorkspace({ connectionId, savedId, database }: Props) {
                         if (isEditing) {
                           return (
                             <td key={ci} className="editing">
-                              <input
-                                className="cell-input"
-                                autoFocus
-                                value={draft}
-                                onChange={(e) => setDraft(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") stageEdit(draft);
-                                  else if (e.key === "Escape") cancelEdit();
-                                }}
-                                onBlur={() => {
-                                  if (!editHandled.current) stageEdit(draft);
-                                }}
-                              />
-                              <button
-                                className="cell-null"
-                                title="Set NULL"
-                                // mousedown fires before the input's blur
-                                onMouseDown={(e) => {
-                                  e.preventDefault();
-                                  stageEdit(null);
-                                }}
-                              >
-                                ∅
-                              </button>
+                              <div className="cell-edit">
+                                <input
+                                  className="cell-input"
+                                  autoFocus
+                                  value={draft}
+                                  onChange={(e) => setDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") stageEdit(draft);
+                                    else if (e.key === "Escape") cancelEdit();
+                                  }}
+                                  onBlur={() => {
+                                    if (!editHandled.current) stageEdit(draft);
+                                  }}
+                                />
+                                <button
+                                  className="cell-null"
+                                  title="Set NULL"
+                                  // mousedown fires before the input's blur
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    stageEdit(null);
+                                  }}
+                                >
+                                  ∅
+                                </button>
+                              </div>
                             </td>
                           );
                         }

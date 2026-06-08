@@ -1,6 +1,6 @@
 name: Publish plugins
 
-# Build the three bundled plugin sidecars for every supported target triple and
+# Build the bundled plugin sidecars for every supported target triple and
 # publish them as GitHub release assets so the in-app GitHub installer
 # (src-tauri/src/github.rs) can fetch them.
 #
@@ -10,7 +10,7 @@ name: Publish plugins
 #   - push a `v*` tag -> stable: immutable `v<version>` release,
 #                        version taken from the tag (e.g. v0.2.0 -> 0.2.0).
 #
-# Release layout: all three plugins are published as assets in a single release.
+# Release layout: all plugins are published as assets in a single release.
 # Each release holds all plugin binaries (one per platform, named with the target
 # triple) plus an aggregate `SHA256SUMS`. Install in-app by pointing at this
 # repo and choosing the tag (e.g., `v0.2.0` or `plugins-latest`).
@@ -92,7 +92,8 @@ jobs:
           cargo build --release --target "${{ matrix.target }}" \
             -p rdb-plugin-postgres \
             -p rdb-plugin-mongodb \
-            -p rdb-plugin-rabbitmq
+            -p rdb-plugin-rabbitmq \
+            -p rdb-plugin-ssh
 
       - name: Stage assets (rename with target triple)
         shell: bash
@@ -101,7 +102,7 @@ jobs:
           mkdir -p dist
           ext=""
           [[ "${{ matrix.target }}" == *windows* ]] && ext=".exe"
-          for crate in rdb-plugin-postgres rdb-plugin-mongodb rdb-plugin-rabbitmq; do
+          for crate in rdb-plugin-postgres rdb-plugin-mongodb rdb-plugin-rabbitmq rdb-plugin-ssh; do
             src="target/${{ matrix.target }}/release/${crate}${ext}"
             dest="dist/${crate}-${{ matrix.target }}${ext}"
             cp "$src" "$dest"

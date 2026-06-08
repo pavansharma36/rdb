@@ -21,6 +21,10 @@ import { applyTheme, resolveTheme } from "./theme";
 const SIDEBAR_MIN = 180;
 const SIDEBAR_MAX = 500;
 
+/** Default tree-panel width (px) when a connection has no saved width. */
+const TREE_DEFAULT = 240;
+const CLI_SCRIPTS_DEFAULT = 220;
+
 /** A live, currently-open connection to a backend (one per connected profile). */
 export interface OpenConnection {
   id: ConnectionId;
@@ -53,6 +57,8 @@ export function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   // Sidebar width in px, restored from config and updated by the drag handle.
   const [sidebarWidth, setSidebarWidth] = useState(240);
+  // When true, the sidebar shows as a narrow rail and expands on hover.
+  const [sidebarCollapsible, setSidebarCollapsible] = useState(false);
   // Saved-profile id pending a delete confirmation (null = no prompt shown).
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
@@ -82,6 +88,7 @@ export function App() {
             Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, cfg.sidebarWidth)),
           );
         }
+        setSidebarCollapsible(cfg.sidebarCollapsible ?? false);
         if (!cfg.pluginsDialogShown) {
           setInstalling(true);
           saveConfig(effective).catch(() => {});
@@ -244,11 +251,20 @@ export function App() {
             connectionId={conn.id}
             savedId={conn.savedId}
             database={typeof db === "string" ? db : null}
+            treeWidth={treeWidthFor(conn.savedId, TREE_DEFAULT)}
+            onTreeWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
           />
         );
       }
       case "document":
-        return <DocumentWorkspace key={conn.id} connectionId={conn.id} />;
+        return (
+          <DocumentWorkspace
+            key={conn.id}
+            connectionId={conn.id}
+            treeWidth={treeWidthFor(conn.savedId, TREE_DEFAULT)}
+            onTreeWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
+          />
+        );
       case "rabbitmq":
         return <RabbitMqWorkspace key={conn.id} connectionId={conn.id} />;
       case "cli": {
@@ -262,6 +278,8 @@ export function App() {
             key={conn.id}
             connectionId={conn.id}
             savedId={conn.savedId}
+            scriptsWidth={treeWidthFor(conn.savedId, CLI_SCRIPTS_DEFAULT)}
+            onScriptsWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
           />
         );
       }
@@ -314,6 +332,40 @@ export function App() {
     });
   }
 
+  /** Toggle whether the sidebar collapses to a hover-expanding rail. */
+  function toggleSidebarCollapsible() {
+    setSidebarCollapsible((on) => {
+      const next = !on;
+      setConfig((c) => {
+        const cfg = { ...(c ?? ({} as AppConfig)), sidebarCollapsible: next };
+        saveConfig(cfg).catch(() => {});
+        return cfg;
+      });
+      return next;
+    });
+  }
+
+  /** The saved workspace tree-panel width for a connection, or `dflt`. */
+  function treeWidthFor(savedId: string, dflt: number): number {
+    return config?.connectionSettings?.[savedId]?.treeWidth ?? dflt;
+  }
+
+  /** Persist a connection's workspace tree-panel width (merges into config). */
+  function commitTreeWidth(savedId: string, width: number) {
+    setConfig((c) => {
+      const prev = c?.connectionSettings ?? {};
+      const next = {
+        ...(c ?? ({} as AppConfig)),
+        connectionSettings: {
+          ...prev,
+          [savedId]: { ...prev[savedId], treeWidth: width },
+        },
+      };
+      saveConfig(next).catch(() => {});
+      return next;
+    });
+  }
+
   return (
     <div className="app">
       <Sidebar
@@ -321,11 +373,13 @@ export function App() {
         plugins={plugins}
         channel={channel}
         width={sidebarWidth}
+        collapsible={sidebarCollapsible}
         openConnections={open}
         activeId={activeId}
         creating={creating || editingId !== null}
         theme={resolveTheme(config?.theme)}
         onThemeChange={changeTheme}
+        onToggleCollapsible={toggleSidebarCollapsible}
         onSelect={connectSaved}
         onNew={() => {
           setCreating(true);
@@ -347,6 +401,7 @@ export function App() {
         className="sidebar-resizer"
         onMouseDown={startSidebarResize}
         title="Drag to resize sidebar"
+        style={sidebarCollapsible ? { display: "none" } : undefined}
       />
       <main className="main">
         {showForm ? (

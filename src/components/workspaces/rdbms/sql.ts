@@ -75,10 +75,15 @@ export function statementRanges(
 export function statementAtCursor(sql: string, cursor: number): string {
   const ranges = statementRanges(sql);
   if (ranges.length === 0) return sql.trim();
-  let chosen = ranges[0];
+  // Pick the first statement whose end is at or past the cursor. A cursor
+  // sitting exactly on a boundary (right after a `;`) belongs to the statement
+  // that just ended, not the next one.
+  let chosen = ranges[ranges.length - 1];
   for (const r of ranges) {
-    if (r.start <= cursor) chosen = r;
-    else break;
+    if (cursor <= r.end) {
+      chosen = r;
+      break;
+    }
   }
   return chosen.text.trim();
 }

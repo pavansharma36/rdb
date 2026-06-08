@@ -1,7 +1,8 @@
-import {useEffect, useRef, useState} from "react";
+import {useEffect, useRef, useState, type CSSProperties} from "react";
 import type { OpenConnection } from "../App";
 import type { PluginInfo, ConnectionId } from "../api";
 import type { SavedConnection } from "../store";
+import { pluginLogo } from "../pluginLogos";
 import { THEMES } from "../theme";
 import { getVersion } from '@tauri-apps/api/app'; // v2 Import
 
@@ -13,12 +14,15 @@ interface SidebarProps {
   channel: string;
   /** Sidebar width in CSS pixels (driven by the resize handle). */
   width: number;
+  /** When true, render as a narrow rail that expands on hover. */
+  collapsible: boolean;
   openConnections: OpenConnection[];
   activeId: ConnectionId | null;
   creating: boolean;
   /** Active UI theme id (one of THEMES). */
   theme: string;
   onThemeChange: (theme: string) => void;
+  onToggleCollapsible: () => void;
   onSelect: (profile: SavedConnection) => void;
   onNew: () => void;
   onEdit: (id: string) => void;
@@ -33,11 +37,13 @@ export function Sidebar({
   plugins,
   channel,
   width,
+  collapsible,
   openConnections,
   activeId,
   creating,
   theme,
   onThemeChange,
+  onToggleCollapsible,
   onSelect,
   onNew,
   onEdit,
@@ -74,7 +80,14 @@ export function Sidebar({
   }, [menuOpen]);
 
   return (
-    <aside className="sidebar" style={{ width }}>
+    <aside
+      className={"sidebar" + (collapsible ? " collapsible" : "")}
+      style={
+        collapsible
+          ? ({ "--sidebar-expanded": `${width}px` } as CSSProperties)
+          : { width }
+      }
+    >
       <div className="sidebar-header">
         <span className="logo">rdb</span>
         <span className="logo-sub">client</span>
@@ -95,6 +108,8 @@ export function Sidebar({
         {saved.map((s) => {
           const live = openConnections.find((o) => o.savedId === s.id);
           const isActive = !creating && live != null && live.id === activeId;
+          const kind = kindOf(s.pluginId);
+          const logo = pluginLogo(s.pluginId, kind);
           return (
             <div
               key={s.id}
@@ -105,16 +120,25 @@ export function Sidebar({
               }
               onClick={() => onSelect(s)}
             >
-              <span
-                className={
-                  "dot dot-" +
-                  kindOf(s.pluginId) +
-                  " dot-id-" +
-                  s.pluginId +
-                  (live ? " connected" : "")
-                }
-                title={live ? "Connected" : "Not connected"}
-              />
+              {logo ? (
+                <img
+                  className={"plugin-logo" + (live ? " connected" : "")}
+                  src={logo}
+                  alt=""
+                  title={live ? "Connected" : "Not connected"}
+                />
+              ) : (
+                <span
+                  className={
+                    "dot dot-" +
+                    kind +
+                    " dot-id-" +
+                    s.pluginId +
+                    (live ? " connected" : "")
+                  }
+                  title={live ? "Connected" : "Not connected"}
+                />
+              )}
               <span className="conn-name" title={s.name}>
                 {s.name}
               </span>
@@ -187,6 +211,14 @@ export function Sidebar({
                     </option>
                   ))}
                 </select>
+              </label>
+              <label className="footer-menu-toggle">
+                <input
+                  type="checkbox"
+                  checked={collapsible}
+                  onChange={() => onToggleCollapsible()}
+                />
+                <span>Collapse sidebar</span>
               </label>
               <button
                 className="footer-menu-item"
