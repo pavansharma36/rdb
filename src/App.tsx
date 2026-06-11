@@ -28,6 +28,10 @@ const SIDEBAR_MAX = 500;
 const TREE_DEFAULT = 240;
 const CLI_SCRIPTS_DEFAULT = 220;
 
+/** Default editor-pane height (px) when a connection has no saved height. */
+const RDBMS_EDITOR_DEFAULT = 180;
+const CLI_EDITOR_DEFAULT = 200;
+
 /** A live, currently-open connection to a backend (one per connected profile). */
 export interface OpenConnection {
   id: ConnectionId;
@@ -278,6 +282,8 @@ export function App() {
             database={typeof db === "string" ? db : null}
             treeWidth={treeWidthFor(conn.savedId, TREE_DEFAULT)}
             onTreeWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
+            editorHeight={editorHeightFor(conn.savedId, RDBMS_EDITOR_DEFAULT)}
+            onEditorHeightChange={(h) => commitEditorHeight(conn.savedId, h)}
           />
         );
       }
@@ -312,6 +318,8 @@ export function App() {
             savedId={conn.savedId}
             scriptsWidth={treeWidthFor(conn.savedId, CLI_SCRIPTS_DEFAULT)}
             onScriptsWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
+            editorHeight={editorHeightFor(conn.savedId, CLI_EDITOR_DEFAULT)}
+            onEditorHeightChange={(h) => commitEditorHeight(conn.savedId, h)}
           />
         );
       }
@@ -401,6 +409,27 @@ export function App() {
         connectionSettings: {
           ...prev,
           [savedId]: { ...prev[savedId], treeWidth: width },
+        },
+      };
+      saveConfig(next).catch(() => {});
+      return next;
+    });
+  }
+
+  /** The saved workspace editor-pane height for a connection, or `dflt`. */
+  function editorHeightFor(savedId: string, dflt: number): number {
+    return config?.connectionSettings?.[savedId]?.editorHeight ?? dflt;
+  }
+
+  /** Persist a connection's workspace editor-pane height (merges into config). */
+  function commitEditorHeight(savedId: string, height: number) {
+    setConfig((c) => {
+      const prev = c?.connectionSettings ?? {};
+      const next = {
+        ...(c ?? ({} as AppConfig)),
+        connectionSettings: {
+          ...prev,
+          [savedId]: { ...prev[savedId], editorHeight: height },
         },
       };
       saveConfig(next).catch(() => {});

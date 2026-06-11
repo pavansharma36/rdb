@@ -10,8 +10,18 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
+
+/// Per-file copies are streamed in chunks of this size so the cooperative
+/// `cancel` flag can be observed *mid-file* (not just between files) and so a
+/// large file isn't buffered whole in memory.
+const TRANSFER_CHUNK: usize = 64 * 1024;
+
+/// Returned by the per-file copy helpers when the cooperative cancel flag was
+/// observed mid-file. The caller stops the loop and leaves the phase at
+/// `Cancelled`; the partially-written destination has already been removed.
+struct Cancelled;
 
 // ── Types shared between plugin and frontend ─────────────────────────────────
 
@@ -584,22 +594,51 @@ fn require_path(params: &serde_json::Value, key: &str) -> Result<String> {
         .ok_or_else(|| PluginError::Config(format!("{key} is required")))
 }
 
-/// Write `data` to `remote_path`, creating the file if it doesn't exist and
-/// truncating it if it does. `SftpSession::write` opens with the WRITE flag
-/// only (no CREATE), so it fails with "No such file" on a new file — `create`
-/// opens with CREATE | TRUNCATE | WRITE, which is what an upload needs.
-async fn write_remote(sftp: &SftpSession, remote_path: String, data: &[u8]) -> Result<()> {
+/// Stream the local file at `src` to `remote_path`, creating the file if it
+/// doesn't exist and truncating it if it does. `SftpSession::write` opens with
+/// the WRITE flag only (no CREATE), so it fails with "No such file" on a new
+/// file — `create` opens with CREATE | TRUNCATE | WRITE, which is what an upload
+/// needs. Streamed in `TRANSFER_CHUNK` chunks, checking `job.cancel` between
+/// chunks so a large file can be aborted mid-copy; on cancel the
+/// partially-written remote file is removed and `Ok(Some(Cancelled))` returned.
+async fn write_remote(
+    sftp: &SftpSession,
+    src: &str,
+    remote_path: String,
+    job: &JobState,
+) -> Result<Option<Cancelled>> {
+    let mut input = tokio::fs::File::open(src)
+        .await
+        .map_err(|e| PluginError::Backend(format!("open {src}: {e}")))?;
     let mut file = sftp
-        .create(remote_path)
+        .create(remote_path.clone())
         .await
-        .map_err(|e| PluginError::Backend(format!("create: {e}")))?;
-    file.write_all(data)
-        .await
-        .map_err(|e| PluginError::Backend(format!("write: {e}")))?;
+        .map_err(|e| PluginError::Backend(format!("create {remote_path}: {e}")))?;
+
+    let mut buf = vec![0u8; TRANSFER_CHUNK];
+    loop {
+        if job.cancel.load(Ordering::SeqCst) {
+            // Abandon the remote handle and unlink the truncated destination.
+            let _ = file.shutdown().await;
+            drop(file);
+            let _ = sftp.remove_file(remote_path.clone()).await;
+            return Ok(Some(Cancelled));
+        }
+        let n = input
+            .read(&mut buf)
+            .await
+            .map_err(|e| PluginError::Backend(format!("read {src}: {e}")))?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n])
+            .await
+            .map_err(|e| PluginError::Backend(format!("write {remote_path}: {e}")))?;
+    }
     file.shutdown()
         .await
-        .map_err(|e| PluginError::Backend(format!("flush: {e}")))?;
-    Ok(())
+        .map_err(|e| PluginError::Backend(format!("flush {remote_path}: {e}")))?;
+    Ok(None)
 }
 
 /// Create a remote directory, tolerating "already exists". SFTP has no mkdir -p,
@@ -621,20 +660,51 @@ async fn ensure_remote_dir(sftp: &SftpSession, path: &str) -> Result<()> {
 
 /// Read one remote file and write it straight to `local_path` on disk, creating
 /// parent directories as needed. Bytes never cross the JSON-RPC pipe (the plugin
-/// runs locally).
-async fn download_one(sftp: &SftpSession, remote_path: &str, local_path: &str) -> Result<()> {
-    let bytes = sftp
-        .read(remote_path.to_owned())
+/// runs locally). Streamed in `TRANSFER_CHUNK` chunks, checking `job.cancel`
+/// between chunks so a large file can be aborted mid-copy; on cancel the
+/// partially-written local file is removed and `Ok(Some(Cancelled))` is returned.
+async fn download_one(
+    sftp: &SftpSession,
+    remote_path: &str,
+    local_path: &str,
+    job: &JobState,
+) -> Result<Option<Cancelled>> {
+    let mut remote = sftp
+        .open(remote_path.to_owned())
         .await
-        .map_err(|e| PluginError::Backend(format!("read: {e}")))?;
+        .map_err(|e| PluginError::Backend(format!("open {remote_path}: {e}")))?;
     let local = std::path::Path::new(local_path);
     if let Some(parent) = local.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| PluginError::Backend(format!("create local dir {parent:?}: {e}")))?;
     }
-    std::fs::write(local, &bytes)
-        .map_err(|e| PluginError::Backend(format!("write {local_path}: {e}")))?;
-    Ok(())
+    let mut out = tokio::fs::File::create(local)
+        .await
+        .map_err(|e| PluginError::Backend(format!("create {local_path}: {e}")))?;
+
+    let mut buf = vec![0u8; TRANSFER_CHUNK];
+    loop {
+        if job.cancel.load(Ordering::SeqCst) {
+            // Drop the open handles and discard the truncated destination.
+            drop(out);
+            let _ = tokio::fs::remove_file(local).await;
+            return Ok(Some(Cancelled));
+        }
+        let n = remote
+            .read(&mut buf)
+            .await
+            .map_err(|e| PluginError::Backend(format!("read {remote_path}: {e}")))?;
+        if n == 0 {
+            break;
+        }
+        out.write_all(&buf[..n])
+            .await
+            .map_err(|e| PluginError::Backend(format!("write {local_path}: {e}")))?;
+    }
+    out.flush()
+        .await
+        .map_err(|e| PluginError::Backend(format!("flush {local_path}: {e}")))?;
+    Ok(None)
 }
 
 /// One file discovered while scanning a transfer source: its source path and the
@@ -783,17 +853,17 @@ async fn run_transfer(
     job.total.store(work.len() as u64, Ordering::SeqCst);
     job.set_phase(JobPhase::Running);
 
-    // Phase 2 — copy each file, checking cancel between files.
+    // Phase 2 — copy each file. Cancel is checked both between files (here) and
+    // mid-file (inside the copy helpers, between chunks), so a large in-progress
+    // file is aborted promptly rather than running to completion first.
     for (src, dest, rel) in work {
         if job.cancel.load(Ordering::SeqCst) {
             job.set_phase(JobPhase::Cancelled);
             return Ok(());
         }
         *job.current.lock().await = rel;
-        match kind {
-            TransferKind::Download => {
-                download_one(sftp, &src, &dest).await?;
-            }
+        let cancelled = match kind {
+            TransferKind::Download => download_one(sftp, &src, &dest, job).await?,
             TransferKind::Upload => {
                 // Mirror the parent directory chain on the remote before writing.
                 if let Some(parent) = dest.rsplit_once('/').map(|(p, _)| p) {
@@ -801,10 +871,14 @@ async fn run_transfer(
                         ensure_remote_dirs(sftp, parent).await?;
                     }
                 }
-                let bytes = std::fs::read(&src)
-                    .map_err(|e| PluginError::Backend(format!("read {src}: {e}")))?;
-                write_remote(sftp, dest, &bytes).await?;
+                write_remote(sftp, &src, dest.clone(), job).await?
             }
+        };
+        if cancelled.is_some() {
+            // The current file was aborted mid-copy and its partial destination
+            // removed; stop here without counting it as done.
+            job.set_phase(JobPhase::Cancelled);
+            return Ok(());
         }
         job.done.fetch_add(1, Ordering::SeqCst);
     }

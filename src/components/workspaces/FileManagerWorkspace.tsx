@@ -5,6 +5,7 @@ import { api, errString } from "../../api";
 import type { ConnectionId, FileEntry, TransferStats } from "../../api";
 import { useResizable, TREE_MIN, TREE_MAX } from "../../useResizable";
 import { ConnScope, useConnectionState } from "../../connectionState";
+import { useLoader } from "../Loader";
 
 interface Props {
   connectionId: ConnectionId;
@@ -147,7 +148,9 @@ const scope = ConnScope(savedId, "filemanager");
     "entries",
     [],
   );
-  const [busy, setBusy] = useState(false);
+  // Directory listing uses the app's global workspace-scoped loader (covers the
+  // workspace area, leaves the sidebar interactive) instead of a local spinner.
+  const loader = useLoader();
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [view, setView] = useConnectionState<ViewMode>(scope, "view", "grid");
@@ -197,7 +200,7 @@ const scope = ConnScope(savedId, "filemanager");
 
   const fetchDir = useCallback(
     async (path: string) => {
-      setBusy(true);
+      loader.show({ scope: "workspace" });
       setError(null);
       try {
         const list = await api.sftpListDir(connectionId, path);
@@ -207,10 +210,10 @@ const scope = ConnScope(savedId, "filemanager");
       } catch (e) {
         setError(errString(e));
       } finally {
-        setBusy(false);
+        loader.hide();
       }
     },
-    [connectionId],
+    [connectionId, loader],
   );
 
   // Navigate to a path and push it onto the history stack.
@@ -272,7 +275,7 @@ const scope = ConnScope(savedId, "filemanager");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionId]);
 
-  // Keep the drop handler pointed at the latest state (current dir, busy, etc.).
+  // Keep the drop handler pointed at the latest state (current dir, etc.).
   onDropRef.current = (paths: string[]) => {
     if (download) return; // ignore drops while a transfer is in progress
     uploadPaths(paths);
@@ -887,7 +890,6 @@ const scope = ConnScope(savedId, "filemanager");
           {renderPathbar()}
 
           <div className="fm-actions">
-            {busy && <span className="fm-spinner" title="Loading" />}
             <div className="fm-viewtoggle">
               <button
                 className={"fm-iconbtn" + (view === "grid" ? " active" : "")}
@@ -958,9 +960,10 @@ const scope = ConnScope(savedId, "filemanager");
           <div onClick={(e) => e.stopPropagation()}>
             {view === "grid" ? renderGrid() : renderList()}
           </div>
-          {entries.length === 0 && !busy && (
-            <div className="fm-empty">This folder is empty</div>
-          )}
+          {entries.length === 0 &&
+            !(loader.state.visible && loader.state.scope === "workspace") && (
+              <div className="fm-empty">This folder is empty</div>
+            )}
           {dragOver && (
             <div className="fm-drop-overlay">Drop files to upload here</div>
           )}
@@ -987,11 +990,14 @@ const scope = ConnScope(savedId, "filemanager");
         </div>
       </div>
 
-      {/* Download progress overlay — a true blocking modal: the backdrop
-          covers the whole UI so no other operation can run until the download
-          finishes or is cancelled. */}
+      {/* Transfer progress overlay — scoped to this workspace, not the whole
+          window. The backdrop covers only the file-manager area (it's absolutely
+          positioned within `.fm-workspace`), so it blocks further actions on
+          *this* connection while a transfer runs but leaves the sidebar —
+          including the connection switcher — fully interactive. The transfer
+          itself runs in the plugin and survives switching away and back. */}
       {download && (
-        <div className="modal-backdrop">
+        <div className="fm-progress-backdrop">
           <div className="modal fm-progress">
             <h3>{download.title}</h3>
             <div className="fm-progress-bar">

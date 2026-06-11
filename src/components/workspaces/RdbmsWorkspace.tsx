@@ -20,7 +20,7 @@ import {
   deleteWorkspaceFile,
 } from "../../store";
 import { ConfirmDialog } from "../Modal";
-import { useResizable, TREE_MIN, TREE_MAX } from "../../useResizable";
+import { useResizable, TREE_MIN, TREE_MAX, EDITOR_MIN, EDITOR_MAX } from "../../useResizable";
 import { ConnScope, useConnectionState } from "../../connectionState";
 import { normalizeQuotes, parseSingleTable, statementAtCursor } from "./rdbms/sql";
 import {
@@ -54,6 +54,10 @@ interface Props {
   treeWidth: number;
   /** Called with the final width (px) when the user finishes dragging. */
   onTreeWidthChange: (width: number) => void;
+  /** Initial height (px) of the SQL editor, restored from per-connection config. */
+  editorHeight: number;
+  /** Called with the final height (px) when the user finishes dragging. */
+  onEditorHeightChange: (height: number) => void;
 }
 
 /** Identifies the table currently being browsed, enabling inline editing.
@@ -82,6 +86,8 @@ export function RdbmsWorkspace({
   database,
   treeWidth,
   onTreeWidthChange,
+  editorHeight,
+  onEditorHeightChange,
 }: Props) {
   // Tree panel width (px); restored from per-connection config, resizable.
   const [width, setWidth] = useState(treeWidth);
@@ -91,6 +97,17 @@ export function RdbmsWorkspace({
     max: TREE_MAX,
     onChange: setWidth,
     onCommit: onTreeWidthChange,
+  });
+  // SQL editor height (px); restored from per-connection config, resizable via
+  // the horizontal handle between the editor and the results below it.
+  const [editHeight, setEditHeight] = useState(editorHeight);
+  const editorResize = useResizable({
+    width: editHeight,
+    min: EDITOR_MIN,
+    max: EDITOR_MAX,
+    onChange: setEditHeight,
+    onCommit: onEditorHeightChange,
+    axis: "y",
   });
   // Scope for session-preserved workspace state: switching connections unmounts
   // this component, so these fields live in a store (keyed by the stable saved
@@ -963,74 +980,81 @@ export function RdbmsWorkspace({
           </div>
         )}
         {activeFile && (
-          <CodeEditor
-            className="code"
-            language="sql"
-            value={sql}
-            spellCheck={false}
-            onChange={setSql}
-            onKeyDown={(e) => {
-              // ⌘/Ctrl+Enter runs the selection if any, else the statement the
-              // cursor is in.
-              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                e.preventDefault();
-                if (busy || saving) return;
-                const ta = e.currentTarget;
-                const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
-                const stmt = sel.trim()
-                  ? sel
-                  : statementAtCursor(ta.value, ta.selectionStart);
-                if (stmt.trim()) void runManual(stmt);
-              }
-            }}
+          <div className="editor-code-pane" style={{ height: editHeight }}>
+            <CodeEditor
+              className="code"
+              language="sql"
+              value={sql}
+              spellCheck={false}
+              onChange={setSql}
+              onKeyDown={(e) => {
+                // ⌘/Ctrl+Enter runs the selection if any, else the statement the
+                // cursor is in.
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  if (busy || saving) return;
+                  const ta = e.currentTarget;
+                  const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+                  const stmt = sel.trim()
+                    ? sel
+                    : statementAtCursor(ta.value, ta.selectionStart);
+                  if (stmt.trim()) void runManual(stmt);
+                }
+              }}
+            />
+          </div>
+        )}
+        {activeFile && (
+          <div
+            className="pane-resizer-y"
+            onMouseDown={editorResize.onMouseDown}
+            title="Drag to resize the editor"
           />
         )}
-        <div className="editor-toolbar">
-          {activeFile && (
-            <button
-              className="primary"
-              disabled={busy || saving}
-              onClick={() => runManual()}
-            >
-              Run
-            </button>
-          )}
-          {busy && (
-            <>
-              <span className="running">Running…</span>
+        {(activeFile || busy) && (
+          <div className="editor-toolbar">
+            {activeFile && (
               <button
-                className="danger"
-                onClick={() => void api.cancelLastPluginCall(connectionId)}
-              >
-                Cancel
-              </button>
-            </>
-          )}
-          {editable && tableView === "data" && (
-            <>
-              <button
+                className="primary"
                 disabled={busy || saving}
-                onClick={() => setNewRows((r) => [...r, {}])}
+                onClick={() => runManual()}
               >
-                ＋ Add row
+                Run
               </button>
-              <button
-                disabled={busy || saving || dirty}
-                title={dirty ? "Save or discard changes first" : undefined}
-                onClick={() => refreshData()}
-              >
-                ↻ Refresh
-              </button>
-            </>
-          )}
-          {activeFile && !busy && (
+            )}
+            {busy && (
+              <>
+                <span className="running">Running…</span>
+                <button
+                  className="danger"
+                  onClick={() => void api.cancelLastPluginCall(connectionId)}
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+            {activeFile && !busy && (
               <span className="editor-hint">
-              ⌘/Ctrl+Enter runs the selection, or the statement at the cursor
-            </span>
-          )}
-        </div>
+                ⌘/Ctrl+Enter runs the selection, or the statement at the cursor
+              </span>
+            )}
+          </div>
+        )}
         {editable && tableView === "data" && (
           <div className="browse-bar">
+            <button
+              disabled={busy || saving}
+              onClick={() => setNewRows((r) => [...r, {}])}
+            >
+              ＋ Add row
+            </button>
+            <button
+              disabled={busy || saving || dirty}
+              title={dirty ? "Save or discard changes first" : undefined}
+              onClick={() => refreshData()}
+            >
+              ↻ Refresh
+            </button>
             {activeFilterCount > 0 && (
               <button
                 className="filter-clear-all"

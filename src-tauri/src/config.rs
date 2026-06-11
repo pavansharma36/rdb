@@ -21,6 +21,10 @@ pub struct ConnectionSettings {
     /// Workspace tree-panel width in CSS pixels, set by dragging the tree
     /// resize handle. `None` until the user resizes (falls back to a default).
     pub tree_width: Option<u32>,
+    /// Workspace editor-pane height in CSS pixels, set by dragging the editor's
+    /// vertical resize handle (the SQL editor in the RDBMS workspace, the
+    /// script editor in the CLI/SSH workspace). `None` until the user resizes.
+    pub editor_height: Option<u32>,
 }
 
 /// App-wide UI configuration. `#[serde(default)]` means a config written by an
