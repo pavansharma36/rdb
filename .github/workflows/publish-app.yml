@@ -228,11 +228,13 @@ jobs:
             if gh release view latest >/dev/null 2>&1; then
               gh release view latest --json assets --jq '.assets[].name' | while read -r asset; do
                 [ -n "$asset" ] || continue
-                if [[ "$asset" != *"$CURRENT_VERSION"* ]]; then
+                # Keep the updater manifest (fixed name, no version) and the
+                # current build's assets; delete only stale prior-build assets.
+                if [[ "$asset" == "latest.json" || "$asset" == *"$CURRENT_VERSION"* ]]; then
+                  echo "Keeping asset: $asset"
+                else
                   echo "Deleting asset: $asset"
                   gh release delete-asset latest "$asset" --yes
-                else
-                  echo "Keeping asset: $asset"
                 fi
               done
             else

@@ -297,18 +297,26 @@ select option:hover {
    expands to its configured width (`--sidebar-expanded`) on hover. The rail
    keeps a fixed slot in the flex layout so expanding doesn't reflow `.main`. */
 .sidebar.collapsible {
+  /* Out of flow in BOTH states so hovering never toggles `position`
+     (relative<->absolute), which removed the rail from the flex flow,
+     reflowed `.main`, and bounced `:hover` on/off — the flicker. The rail's
+     flex slot is held instead by a left margin on `.main` (see `.main` below),
+     so only the element's own width animates on hover and `.main` never moves. */
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
   width: var(--sidebar-rail, 64px) !important;
-  position: relative;
-  z-index: 20;
+  /* Above workspace-scoped overlays (transfer progress + connection loader, both
+     z-index 50) so the rail — and its expanded-on-hover panel/shadow — stays on
+     top and clickable while one is showing. Stays below the app-scope loader
+     (200) and modals (100), which are intentional full-window blockers. */
+  z-index: 60;
   overflow: hidden;
   transition: width 0.16s ease;
 }
 
 .sidebar.collapsible:hover {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
   width: var(--sidebar-expanded, 240px) !important;
   overflow: visible;
   box-shadow: 2px 0 16px rgba(0, 0, 0, 0.35);
@@ -923,6 +931,14 @@ select option:hover {
   position: relative;
 }
 
+/* When the sidebar is a collapsible rail it's out of flow (position: absolute),
+   so reserve its rail width here to hold the layout slot. The rail expands over
+   `.main` on hover without reflowing it — `.main` stays put, so the hover target
+   never moves and the rail no longer flickers. */
+.sidebar.collapsible ~ .main {
+  margin-left: var(--sidebar-rail, 64px);
+}
+
 .workspace-header {
   display: flex;
   align-items: center;
@@ -1043,12 +1059,10 @@ select option:hover {
 .cli-top {
   display: flex;
   flex-direction: row;
-  /* Compact top row; the terminal below takes the remaining (larger) space. */
+  /* Height is controlled inline (persisted per connection) and adjusted via the
+   * `.pane-resizer-y` handle below; clamp here as a guardrail. */
   flex: 0 0 auto;
-  height: 200px;
   min-height: 90px;
-  max-height: 60%;
-  resize: vertical;
   overflow: hidden;
   border-bottom: 1px solid var(--border);
 }
@@ -1242,6 +1256,22 @@ select option:hover {
   background: var(--accent);
 }
 
+/* Horizontal handle for a vertical (editor-over-content) split: full width,
+   sits between the editor pane above and the content below. */
+.pane-resizer-y {
+  flex-shrink: 0;
+  height: 5px;
+  margin-top: -3px;
+  cursor: row-resize;
+  background: transparent;
+  transition: background 0.12s;
+  z-index: 1;
+}
+
+.pane-resizer-y:hover {
+  background: var(--accent);
+}
+
 .tree-top {
   flex-shrink: 0;
   padding: 8px 8px 0;
@@ -1397,6 +1427,20 @@ select option:hover {
   gap: 10px;
 }
 
+/* Wraps the SQL editor at a controlled (persisted) height; the editor fills it
+   and the results below take the remaining space. */
+.editor-code-pane {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor-code-pane .code {
+  flex: 1;
+  min-height: 0;
+}
+
 .editor-toolbar {
   display: flex;
   align-items: center;
@@ -1415,6 +1459,7 @@ select option:hover {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .browse-bar .spacer {
@@ -1668,10 +1713,12 @@ textarea.code {
   color: var(--muted);
 }
 
-/* SQL editor variant: wraps, grows vertically, resizable. The resize grip lives
-   on the in-flow textarea, which drives the container height. */
+/* SQL editor variant: wraps, fills its (drag-resizable) pane. The pane height is
+   controlled by the `.pane-resizer-y` handle, so the textarea fills it rather
+   than carrying its own native resize grip. */
 .code-editor.code {
   width: 100%;
+  height: 100%;
   line-height: 1.5;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -1681,9 +1728,9 @@ textarea.code {
 }
 
 .code-editor.code .code-editor-input {
-  min-height: 120px;
-  height: 120px;
-  resize: vertical;
+  min-height: 0;
+  height: 100%;
+  resize: none;
 }
 
 .code-editor.code .code-editor-highlight,
@@ -2320,6 +2367,24 @@ table.grid tr.new-row td {
 
 .fm-workspace {
   background: var(--bg);
+  /* Positioning context for the workspace-scoped transfer overlay
+     (`.fm-progress-backdrop`), which must cover only this area and not the
+     sidebar/connection switcher. */
+  position: relative;
+}
+
+/* Transfer progress overlay, scoped to the file-manager workspace. Unlike the
+   global `.modal-backdrop` (fixed, full-viewport), this is absolutely
+   positioned within `.fm-workspace`, so the sidebar stays interactive and the
+   user can switch connections while a transfer runs in the plugin. */
+.fm-progress-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
 }
 
 /* Places sidebar */
@@ -2513,17 +2578,6 @@ table.grid tr.new-row td {
   color: var(--bg-3);
 }
 
-/* Spinner */
-.fm-spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  display: inline-block;
-  animation: fm-spin 0.7s linear infinite;
-}
-
 @keyframes fm-spin {
   to {
     transform: rotate(360deg);
@@ -2543,7 +2597,7 @@ table.grid tr.new-row td {
 }
 
 /* App scope: covers the whole window (sidebar + workspace). Sits above the
-   collapsible sidebar (z-index: 20) and below nothing else interactive. */
+   collapsible sidebar (z-index: 60) and below nothing else interactive. */
 .loader-overlay--app {
   position: fixed;
   inset: 0;

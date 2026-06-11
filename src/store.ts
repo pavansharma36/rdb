@@ -62,6 +62,9 @@ export function remove(list: SavedConnection[], id: string): SavedConnection[] {
 export interface ConnectionSettings {
   /** Workspace tree-panel width in CSS pixels (set by dragging its resize handle). */
   treeWidth?: number;
+  /** Workspace editor-pane height in CSS pixels (set by dragging the editor's
+   * vertical resize handle: the SQL editor in RDBMS, the script editor in CLI). */
+  editorHeight?: number;
 }
 
 /** App-wide configuration. Mirrors the Rust `AppConfig` (camelCase). */

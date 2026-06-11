@@ -14,7 +14,7 @@ import {
 import { WorkspaceFileList } from "./WorkspaceFileList";
 import { CodeEditor } from "../CodeEditor";
 import { ConfirmDialog } from "../Modal";
-import { useResizable, TREE_MIN, TREE_MAX } from "../../useResizable";
+import { useResizable, TREE_MIN, TREE_MAX, EDITOR_MIN, EDITOR_MAX } from "../../useResizable";
 import { ConnScope, useConnectionState } from "../../connectionState";
 import "@xterm/xterm/css/xterm.css";
 
@@ -26,6 +26,10 @@ interface Props {
   scriptsWidth: number;
   /** Called with the final width (px) when the user finishes dragging. */
   onScriptsWidthChange: (width: number) => void;
+  /** Initial height (px) of the editor row, restored from per-connection config. */
+  editorHeight: number;
+  /** Called with the final height (px) when the user finishes dragging. */
+  onEditorHeightChange: (height: number) => void;
 }
 
 /** Scripts are stored as `.sh` workspace files (vs `.sql` for RDBMS). */
@@ -175,6 +179,8 @@ export function CliWorkspace({
   savedId,
   scriptsWidth,
   onScriptsWidthChange,
+  editorHeight,
+  onEditorHeightChange,
 }: Props) {
   const editorRef = useRef<HTMLTextAreaElement>(null);
   // Scripts list width (px); restored from per-connection config, resizable.
@@ -185,6 +191,17 @@ export function CliWorkspace({
     max: TREE_MAX,
     onChange: setWidth,
     onCommit: onScriptsWidthChange,
+  });
+  // Editor row height (px); restored from per-connection config, resizable via
+  // the horizontal handle between the editor and the terminal below it.
+  const [topHeight, setTopHeight] = useState(editorHeight);
+  const editorResize = useResizable({
+    width: topHeight,
+    min: EDITOR_MIN,
+    max: EDITOR_MAX,
+    onChange: setTopHeight,
+    onCommit: onEditorHeightChange,
+    axis: "y",
   });
   // Live PTY writers per terminal, published by each mounted CliTerminal so
   // "Run" can pipe a script into the *active* tab.
@@ -324,6 +341,22 @@ export function CliWorkspace({
     write(body);
   }
 
+  /** Pipe a script's text into *every* open terminal at once. */
+  function runScriptAll(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const body = text.endsWith("\n") ? text : text + "\n";
+    for (const t of tabs) {
+      writers.current.get(t.id)?.(body);
+    }
+  }
+
+  /** Run-on-all button: run the selection if any, else the whole script, on
+   * every open terminal. */
+  function runAllSelectionOrAll() {
+    runScriptAll(selectedText() ?? script);
+  }
+
   /** The current selection in the editor, or null if nothing is selected. */
   function selectedText(): string | null {
     const ta = editorRef.current;
@@ -362,7 +395,7 @@ export function CliWorkspace({
 
   return (
     <div className="workspace cli-workspace">
-      <div className="cli-top">
+      <div className="cli-top" style={{ height: topHeight }}>
         <div className="cli-scripts" style={{ width }}>
           <WorkspaceFileList
             files={files}
@@ -405,6 +438,15 @@ export function CliWorkspace({
               >
                 ▶ Run
               </button>
+              {tabs.length > 1 && (
+                <button
+                  title={`Run selection, or whole script, in all ${tabs.length} terminals`}
+                  disabled={!script.trim()}
+                  onClick={runAllSelectionOrAll}
+                >
+                  ⏩ Run on all
+                </button>
+              )}
             </div>
           </div>
           <CodeEditor
@@ -424,6 +466,11 @@ export function CliWorkspace({
           />
         </div>
       </div>
+      <div
+        className="pane-resizer-y"
+        onMouseDown={editorResize.onMouseDown}
+        title="Drag to resize the editor"
+      />
       <div className="cli-tabs">
         {tabs.map((t) => (
           <div
