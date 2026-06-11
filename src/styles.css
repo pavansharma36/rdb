@@ -321,7 +321,7 @@ select option:hover {
 .sidebar.collapsible:not(:hover) .new-btn,
 .sidebar.collapsible:not(:hover) .conn-name,
 .sidebar.collapsible:not(:hover) .conn-item .icon-btn,
-.sidebar.collapsible:not(:hover) .conn-item .close-x,
+.sidebar.collapsible:not(:hover) .conn-item .conn-menu,
 .sidebar.collapsible:not(:hover) .conn-list .muted,
 .sidebar.collapsible:not(:hover) .install-btn,
 .sidebar.collapsible:not(:hover) .footer-menu {
@@ -659,6 +659,26 @@ select option:hover {
   padding-top: 12px;
 }
 
+/* About dialog body: compact stack of name/version/description/links. */
+.about-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.about-dialog p {
+  margin: 0;
+}
+
+.about-dialog .about-name .logo {
+  font-size: 18px;
+}
+
+.about-dialog a {
+  color: var(--accent, #4a9eff);
+  word-break: break-all;
+}
+
 .preview-row {
   display: flex;
   justify-content: space-between;
@@ -767,8 +787,50 @@ select option:hover {
   color: var(--err);
 }
 
+/* The close button in a modal header isn't inside a `.conn-item`, so the
+ * hover-to-reveal rule above never applies — keep it always visible. */
+.modal-header .close-x {
+  opacity: 1;
+  font-size: 18px;
+  cursor: pointer;
+}
+
 .icon-btn:hover {
   color: var(--accent);
+}
+
+/* Per-connection actions popup (⋮): Edit / Delete moved out of the row. */
+.conn-menu {
+  position: relative;
+  display: flex;
+}
+
+.conn-menu-popup {
+  position: fixed;
+  min-width: 140px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  padding: 4px;
+  z-index: 100;
+}
+
+/* Keep the trigger visible while its popup is open, even without hover. */
+.conn-menu:has(.conn-menu-popup) .icon-btn {
+  opacity: 1;
+}
+
+.footer-menu-item.danger {
+  background: none;
+  border-color: transparent;
+  font-weight: normal;
+  color: var(--err);
+}
+
+.footer-menu-item.danger:hover {
+  background: var(--bg-3);
+  color: var(--err);
 }
 
 .dot {
@@ -858,6 +920,7 @@ select option:hover {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  position: relative;
 }
 
 .workspace-header {
@@ -970,7 +1033,9 @@ select option:hover {
 
 /* CLI / SSH terminal workspace.
    Row 1 (`cli-top`): scripts list + editor side by side.
-   Row 2 (`cli-terminal`): full-width terminal. */
+   Row 2 (`cli-tabs`): terminal tab bar.
+   Row 3 (`cli-terminals`): the active terminal (inactive ones are kept
+   mounted but hidden via `display:none`). */
 .cli-workspace {
   flex-direction: column;
 }
@@ -1047,10 +1112,6 @@ select option:hover {
 .cli-editor-area {
   flex: 1;
   min-height: 0;
-  resize: none;
-  border: none;
-  outline: none;
-  padding: 8px 10px;
   background: var(--bg);
   color: var(--text);
   font-family: "Cascadia Code", "JetBrains Mono", Menlo, monospace;
@@ -1058,10 +1119,81 @@ select option:hover {
   line-height: 1.5;
   tab-size: 2;
   cursor: text;
-  user-select: text;
-  -webkit-user-select: text;
   white-space: pre;
-  overflow: auto;
+}
+
+/* Terminal tab bar. Sits between the editor row and the terminal area. */
+.cli-tabs {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 4px 6px 0;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.cli-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-muted, var(--text));
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.cli-tab.active {
+  color: var(--text);
+  background: var(--bg);
+  border-color: var(--accent, var(--border));
+}
+
+.cli-tab-title {
+  pointer-events: none;
+}
+
+.cli-tab-close,
+.cli-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.6;
+}
+
+.cli-tab-close:hover,
+.cli-tab-add:hover {
+  opacity: 1;
+}
+
+.cli-tab-add {
+  align-self: center;
+  font-size: 16px;
+  padding: 2px 8px;
+  color: var(--text-muted, var(--text));
+}
+
+/* Holds all terminal tabs; the active one fills it, the rest are display:none. */
+.cli-terminals {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  position: relative;
 }
 
 .cli-terminal {
@@ -1277,6 +1409,168 @@ select option:hover {
   color: var(--muted);
 }
 
+/* Browse toolbar: paging + limit for the table-data view. Per-column filters
+   live on the column headers (see .th-funnel / .filter-popover). */
+.browse-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.browse-bar .spacer {
+  flex: 1;
+}
+
+.filter-clear-all {
+  font-size: 12px;
+  padding: 2px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.funnel-icon {
+  display: inline-block;
+  vertical-align: -1px;
+}
+
+.browse-limit {
+  width: 70px;
+  font-size: 12px;
+  padding: 3px 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+}
+
+.browse-page {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Column-header layout: the sortable label and the filter funnel sit side by
+   side; the filter popover anchors below the header. */
+.th-inner {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.th-label {
+  flex: 1;
+}
+
+.th-label.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.th-label.sortable:hover {
+  color: var(--accent);
+}
+
+.th-funnel {
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.th-funnel:hover:not(:disabled) {
+  background: var(--bg-2);
+  color: var(--text);
+}
+
+.th-funnel.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+table.grid th.filtering {
+  /* Let the popover escape the sticky header's clipped box. */
+  z-index: 5;
+  overflow: visible;
+}
+
+/* Per-column filter popover, anchored under a header. */
+.filter-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 2px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 280px;
+  padding: 10px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  /* Reset the header's typography for normal-weight controls. */
+  font-weight: 400;
+  color: var(--text);
+  white-space: normal;
+  cursor: default;
+}
+
+.filter-popover-title {
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--accent-2);
+}
+
+.filter-popover-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.filter-popover-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.filter-popover select,
+.filter-popover input,
+.filter-popover textarea {
+  font-size: 12px;
+  padding: 3px 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+}
+
+.filter-popover .filter-value {
+  flex: 1;
+  min-width: 0;
+}
+
+.filter-popover-where {
+  width: 100%;
+  resize: vertical;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  line-height: 1.4;
+}
+
+.filter-popover-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-popover-actions .spacer {
+  flex: 1;
+}
+
 .editor-hint {
   font-size: 12px;
   color: var(--muted);
@@ -1305,6 +1599,164 @@ textarea.code {
   min-height: 120px;
   resize: vertical;
   line-height: 1.5;
+}
+
+/* ── Syntax-highlighting code editor (CodeEditor.tsx) ──────────────────────
+   A transparent <textarea> overlaid on a highlighted <pre>. Both layers MUST
+   share identical typography and box metrics or the caret drifts from the
+   rendered glyphs. The wrapper also carries one of the legacy editor classes
+   (`code` for SQL, `cli-editor-area` for the CLI script editor) so it inherits
+   each editor's sizing; the variant rules below push the shared metrics down
+   onto the two layers. */
+.code-editor {
+  position: relative;
+  overflow: hidden;
+}
+
+.code-editor-highlight,
+.code-editor-input {
+  margin: 0;
+  border: 0;
+  font: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  tab-size: inherit;
+  white-space: inherit;
+  word-wrap: inherit;
+}
+
+/* The highlighted layer is positioned absolutely behind the textarea, which
+   stays in normal flow on top so it can own the native resize grip and drive
+   the container's height. The highlight ignores pointer events. */
+.code-editor-highlight {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: transparent;
+  overflow: hidden;
+}
+
+.code-editor-highlight code {
+  font: inherit;
+  background: transparent;
+  padding: 0;
+}
+
+/* The interactive layer sits on top in normal flow. Its glyphs are rendered
+   transparent (via -webkit-text-fill-color, which WKWebView honors where
+   `color: transparent` does not) so the colored layer beneath shows through;
+   the caret + selection stay visible. Being in flow, its own resize grip works
+   and it sizes the container (the absolute highlight follows via inset:0). */
+.code-editor-input {
+  position: relative;
+  display: block;
+  height: 100%;
+  width: 100%;
+  resize: none;
+  background: transparent;
+  color: var(--text);
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--text);
+  outline: none;
+  overflow: hidden;
+}
+
+.code-editor-input::placeholder {
+  -webkit-text-fill-color: var(--muted);
+  color: var(--muted);
+}
+
+/* SQL editor variant: wraps, grows vertically, resizable. The resize grip lives
+   on the in-flow textarea, which drives the container height. */
+.code-editor.code {
+  width: 100%;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.code-editor.code .code-editor-input {
+  min-height: 120px;
+  height: 120px;
+  resize: vertical;
+}
+
+.code-editor.code .code-editor-highlight,
+.code-editor.code .code-editor-input {
+  padding: 8px 10px;
+}
+
+/* CLI script editor variant: fills the pane, no-wrap with horizontal scroll. */
+.code-editor.cli-editor-area {
+  flex: 1;
+  min-height: 0;
+  white-space: pre;
+}
+
+.code-editor.cli-editor-area .code-editor-highlight {
+  overflow: auto;
+}
+
+.code-editor.cli-editor-area .code-editor-input {
+  overflow: auto;
+}
+
+.code-editor.cli-editor-area .code-editor-highlight,
+.code-editor.cli-editor-area .code-editor-input {
+  padding: 8px 10px;
+}
+
+/* highlight.js token palette mapped onto the app theme vars, so highlighting
+   follows the active [data-theme] (vs shipping a fixed hljs stylesheet). */
+.hljs {
+  color: var(--text);
+  background: transparent;
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--muted);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-meta {
+  color: var(--accent);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-symbol {
+  color: var(--ok);
+}
+.hljs-number,
+.hljs-literal {
+  color: var(--warn);
+}
+.hljs-variable,
+.hljs-template-variable,
+.hljs-attr,
+.hljs-attribute {
+  color: var(--accent-2);
+}
+.hljs-title,
+.hljs-name,
+.hljs-section,
+.hljs-type {
+  color: var(--accent-2);
+}
+.hljs-deletion {
+  color: var(--err);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: bold;
 }
 
 .status-line {
@@ -1373,6 +1825,11 @@ table.grid th {
   top: 0;
   background: var(--bg-3);
   color: var(--accent-2);
+}
+
+table.grid th .sort-ind {
+  color: var(--accent);
+  font-size: 10px;
 }
 
 table.grid td.null {
@@ -2071,6 +2528,59 @@ table.grid tr.new-row td {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Blocking loader overlay -------------------------------------------------- */
+
+.loader-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  /* Block every click underneath. */
+  pointer-events: auto;
+  cursor: wait;
+}
+
+/* App scope: covers the whole window (sidebar + workspace). Sits above the
+   collapsible sidebar (z-index: 20) and below nothing else interactive. */
+.loader-overlay--app {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+}
+
+/* Workspace scope: anchored inside `.main` (position: relative), so the
+   sidebar stays clickable and the user can switch connections. */
+.loader-overlay--workspace {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+}
+
+.loader-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 28px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.loader-message {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.loader-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: fm-spin 0.7s linear infinite;
 }
 
 .fm-error {

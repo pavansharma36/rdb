@@ -156,6 +156,57 @@ pub struct ApplyResult {
     pub deleted: u64,
 }
 
+/// One `ORDER BY` term for a browse query.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowseSort {
+    pub column: String,
+    /// `true` => `DESC`, `false` => `ASC`.
+    pub descending: bool,
+}
+
+/// One structured `WHERE` condition for a browse query: `column <op> value`.
+/// The value travels as a bound parameter `CAST`-ed to `type_name`, so it's
+/// never interpolated into SQL. `op` is one of a fixed allow-list (see
+/// [`BrowseFilter::OPS`]); `is_null`/`is_not_null` ignore `value`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowseFilter {
+    pub column: String,
+    /// SQL type used as the `CAST` target for the bound value (same role as
+    /// [`ColumnValue::type_name`]).
+    #[serde(rename = "type")]
+    pub type_name: String,
+    pub op: String,
+    #[serde(default)]
+    pub value: serde_json::Value,
+}
+
+impl BrowseFilter {
+    /// The accepted operator tokens. Both ends (TS `<select>` and the plugin)
+    /// enforce this list so no arbitrary operator text reaches SQL.
+    pub const OPS: &'static [&'static str] = &[
+        "eq", "ne", "lt", "lte", "gt", "gte", "like", "ilike", "is_null", "is_not_null",
+    ];
+}
+
+/// How to browse a table: optional structured filters (AND'd), an optional raw
+/// `WHERE` fragment (advanced, interpolated verbatim), sort terms, a row limit,
+/// and an offset for paging. An all-default spec (`limit` aside) reproduces the
+/// old `SELECT * FROM t LIMIT n` behaviour.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowseSpec {
+    #[serde(default)]
+    pub filters: Vec<BrowseFilter>,
+    #[serde(default)]
+    pub sorts: Vec<BrowseSort>,
+    pub limit: u32,
+    #[serde(default)]
+    pub offset: u32,
+    /// Raw `WHERE` fragment from the advanced box, AND'd with `filters`. Opt-in
+    /// and interpolated as-is, so the frontend must treat it as trusted input.
+    #[serde(default)]
+    pub where_sql: Option<String>,
+}
+
 #[async_trait]
 pub trait RdbmsPlugin: Send + Sync {
     async fn list_schemas(&self, conn: Arc<dyn Connection>) -> Result<Vec<Schema>>;
@@ -207,24 +258,48 @@ pub trait RdbmsPlugin: Send + Sync {
         Err(PluginError::Unsupported)
     }
 
-    /// Fetch the first `limit` rows of a table for browsing. The default builds
-    /// an ANSI `SELECT * FROM "schema"."table" LIMIT n` (double-quote-escaping
-    /// identifiers) and runs it via [`RdbmsPlugin::execute`]. Plugins on dialects
-    /// that quote differently or page differently (MySQL backticks, SQL Server
-    /// `TOP`, …) override this — keeping dialect knowledge out of the frontend.
+    /// Fetch rows of a table for browsing, per [`BrowseSpec`]. The default
+    /// builds an ANSI `SELECT * FROM "schema"."table" [WHERE ...] [ORDER BY ...]
+    /// LIMIT n OFFSET m` (double-quote-escaping identifiers) and runs it via
+    /// [`RdbmsPlugin::execute`]. Because the default has no way to bind
+    /// parameters, it supports only the raw `where_sql` fragment, sorts, and
+    /// limit/offset — structured `filters` (which carry values) require a
+    /// plugin that overrides this to bind them. Plugins on dialects that quote
+    /// or page differently (MySQL backticks, SQL Server `TOP`, …) also override,
+    /// keeping dialect knowledge out of the frontend.
     async fn browse_table(
         &self,
         conn: Arc<dyn Connection>,
         schema: &str,
         table: &str,
-        limit: u32,
+        spec: BrowseSpec,
     ) -> Result<QueryResult> {
-        let q = format!(
-            "SELECT * FROM \"{}\".\"{}\" LIMIT {}",
+        if !spec.filters.is_empty() {
+            return Err(PluginError::Unsupported);
+        }
+        let mut q = format!(
+            "SELECT * FROM \"{}\".\"{}\"",
             schema.replace('"', "\"\""),
             table.replace('"', "\"\""),
-            limit
         );
+        if let Some(w) = spec.where_sql.as_deref().map(str::trim).filter(|w| !w.is_empty()) {
+            q.push_str(&format!(" WHERE ({w})"));
+        }
+        if !spec.sorts.is_empty() {
+            let terms: Vec<String> = spec
+                .sorts
+                .iter()
+                .map(|s| {
+                    format!(
+                        "\"{}\" {}",
+                        s.column.replace('"', "\"\""),
+                        if s.descending { "DESC" } else { "ASC" }
+                    )
+                })
+                .collect();
+            q.push_str(&format!(" ORDER BY {}", terms.join(", ")));
+        }
+        q.push_str(&format!(" LIMIT {} OFFSET {}", spec.limit, spec.offset));
         // Browsing is a single SELECT, so hand back just that one result.
         Ok(self.execute(conn, &q).await?.pop().unwrap_or(QueryResult {
             columns: Vec::new(),
@@ -288,7 +363,7 @@ struct DescribeTableParams {
 struct BrowseTableParams {
     schema: String,
     table: String,
-    limit: u32,
+    spec: BrowseSpec,
 }
 
 #[derive(Deserialize)]
@@ -343,7 +418,7 @@ pub async fn dispatch_rdbms(
         }
         "rdbms.browse_table" => {
             let p: BrowseTableParams = parse(params)?;
-            to_value(plugin.browse_table(conn, &p.schema, &p.table, p.limit).await?)
+            to_value(plugin.browse_table(conn, &p.schema, &p.table, p.spec).await?)
         }
         "rdbms.execute" => {
             let p: ExecuteParams = parse(params)?;

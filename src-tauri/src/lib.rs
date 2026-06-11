@@ -127,8 +127,8 @@ pub fn run() {
             commands::pty_write,
             commands::pty_resize,
             commands::pty_close,
+            commands::pty_close_connection,
             commands::pty_snapshot,
-            commands::pty_alive,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

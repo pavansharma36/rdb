@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { api, errString } from "../../api";
-import type { ConnectionId, FileEntry } from "../../api";
+import type { ConnectionId, FileEntry, TransferStats } from "../../api";
 import { useResizable, TREE_MIN, TREE_MAX } from "../../useResizable";
+import { ConnScope, useConnectionState } from "../../connectionState";
 
 interface Props {
   connectionId: ConnectionId;
@@ -120,6 +121,7 @@ function FileIcon({ size = 48 }: { size?: number }) {
 
 export function FileManagerWorkspace({
   connectionId,
+  savedId,
   treeWidth,
   onTreeWidthChange,
 }: Props) {
@@ -132,19 +134,32 @@ export function FileManagerWorkspace({
     onCommit: onTreeWidthChange,
   });
 
-  const [currentPath, setCurrentPath] = useState("/");
-  const [entries, setEntries] = useState<FileEntry[]>([]);
+  // Session-preserved navigation/view state (see connectionState.ts): survives
+  // the unmount a connection switch causes, keyed by the stable saved-profile id.
+const scope = ConnScope(savedId, "filemanager");
+  const [currentPath, setCurrentPath] = useConnectionState(
+    scope,
+    "currentPath",
+    "/",
+  );
+  const [entries, setEntries] = useConnectionState<FileEntry[]>(
+    scope,
+    "entries",
+    [],
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [view, setView] = useState<ViewMode>("grid");
+  const [view, setView] = useConnectionState<ViewMode>(scope, "view", "grid");
 
   // Navigation history (back/forward), like a browser.
-  const [history, setHistory] = useState<string[]>(["/"]);
-  const [histIndex, setHistIndex] = useState(0);
+  const [history, setHistory] = useConnectionState<string[]>(scope, "history", [
+    "/",
+  ]);
+  const [histIndex, setHistIndex] = useConnectionState(scope, "histIndex", 0);
 
   // Places directory tree (lazy-loaded, rooted at "/").
-  const [tree, setTree] = useState<TreeNode>({
+  const [tree, setTree] = useConnectionState<TreeNode>(scope, "tree", {
     name: "/",
     path: "/",
     expanded: true,
@@ -158,13 +173,19 @@ export function FileManagerWorkspace({
   const [confirmDelete, setConfirmDelete] = useState<FileEntry[] | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
 
-  // In-progress transfer (download or upload); null when idle. `cancelDownload`
-  // is a ref so the running loop sees cancellation immediately without a
-  // re-render dependency; `cancelling` mirrors it as state for the button.
+  // In-progress transfer (download or upload); null when idle. The transfer
+  // itself runs *inside the plugin* (background task on the connection), so it
+  // survives this component unmounting on a connection switch. We poll
+  // `last_transfer_stats` for progress and reattach to a running transfer on
+  // mount. `download` mirrors the latest stats into the modal shape.
   const [download, setDownload] = useState<TransferState | null>(null);
   const [downloadNote, setDownloadNote] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
-  const cancelDownload = useRef(false);
+  // setInterval handle for the stats poll, and the modal title/destination for
+  // the current transfer (kept in refs so the poll callback, registered once,
+  // always sees the latest without re-subscribing).
+  const pollRef = useRef<number | null>(null);
+  const transferMetaRef = useRef<{ title: string; dest: string } | null>(null);
   // True while an OS file-drag is hovering the content area (drop highlight).
   const [dragOver, setDragOver] = useState(false);
 
@@ -225,6 +246,11 @@ export function FileManagerWorkspace({
 
   useEffect(() => {
     // Start in the session's home directory (writable), not "/" (often not).
+    // But if navigation state was restored from the store (connection
+    // switch-back), keep the user where they were instead of resetting home.
+    if (entries.length > 0 || currentPath !== "/") {
+      return;
+    }
     let cancelled = false;
     (async () => {
       let home = "/";
@@ -306,39 +332,32 @@ export function FileManagerWorkspace({
     };
   }, [menu]);
 
+  // Reattach to an in-progress transfer on mount (e.g. after a connection
+  // switch unmounted/remounted this workspace). The transfer runs in the plugin
+  // and keeps going regardless; if one is still active we repaint the modal and
+  // resume polling. On unmount we only stop *polling* — the transfer is left
+  // running in the plugin. Keyed on connectionId so a switch re-checks.
+  useEffect(() => {
+    let active = true;
+    api
+      .sftpLastTransferStats(connectionId)
+      .then((s) => {
+        if (!active || !s) return;
+        if (s.phase === "scanning" || s.phase === "running") {
+          // We don't know the original title/dest after a remount, so use a
+          // generic heading; progress counts still come from the live stats.
+          beginPolling("Transferring", "");
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      stopPoll();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionId]);
+
   // ── File operations ───────────────────────────────────────────────────────
-
-  async function downloadFile(entry: FileEntry) {
-    // Single-file download: pick a destination folder, then let the plugin
-    // write the file straight to local disk (same op the folder download uses).
-    if (entry.is_dir) return;
-    const dest = await openDialog({ directory: true, multiple: false });
-    if (!dest || Array.isArray(dest)) return;
-    const local = localJoin(dest, entry.name);
-
-    cancelDownload.current = false;
-    setCancelling(false);
-    setDownloadNote(null);
-    setDownload({
-      title: `Downloading “${entry.name}”`,
-      current: entry.name,
-      done: 0,
-      total: 1,
-      cancelable: true,
-    });
-    try {
-      await api.sftpDownloadFileTo(connectionId, entry.path, local);
-      setDownload(null);
-      setDownloadNote(`Downloaded “${entry.name}” to ${local}`);
-    } catch (e) {
-      setDownload(null);
-      if (cancelDownload.current) {
-        setDownloadNote(`Download of “${entry.name}” cancelled.`);
-      } else {
-        setError(errString(e));
-      }
-    }
-  }
 
   // Local path separator helper: the destination dir comes from the native
   // dialog, so it uses the host OS separator. We can't know it for sure in the
@@ -348,165 +367,139 @@ export function FileManagerWorkspace({
     return parts.filter(Boolean).join("/");
   }
 
-  /** Recursively gather every file under `dir` as { remotePath, rel } where
-   *  `rel` is the path relative to the download root (for the local mirror). */
-  async function walkFiles(
-    dir: string,
-    rel: string,
-  ): Promise<{ remotePath: string; rel: string }[]> {
-    const out: { remotePath: string; rel: string }[] = [];
-    const list = await api.sftpListDir(connectionId, dir);
-    for (const e of list) {
-      const childRel = rel ? `${rel}/${e.name}` : e.name;
-      if (e.is_dir) {
-        out.push(...(await walkFiles(e.path, childRel)));
-      } else {
-        out.push({ remotePath: e.path, rel: childRel });
-      }
-      if (cancelDownload.current) break;
+  // ── Transfer progress (poll the plugin's background job) ────────────────────
+
+  function stopPoll() {
+    if (pollRef.current !== null) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
     }
-    return out;
   }
 
-  async function downloadFolder(entry: FileEntry) {
-    // Ask where to put it.
-    const dest = await openDialog({ directory: true, multiple: false });
-    if (!dest || Array.isArray(dest)) return;
-    const destRoot = localJoin(dest, entry.name);
+  /** Apply one stats snapshot to the modal, and on a terminal phase stop polling
+   *  and show the result note. Returns true if the transfer is finished. */
+  function applyStats(s: TransferStats | null): boolean {
+    const meta = transferMetaRef.current;
+    if (!s || !meta) {
+      // No job at all: nothing in progress (e.g. first poll before start lands).
+      return false;
+    }
+    if (s.phase === "scanning" || s.phase === "running") {
+      setDownload({
+        title: meta.title,
+        current: s.phase === "scanning" ? "Scanning…" : s.current,
+        done: s.done,
+        total: s.total,
+        cancelable: true,
+      });
+      return false;
+    }
+    // Terminal phase — tear down the modal and report the outcome.
+    stopPoll();
+    setDownload(null);
+    setCancelling(false);
+    if (s.phase === "cancelled") {
+      setDownloadNote(
+        `${meta.title} cancelled after ${s.done} file${s.done === 1 ? "" : "s"}.`,
+      );
+    } else if (s.phase === "error") {
+      setError(s.error || "Transfer failed.");
+    } else {
+      setDownloadNote(
+        meta.dest
+          ? `${meta.title} — ${s.done} file${s.done === 1 ? "" : "s"} to ${meta.dest}.`
+          : `${meta.title} — ${s.done} file${s.done === 1 ? "" : "s"}.`,
+      );
+    }
+    // Uploads change the current directory's contents; refresh it.
+    fetchDir(currentPath);
+    return true;
+  }
 
-    cancelDownload.current = false;
+  /** Begin polling the plugin's transfer stats (~400ms) until terminal. Shows
+   *  the modal immediately with a scanning placeholder. */
+  function beginPolling(title: string, dest: string) {
+    transferMetaRef.current = { title, dest };
     setCancelling(false);
     setDownloadNote(null);
     setDownload({
-      title: `Downloading “${entry.name}”`,
+      title,
       current: "Scanning…",
       done: 0,
       total: 0,
       cancelable: true,
     });
-
-    let done = 0;
-    try {
-      const files = await walkFiles(entry.path, "");
-      if (cancelDownload.current) {
-        setDownload(null);
-        setDownloadNote(`Download of “${entry.name}” cancelled.`);
-        return;
-      }
-      setDownload({
-        title: `Downloading “${entry.name}”`,
-        current: "",
-        done: 0,
-        total: files.length,
-        cancelable: true,
-      });
-
-      for (const f of files) {
-        if (cancelDownload.current) break;
-        setDownload({
-          title: `Downloading “${entry.name}”`,
-          current: f.rel,
-          done,
-          total: files.length,
-          cancelable: true,
+    stopPoll();
+    pollRef.current = window.setInterval(() => {
+      api
+        .sftpLastTransferStats(connectionId)
+        .then(applyStats)
+        .catch(() => {
+          // A transient poll error shouldn't kill the modal; keep trying.
         });
-        await api.sftpDownloadFileTo(
-          connectionId,
-          f.remotePath,
-          localJoin(destRoot, f.rel),
-        );
-        done++;
-      }
+    }, 400);
+  }
 
-      setDownload(null);
-      if (cancelDownload.current) {
-        setDownloadNote(
-          `Download of “${entry.name}” cancelled after ${done} file${done === 1 ? "" : "s"}.`,
-        );
-      } else {
-        setDownloadNote(
-          `Downloaded “${entry.name}” (${done} file${done === 1 ? "" : "s"}) to ${destRoot}`,
-        );
-      }
+  async function downloadFile(entry: FileEntry) {
+    // Single-file download: pick a destination folder, then start a one-item
+    // download transfer in the plugin and poll it.
+    if (entry.is_dir) return;
+    const dest = await openDialog({ directory: true, multiple: false });
+    if (!dest || Array.isArray(dest)) return;
+    const local = localJoin(dest, entry.name);
+    try {
+      await api.sftpStartTransfer(connectionId, "download", [
+        { remote_path: entry.path, local_path: local },
+      ]);
+      beginPolling(`Downloading “${entry.name}”`, dest);
     } catch (e) {
-      setDownload(null);
-      if (cancelDownload.current) {
-        setDownloadNote(
-          `Download of “${entry.name}” cancelled after ${done} file${done === 1 ? "" : "s"}.`,
-        );
-      } else {
-        setError(errString(e));
-      }
+      setError(errString(e));
+    }
+  }
+
+  async function downloadFolder(entry: FileEntry) {
+    // Start a recursive folder download in the plugin (it walks the tree), then
+    // poll. The whole transfer lives in the plugin, so it survives a connection
+    // switch — returning to the workspace reattaches via `reattach` below.
+    const dest = await openDialog({ directory: true, multiple: false });
+    if (!dest || Array.isArray(dest)) return;
+    const destRoot = localJoin(dest, entry.name);
+    try {
+      await api.sftpStartTransfer(connectionId, "download", [
+        { remote_path: entry.path, local_path: destRoot },
+      ]);
+      beginPolling(`Downloading “${entry.name}”`, destRoot);
+    } catch (e) {
+      setError(errString(e));
     }
   }
 
   function cancelFolderDownload() {
-    cancelDownload.current = true;
     setCancelling(true);
-    // Also abort the in-flight backend request. The download loop transfers one
-    // file per call so the flag check between files is enough, but an upload
-    // delegates the whole (possibly recursive) transfer to a single plugin call
-    // — without this the modal stays up until that call finishes on its own.
-    api.cancelLastPluginCall(connectionId).catch(() => {});
+    // Cooperative: the plugin's task observes the flag between files and
+    // transitions to Cancelled; our next poll picks that up and closes the modal.
+    api.sftpCancelLastTransfer(connectionId).catch(() => {});
   }
 
   /** Upload one or more local paths (files or directories) into the current
    *  directory. Shared by the toolbar dialog and drag-and-drop. Directories are
-   *  mirrored recursively by the plugin. Shows the blocking progress modal and
-   *  supports cancel, which aborts the in-flight transfer via the backend. */
+   *  mirrored recursively by the plugin. Starts a background transfer and polls
+   *  it; supports cancel. */
   async function uploadPaths(localPaths: string[]) {
     if (localPaths.length === 0) return;
-    cancelDownload.current = false;
-    setCancelling(false);
-    setDownloadNote(null);
-
-    let done = 0; // top-level items processed
-    let files = 0; // actual files written (dirs expand to many)
+    const items = localPaths.map((localPath) => {
+      const name = localPath.split(/[/\\]/).pop() || "upload";
+      return { local_path: localPath, remote_path: joinPath(currentPath, name) };
+    });
+    const title =
+      localPaths.length === 1
+        ? "Uploading"
+        : `Uploading ${localPaths.length} items`;
     try {
-      for (const localPath of localPaths) {
-        if (cancelDownload.current) break;
-        const name = localPath.split(/[/\\]/).pop() || "upload";
-        setDownload({
-          title:
-            localPaths.length === 1
-              ? "Uploading"
-              : `Uploading ${localPaths.length} items`,
-          current: name,
-          done,
-          total: localPaths.length,
-          cancelable: true,
-        });
-        const res = await api.sftpUploadFileFrom(
-          connectionId,
-          localPath,
-          joinPath(currentPath, name),
-        );
-        files += res?.files ?? 0;
-        done++;
-      }
-      setDownload(null);
-      fetchDir(currentPath);
-      if (cancelDownload.current) {
-        setDownloadNote(
-          `Upload cancelled after ${files} file${files === 1 ? "" : "s"}.`,
-        );
-      } else if (files > 0) {
-        setDownloadNote(
-          `Uploaded ${files} file${files === 1 ? "" : "s"} to ${currentPath}`,
-        );
-      }
+      await api.sftpStartTransfer(connectionId, "upload", items);
+      beginPolling(title, currentPath);
     } catch (e) {
-      setDownload(null);
-      fetchDir(currentPath);
-      // A cancel aborts the in-flight upload, which surfaces here as an error;
-      // report it as a cancellation, not a failure.
-      if (cancelDownload.current) {
-        setDownloadNote(
-          `Upload cancelled after ${files} file${files === 1 ? "" : "s"}.`,
-        );
-      } else {
-        setError(errString(e));
-      }
+      setError(errString(e));
     }
   }
 

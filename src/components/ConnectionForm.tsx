@@ -12,6 +12,10 @@ interface ConnectionFormProps {
   existing: SavedConnection[];
   /** When editing an existing saved profile; null/undefined for a new one. */
   initial?: SavedConnection | null;
+  /** When cloning: seeds the form (type/name/config) as a NEW connection. Unlike
+   * `initial`, this does not put the form in edit mode — the type stays
+   * selectable and a fresh profile is saved. */
+  prefill?: SavedConnection | null;
   /** Persist the profile and open a live connection. Should reject on failure
    * so the form can surface the error (the profile is still saved). */
   onSaveAndConnect: (profile: SavedConnection) => Promise<void>;
@@ -38,15 +42,29 @@ export function ConnectionForm({
   error,
   existing,
   initial,
+  prefill,
   onSaveAndConnect,
 }: ConnectionFormProps) {
-  const [pluginId, setPluginId] = useState<string>(initial?.pluginId ?? "");
+  // `initial` (edit) takes precedence; otherwise `prefill` (clone) seeds the
+  // form. Only `initial` puts the form in edit mode.
+  const seed = initial ?? prefill ?? null;
+  const [pluginId, setPluginId] = useState<string>(seed?.pluginId ?? "");
   const selected = useMemo(
     () => plugins.find((p) => p.id === pluginId) ?? null,
     [plugins, pluginId],
   );
-  const [name, setName] = useState<string>(initial?.name ?? "");
-  const [values, setValues] = useState<ConnectionConfig>(initial?.config ?? {});
+  const [name, setName] = useState<string>(seed?.name ?? "");
+  // Seed values from the saved config, but layer it over the schema defaults so
+  // fields absent from an older saved config (e.g. a controller field like
+  // `mode` added after the profile was saved) still resolve their value. Without
+  // this, `show_if` conditions keyed on a missing field hide their dependents.
+  const [values, setValues] = useState<ConnectionConfig>(() => {
+    if (!seed) return {};
+    const schema = plugins.find((p) => p.id === seed.pluginId)?.config_schema;
+    return schema
+      ? { ...defaultValues(schema), ...seed.config }
+      : { ...seed.config };
+  });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "error" | "ok"; text: string } | null>(
     null,

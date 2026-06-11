@@ -4,8 +4,8 @@ use rdb_core::{
     PluginKind, Result,
 };
 use rdb_rdbms_common::{
-    downcast_conn, ApplyResult, Column, ColumnMeta, ColumnValue, ForeignKey, Index, QueryResult,
-    RdbmsPlugin, RowChanges, Schema, Table, TableKind,
+    downcast_conn, ApplyResult, BrowseFilter, BrowseSpec, Column, ColumnMeta, ColumnValue,
+    ForeignKey, Index, QueryResult, RdbmsPlugin, RowChanges, Schema, Table, TableKind,
 };
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column as _, Executor, Row, TypeInfo};
@@ -543,6 +543,58 @@ impl RdbmsPlugin for PostgresPlugin {
             .collect())
     }
 
+    async fn browse_table(
+        &self,
+        conn: Arc<dyn Connection>,
+        schema: &str,
+        table: &str,
+        spec: BrowseSpec,
+    ) -> Result<QueryResult> {
+        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        let pool = conn.pool();
+
+        let (sql, params) = build_browse(schema, table, &spec)?;
+        let start = Instant::now();
+
+        // Bind the structured-filter values as text params; the surrounding
+        // CASTs coerce them. Mirrors `run_dml`'s binding.
+        let mut q = sqlx::query(AssertSqlSafe(sql.clone()));
+        for p in &params {
+            q = q.bind(p);
+        }
+        let rows = q
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| PluginError::Backend(e.to_string()))?;
+
+        // Headers from the first row, or by describing the statement when empty
+        // (so the grid still shows columns). The describe path can't bind, but
+        // an empty result means the filters excluded everything — the column
+        // shape is independent of the bound values, so the bare SQL describes fine.
+        let columns = if let Some(first) = rows.first() {
+            columns_of(first)
+        } else {
+            match pool.describe(AssertSqlSafe(sql).into_sql_str()).await {
+                Ok(d) => d
+                    .columns
+                    .iter()
+                    .map(|c| ColumnMeta {
+                        name: c.name().to_string(),
+                        data_type: c.type_info().name().to_string(),
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            }
+        };
+        let data = rows.iter().map(row_to_json).collect();
+        Ok(QueryResult {
+            columns,
+            rows: data,
+            rows_affected: None,
+            elapsed_ms: start.elapsed().as_millis(),
+        })
+    }
+
     async fn execute(&self, conn: Arc<dyn Connection>, sql: &str) -> Result<Vec<QueryResult>> {
         let conn = downcast_conn::<PostgresConnection>(&conn)?;
         let pool = conn.pool();
@@ -705,6 +757,86 @@ fn build_delete(schema: &str, table: &str, pk: &[ColumnValue]) -> Result<(String
     Ok((sql, params))
 }
 
+/// Build the browse `SELECT * FROM s.t [WHERE ...] [ORDER BY ...] LIMIT n OFFSET m`
+/// and its bound parameters. Structured filters bind their values (via
+/// `value_expr`); the raw `where_sql` fragment, if any, is AND'd in verbatim.
+fn build_browse(schema: &str, table: &str, spec: &BrowseSpec) -> Result<(String, Vec<String>)> {
+    let mut params: Vec<String> = Vec::new();
+    let mut conds: Vec<String> = Vec::new();
+
+    for f in &spec.filters {
+        conds.push(filter_expr(f, &mut params)?);
+    }
+    if let Some(w) = spec
+        .where_sql
+        .as_deref()
+        .map(str::trim)
+        .filter(|w| !w.is_empty())
+    {
+        conds.push(format!("({w})"));
+    }
+
+    let mut sql = format!(
+        "SELECT * FROM {}.{}",
+        quote_ident(schema),
+        quote_ident(table),
+    );
+    if !conds.is_empty() {
+        sql.push_str(&format!(" WHERE {}", conds.join(" AND ")));
+    }
+    if !spec.sorts.is_empty() {
+        let terms: Vec<String> = spec
+            .sorts
+            .iter()
+            .map(|s| {
+                format!(
+                    "{} {}",
+                    quote_ident(&s.column),
+                    if s.descending { "DESC" } else { "ASC" }
+                )
+            })
+            .collect();
+        sql.push_str(&format!(" ORDER BY {}", terms.join(", ")));
+    }
+    // limit/offset are u32, so they're safe to interpolate directly.
+    sql.push_str(&format!(" LIMIT {} OFFSET {}", spec.limit, spec.offset));
+    Ok((sql, params))
+}
+
+/// Render one structured filter as a SQL condition, binding its value when the
+/// operator takes one. The operator comes from the fixed allow-list
+/// ([`BrowseFilter::OPS`]); anything else is rejected so no operator text is
+/// interpolated unchecked.
+fn filter_expr(f: &BrowseFilter, params: &mut Vec<String>) -> Result<String> {
+    let col = quote_ident(&f.column);
+    match f.op.as_str() {
+        "is_null" => Ok(format!("{col} IS NULL")),
+        "is_not_null" => Ok(format!("{col} IS NOT NULL")),
+        op => {
+            let sql_op = match op {
+                "eq" => "=",
+                "ne" => "<>",
+                "lt" => "<",
+                "lte" => "<=",
+                "gt" => ">",
+                "gte" => ">=",
+                "like" => "LIKE",
+                "ilike" => "ILIKE",
+                _ => return Err(PluginError::Config(format!("invalid filter operator: {op}"))),
+            };
+            // Reuse the edit path's value binding: CAST($n AS type). A null
+            // value with a comparison operator never matches, which is the
+            // sensible result for "= NULL" via the UI.
+            let cv = ColumnValue {
+                column: f.column.clone(),
+                type_name: f.type_name.clone(),
+                value: f.value.clone(),
+            };
+            Ok(format!("{col} {sql_op} {}", value_expr(&cv, params)?))
+        }
+    }
+}
+
 /// Quote an SQL identifier, escaping embedded double quotes.
 fn quote_ident(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
@@ -769,7 +901,6 @@ fn bind_text(v: &serde_json::Value) -> String {
 
 fn is_select(sql: &str) -> bool {
     let head = sql
-        .trim_start()
         .split_whitespace()
         .next()
         .unwrap_or("")
@@ -789,14 +920,7 @@ async fn select_result(
         .await
         .map_err(|e| PluginError::Backend(e.to_string()))?;
     let columns: Vec<ColumnMeta> = if let Some(first) = rows.first() {
-        first
-            .columns()
-            .iter()
-            .map(|c| ColumnMeta {
-                name: c.name().to_string(),
-                data_type: c.type_info().name().to_string(),
-            })
-            .collect()
+        columns_of(first)
     } else {
         match pool.describe(AssertSqlSafe(stmt).into_sql_str()).await {
             Ok(d) => d
@@ -812,6 +936,17 @@ async fn select_result(
     };
     let data = rows.iter().map(row_to_json).collect();
     Ok((columns, data))
+}
+
+/// Column metadata (name + type) for a fetched row.
+fn columns_of(row: &PgRow) -> Vec<ColumnMeta> {
+    row.columns()
+        .iter()
+        .map(|c| ColumnMeta {
+            name: c.name().to_string(),
+            data_type: c.type_info().name().to_string(),
+        })
+        .collect()
 }
 
 /// Split a SQL script into individual statements on top-level semicolons,

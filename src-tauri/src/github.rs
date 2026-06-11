@@ -169,9 +169,9 @@ fn extract_plugin_id(asset_name: &str) -> Option<String> {
                        "x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"] {
             if let Some(idx) = rest.rfind(target) {
                 let id = &rest[..idx];
-                // Remove trailing hyphen if present
-                if id.ends_with('-') {
-                    return Some(id[..id.len()-1].to_string());
+                // Strip the trailing hyphen separating id from the target triple.
+                if let Some(id) = id.strip_suffix('-') {
+                    return Some(id.to_string());
                 }
             }
         }

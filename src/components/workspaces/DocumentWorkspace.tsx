@@ -2,9 +2,12 @@ import { useEffect, useState } from "react";
 import { api, errString } from "../../api";
 import type { ConnectionId, MongoCollection, FindResult } from "../../api";
 import { useResizable, TREE_MIN, TREE_MAX } from "../../useResizable";
+import { ConnScope, useConnectionState } from "../../connectionState";
 
 interface Props {
   connectionId: ConnectionId;
+  /** Stable saved-profile id; scopes session-preserved workspace state. */
+  savedId: string;
   /** Initial width (px) of the tree panel, restored from per-connection config. */
   treeWidth: number;
   /** Called with the final width (px) when the user finishes dragging. */
@@ -13,6 +16,7 @@ interface Props {
 
 export function DocumentWorkspace({
   connectionId,
+  savedId,
   treeWidth,
   onTreeWidthChange,
 }: Props) {
@@ -25,17 +29,29 @@ export function DocumentWorkspace({
     onChange: setWidth,
     onCommit: onTreeWidthChange,
   });
+  // Session-preserved workspace state (see connectionState.ts): survives the
+  // unmount a connection switch causes, keyed by the stable saved-profile id.
+  const scope = ConnScope(savedId, "document");
   const [databases, setDatabases] = useState<string[]>([]);
-  const [openDb, setOpenDb] = useState<string | null>(null);
-  const [collections, setCollections] = useState<
-    Record<string, MongoCollection[]>
-  >({});
-  const [active, setActive] = useState<{ db: string; coll: string } | null>(
+  const [openDb, setOpenDb] = useConnectionState<string | null>(
+    scope,
+    "openDb",
     null,
   );
-  const [filter, setFilter] = useState("{}");
-  const [limit, setLimit] = useState(50);
-  const [result, setResult] = useState<FindResult | null>(null);
+  const [collections, setCollections] = useConnectionState<
+    Record<string, MongoCollection[]>
+  >(scope, "collections", {});
+  const [active, setActive] = useConnectionState<{
+    db: string;
+    coll: string;
+  } | null>(scope, "active", null);
+  const [filter, setFilter] = useConnectionState(scope, "filter", "{}");
+  const [limit, setLimit] = useConnectionState(scope, "limit", 50);
+  const [result, setResult] = useConnectionState<FindResult | null>(
+    scope,
+    "result",
+    null,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

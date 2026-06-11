@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api, errString } from "../../api";
 import type {
+  BrowseFilter,
+  BrowseSort,
+  BrowseSpec,
   Column,
   ColumnValue,
   ConnectionId,
@@ -18,6 +21,7 @@ import {
 } from "../../store";
 import { ConfirmDialog } from "../Modal";
 import { useResizable, TREE_MIN, TREE_MAX } from "../../useResizable";
+import { ConnScope, useConnectionState } from "../../connectionState";
 import { normalizeQuotes, parseSingleTable, statementAtCursor } from "./rdbms/sql";
 import {
   castType,
@@ -28,6 +32,13 @@ import {
   isLargeType,
 } from "./rdbms/columns";
 import { CellEditorModal } from "./rdbms/CellEditorModal";
+import { CodeEditor } from "../CodeEditor";
+import {
+  FilterPopover,
+  FunnelIcon,
+  type FilterRow,
+  opNeedsValue,
+} from "./rdbms/FilterPopover";
 import { SchemaTree } from "./rdbms/SchemaTree";
 import { WorkspaceFileList } from "./WorkspaceFileList";
 import { StructureTable } from "./rdbms/StructureTable";
@@ -62,7 +73,7 @@ interface EditingCell {
 /** Staged edits to existing rows: rowIndex -> columnName -> new value. */
 type Edits = Record<number, Record<string, string | null>>;
 
-/** Rows fetched when browsing a table from the tree. */
+/** Default row limit when browsing a table from the tree. */
 const BROWSE_LIMIT = 100;
 
 export function RdbmsWorkspace({
@@ -81,41 +92,102 @@ export function RdbmsWorkspace({
     onChange: setWidth,
     onCommit: onTreeWidthChange,
   });
+  // Scope for session-preserved workspace state: switching connections unmounts
+  // this component, so these fields live in a store (keyed by the stable saved
+  // profile id) and rehydrate on switch-back. See connectionState.ts.
+  const scope = ConnScope(savedId, "rdbms");
   const [schemas, setSchemas] = useState<Schema[]>([]);
   // Databases on the server (empty when the backend doesn't support listing,
   // which hides the picker) and the one currently selected.
   const [databases, setDatabases] = useState<string[]>([]);
-  const [currentDatabase, setCurrentDatabase] = useState<string | null>(
-    database ?? null,
+  const [currentDatabase, setCurrentDatabase] = useConnectionState<
+    string | null
+  >(scope, "currentDatabase", database ?? null);
+  const [openSchema, setOpenSchema] = useConnectionState<string | null>(
+    scope,
+    "openSchema",
+    null,
   );
-  const [openSchema, setOpenSchema] = useState<string | null>(null);
-  const [tables, setTables] = useState<Record<string, Table[]>>({});
+  const [tables, setTables] = useConnectionState<Record<string, Table[]>>(
+    scope,
+    "tables",
+    {},
+  );
   // Saved SQL files for this connection profile (the "SQL files" section).
   const [sqlFiles, setSqlFiles] = useState<WorkspaceFile[]>([]);
   // When non-null, the inline "new SQL file name" input is open with this draft.
   const [newSqlName, setNewSqlName] = useState<string | null>(null);
   // Name of the SQL file currently loaded in the editor (shown in its header).
-  const [activeFile, setActiveFile] = useState<string | null>(null);
+  const [activeFile, setActiveFile] = useConnectionState<string | null>(
+    scope,
+    "activeFile",
+    null,
+  );
   // Name of the SQL file awaiting inline delete confirmation, if any.
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   // Which view of a browsed table is shown: the data grid, its column
   // structure, or a generated CREATE TABLE statement.
-  const [tableView, setTableView] = useState<"data" | "structure" | "ddl">(
-    "data",
-  );
+  const [tableView, setTableView] = useConnectionState<
+    "data" | "structure" | "ddl"
+  >(scope, "tableView", "data");
   // Generated DDL for the browsed table (lazily fetched from the plugin for the
   // DDL view); null until loaded for the current table.
   const [ddlText, setDdlText] = useState<string | null>(null);
   // Indexes for the browsed table (lazily fetched for the structure view);
   // null until loaded for the current table.
   const [indexes, setIndexes] = useState<Index[] | null>(null);
-  const [activeTable, setActiveTable] = useState<string | null>(null);
-  const [sql, setSql] = useState("select 1;");
+  const [activeTable, setActiveTable] = useConnectionState<string | null>(
+    scope,
+    "activeTable",
+    null,
+  );
+  // Browse controls for the table-data view, preserved across connection
+  // switch-back like the rest of the table state. Filters/sorts re-run the
+  // browse query; offset pages through results. Filters are keyed by column
+  // name (at most one per column) since they live on the column headers.
+  const [browseFilters, setBrowseFilters] = useConnectionState<
+    Record<string, FilterRow>
+  >(scope, "browseColFilters", {});
+  const [browseSorts, setBrowseSorts] = useConnectionState<BrowseSort[]>(
+    scope,
+    "browseSorts",
+    [],
+  );
+  const [browseLimit, setBrowseLimit] = useConnectionState<number>(
+    scope,
+    "browseLimit",
+    BROWSE_LIMIT,
+  );
+  const [browseOffset, setBrowseOffset] = useConnectionState<number>(
+    scope,
+    "browseOffset",
+    0,
+  );
+  const [browseWhere, setBrowseWhere] = useConnectionState<string>(
+    scope,
+    "browseWhere",
+    "",
+  );
+  // Column whose filter popover is open (anchored to its header), or null.
+  const [openFilterCol, setOpenFilterCol] = useState<string | null>(null);
+  const [sql, setSql] = useConnectionState(scope, "sql", "select 1;");
   // Results of the last run: one entry per statement in a multi-statement
   // script. `activeResult` selects which one the grid shows.
-  const [results, setResults] = useState<QueryResult[]>([]);
-  const [activeResult, setActiveResult] = useState(0);
-  const [edit, setEdit] = useState<EditContext | null>(null);
+  const [results, setResults] = useConnectionState<QueryResult[]>(
+    scope,
+    "results",
+    [],
+  );
+  const [activeResult, setActiveResult] = useConnectionState(
+    scope,
+    "activeResult",
+    0,
+  );
+  const [edit, setEdit] = useConnectionState<EditContext | null>(
+    scope,
+    "edit",
+    null,
+  );
   const [editing, setEditing] = useState<EditingCell | null>(null);
   const [draft, setDraft] = useState("");
   // Large values (text/json/xml) edit in a modal instead of inline. `json`
@@ -131,9 +203,17 @@ export function RdbmsWorkspace({
     text: string;
   } | null>(null);
   // Staged, uncommitted changes for the table being browsed.
-  const [edits, setEdits] = useState<Edits>({});
-  const [deletes, setDeletes] = useState<Set<number>>(new Set());
-  const [newRows, setNewRows] = useState<Record<string, string>[]>([]);
+  const [edits, setEdits] = useConnectionState<Edits>(scope, "edits", {});
+  const [deletes, setDeletes] = useConnectionState<Set<number>>(
+    scope,
+    "deletes",
+    new Set(),
+  );
+  const [newRows, setNewRows] = useConnectionState<Record<string, string>[]>(
+    scope,
+    "newRows",
+    [],
+  );
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -144,6 +224,12 @@ export function RdbmsWorkspace({
 
   // The result the grid/footer/editing currently act on (the selected tab).
   const result = results[activeResult] ?? null;
+
+  // Snapshot whether state was restored from the store on this mount (vs. a
+  // fresh connection). Used to skip auto-open/auto-query that would clobber it.
+  const restoredOnMount = useRef(
+    openSchema !== null || Object.keys(tables).length > 0 || results.length > 0,
+  );
 
   useEffect(() => {
     api
@@ -271,9 +357,12 @@ export function RdbmsWorkspace({
   }
 
   /** When a connection/database has exactly one schema, expand it and load its
-   * tables automatically so the user doesn't have to click to reach them. */
+   * tables automatically so the user doesn't have to click to reach them.
+   * Skipped when tree state was restored from the store on this mount, so a
+   * connection switch-back doesn't clobber what the user had open. */
   function autoOpenSingle(list: Schema[]) {
     if (list.length !== 1) return;
+    if (restoredOnMount.current) return;
     const only = list[0].name;
     setOpenSchema(only);
     api
@@ -358,19 +447,50 @@ export function RdbmsWorkspace({
     }
   }
 
-  /** Browse a table's rows via the plugin (which builds the dialect-correct
-   * query). Mirrors `executeQuery` but keeps SQL construction out of the UI. */
-  async function browseTable(schema: string, table: string): Promise<boolean> {
+  /** Translate the per-column staged filters into wire `BrowseFilter`s,
+   * dropping incomplete ones (a value-taking op with an empty value). `cols`
+   * supplies each filter's CAST type via `castType`. */
+  function buildFilters(
+    rows: Record<string, FilterRow>,
+    cols: Column[],
+  ): BrowseFilter[] {
+    const out: BrowseFilter[] = [];
+    for (const [column, r] of Object.entries(rows)) {
+      const needsValue = opNeedsValue(r.op);
+      if (needsValue && r.value === "") continue;
+      const col = cols.find((c) => c.name === column);
+      out.push({
+        column,
+        type: col ? castType(col) : "text",
+        op: r.op,
+        value: needsValue ? r.value : null,
+      });
+    }
+    return out;
+  }
+
+  /** Browse a table's rows via the plugin (which builds the dialect-correct,
+   * parameterized query). Mirrors `executeQuery` but keeps SQL construction out
+   * of the UI. `over` overrides the spec drawn from browse state — used so a
+   * reset (e.g. picking a new table) isn't races by async state updates. */
+  async function browseTable(
+    schema: string,
+    table: string,
+    over: Partial<BrowseSpec> & { cols?: Column[] } = {},
+  ): Promise<boolean> {
+    const cols = over.cols ?? edit?.columns ?? [];
+    const spec: BrowseSpec = {
+      filters: over.filters ?? buildFilters(browseFilters, cols),
+      sorts: over.sorts ?? browseSorts,
+      limit: over.limit ?? browseLimit,
+      offset: over.offset ?? browseOffset,
+      where_sql: over.where_sql !== undefined ? over.where_sql : browseWhere,
+    };
     setBusy(true);
     setError(null);
     clearStaged();
     try {
-      const r = await api.rdbmsBrowseTable(
-        connectionId,
-        schema,
-        table,
-        BROWSE_LIMIT,
-      );
+      const r = await api.rdbmsBrowseTable(connectionId, schema, table, spec);
       setResults([r]);
       setActiveResult(0);
       return true;
@@ -382,6 +502,65 @@ export function RdbmsWorkspace({
       setBusy(false);
     }
   }
+
+  /** Re-run the browse query at the current state, resetting to the first page.
+   * Used when filters/sort/limit change. */
+  function applyBrowse(over: Partial<BrowseSpec> = {}) {
+    if (!edit) return;
+    setBrowseOffset(0);
+    void browseTable(edit.schema, edit.table, { offset: 0, ...over });
+  }
+
+  /** Page by `delta` pages (±1) through the browsed rows. */
+  function pageBy(delta: number) {
+    if (!edit) return;
+    const next = Math.max(0, browseOffset + delta * browseLimit);
+    setBrowseOffset(next);
+    void browseTable(edit.schema, edit.table, { offset: next });
+  }
+
+  /** Single-column sort by clicking a header: cycles asc → desc → none. */
+  function cycleSort(column: string) {
+    if (!edit) return;
+    const current = browseSorts.find((s) => s.column === column);
+    let next: BrowseSort[];
+    if (!current) next = [{ column, descending: false }];
+    else if (!current.descending) next = [{ column, descending: true }];
+    else next = [];
+    setBrowseSorts(next);
+    applyBrowse({ sorts: next });
+  }
+
+  /** Set (or merge into) the filter for `column`, defaulting a new one to `eq`. */
+  function updateColFilter(column: string, patch: Partial<FilterRow>) {
+    setBrowseFilters((rows) => {
+      const base: FilterRow = rows[column] ?? { op: "eq", value: "" };
+      return { ...rows, [column]: { ...base, ...patch } };
+    });
+  }
+
+  /** Drop the filter on `column`. */
+  function clearColFilter(column: string) {
+    setBrowseFilters((rows) => {
+      const next = { ...rows };
+      delete next[column];
+      return next;
+    });
+  }
+
+  /** Clear every column filter and the raw-WHERE clause, then re-browse. */
+  function clearAllFilters() {
+    setBrowseFilters({});
+    setBrowseWhere("");
+    setOpenFilterCol(null);
+    applyBrowse({ filters: [], where_sql: "" });
+  }
+
+  // Active filters shown in the bar: each effective column filter (an op that
+  // needs no value, or one with a value) plus the raw WHERE clause, if any.
+  const activeFilterCount =
+    buildFilters(browseFilters, edit?.columns ?? []).length +
+    (browseWhere.trim() ? 1 : 0);
 
   /** Reload the current view: re-browse the table when browsing one, else
    * re-run the editor SQL. */
@@ -398,8 +577,15 @@ export function RdbmsWorkspace({
     setDdlText(null);
     setIndexes(null);
     setNotice(null);
+    // Start each table with a clean browse view (no filters/sort, first page).
+    setBrowseFilters({});
+    setBrowseSorts([]);
+    setBrowseOffset(0);
+    setBrowseWhere("");
+    setOpenFilterCol(null);
+    let columns: Column[] = [];
     try {
-      const columns = await api.rdbmsDescribeTable(connectionId, schema, table);
+      columns = await api.rdbmsDescribeTable(connectionId, schema, table);
       setEdit({ schema, table, columns });
       if (!columns.some((c) => c.primary_key)) {
         setNotice(
@@ -410,7 +596,14 @@ export function RdbmsWorkspace({
       setEdit(null);
       setError(errString(e));
     }
-    await browseTable(schema, table);
+    // Pass the reset spec explicitly: the state setters above haven't applied yet.
+    await browseTable(schema, table, {
+      filters: [],
+      sorts: [],
+      offset: 0,
+      where_sql: "",
+      cols: columns,
+    });
   }
 
   /** Run the SQL in the editor by hand. The result becomes editable when the
@@ -770,11 +963,12 @@ export function RdbmsWorkspace({
           </div>
         )}
         {activeFile && (
-          <textarea
+          <CodeEditor
             className="code"
+            language="sql"
             value={sql}
             spellCheck={false}
-            onChange={(e) => setSql(e.target.value)}
+            onChange={setSql}
             onKeyDown={(e) => {
               // ⌘/Ctrl+Enter runs the selection if any, else the statement the
               // cursor is in.
@@ -800,11 +994,6 @@ export function RdbmsWorkspace({
             >
               Run
             </button>
-          )}
-          {activeFile && !busy && (
-            <span className="editor-hint">
-              ⌘/Ctrl+Enter runs the selection, or the statement at the cursor
-            </span>
           )}
           {busy && (
             <>
@@ -834,7 +1023,62 @@ export function RdbmsWorkspace({
               </button>
             </>
           )}
+          {activeFile && !busy && (
+              <span className="editor-hint">
+              ⌘/Ctrl+Enter runs the selection, or the statement at the cursor
+            </span>
+          )}
         </div>
+        {editable && tableView === "data" && (
+          <div className="browse-bar">
+            {activeFilterCount > 0 && (
+              <button
+                className="filter-clear-all"
+                disabled={busy || saving}
+                title="Clear all column filters and the raw WHERE clause"
+                onClick={clearAllFilters}
+              >
+                <FunnelIcon /> {activeFilterCount} active · clear ✕
+              </button>
+            )}
+            <span className="spacer" />
+            <span className="browse-page">
+              {browseOffset + 1}–{browseOffset + (result?.rows.length ?? 0)}
+            </span>
+            <button
+              title="Previous page"
+              disabled={busy || saving || browseOffset === 0}
+              onClick={() => pageBy(-1)}
+            >
+              ‹ Prev
+            </button>
+            <button
+              title="Next page"
+              disabled={
+                busy || saving || (result?.rows.length ?? 0) < browseLimit
+              }
+              onClick={() => pageBy(1)}
+            >
+              Next ›
+            </button>
+            <input
+              className="browse-limit"
+              type="number"
+              min={1}
+              title="Rows per page"
+              value={browseLimit}
+              disabled={busy || saving}
+              onChange={(e) => {
+                const n = Math.max(1, Number(e.target.value) || 1);
+                setBrowseLimit(n);
+              }}
+              onBlur={() => applyBrowse({ limit: browseLimit })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") applyBrowse({ limit: browseLimit });
+              }}
+            />
+          </div>
+        )}
         {notice && <div className="status-line">{notice}</div>}
         {error && <div className="status-line error">{error}</div>}
         {results.length > 1 && (
@@ -904,14 +1148,88 @@ export function RdbmsWorkspace({
                   {editable && <th className="gutter" />}
                   {result.columns.map((c, i) => {
                     const meta = colMeta(c.name);
+                    // Header sorting and filtering apply only when browsing a
+                    // table (so the result maps back to a real column), not for
+                    // ad-hoc SQL results.
+                    const interactive = !!activeTable && !!meta;
+                    const sort = browseSorts.find((s) => s.column === c.name);
+                    const filt = browseFilters[c.name];
+                    // "On" only when the filter actually constrains: a no-value
+                    // op (IS NULL) or one with a value entered.
+                    const filtered =
+                      !!filt && (!opNeedsValue(filt.op) || filt.value !== "");
+                    const open = openFilterCol === c.name;
                     return (
                       <th
                         key={i}
                         title={meta ? meta.data_type : c.data_type}
-                        className={meta?.primary_key ? "pk" : ""}
+                        className={
+                          (meta?.primary_key ? "pk" : "") +
+                          (interactive ? " interactive" : "") +
+                          (open ? " filtering" : "")
+                        }
                       >
-                        {meta?.primary_key && <span className="key">🔑 </span>}
-                        {c.name}
+                        <div className="th-inner">
+                          <span
+                            className={interactive ? "th-label sortable" : "th-label"}
+                            onClick={
+                              interactive ? () => cycleSort(c.name) : undefined
+                            }
+                          >
+                            {meta?.primary_key && <span className="key">🔑 </span>}
+                            {c.name}
+                            {sort && (
+                              <span className="sort-ind">
+                                {sort.descending ? " ▼" : " ▲"}
+                              </span>
+                            )}
+                          </span>
+                          {interactive && (
+                            <button
+                              className={
+                                "th-funnel" + (filtered ? " on" : "")
+                              }
+                              title={filtered ? "Edit filter" : "Filter column"}
+                              disabled={busy || saving}
+                              onClick={() =>
+                                setOpenFilterCol((cur) =>
+                                  cur === c.name ? null : c.name,
+                                )
+                              }
+                            >
+                              <FunnelIcon />
+                            </button>
+                          )}
+                        </div>
+                        {open && (
+                          <FilterPopover
+                            column={c.name}
+                            filter={filt}
+                            where={browseWhere}
+                            disabled={busy || saving}
+                            onChange={(patch) => updateColFilter(c.name, patch)}
+                            onWhereChange={setBrowseWhere}
+                            onApply={() => {
+                              setOpenFilterCol(null);
+                              applyBrowse();
+                            }}
+                            onClear={() => {
+                              clearColFilter(c.name);
+                              setOpenFilterCol(null);
+                              applyBrowse({
+                                filters: buildFilters(
+                                  Object.fromEntries(
+                                    Object.entries(browseFilters).filter(
+                                      ([k]) => k !== c.name,
+                                    ),
+                                  ),
+                                  edit?.columns ?? [],
+                                ),
+                              });
+                            }}
+                            onClose={() => setOpenFilterCol(null)}
+                          />
+                        )}
                       </th>
                     );
                   })}
