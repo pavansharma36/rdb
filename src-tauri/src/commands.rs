@@ -128,20 +128,22 @@ pub async fn install_github_plugin(
 
 type Pty<'a> = State<'a, Arc<PtyManager>>;
 
-/// Spawn the CLI plugin's terminal process in a PTY for a connection. The host
-/// asks the owning plugin (via the `cli.spawn_spec` op) how to launch it, then
-/// runs that command in a PTY and forwards output as Tauri events on
-/// `pty://output/<uuid>`. All backend-specific command knowledge lives in the
-/// plugin, so the host stays generic.
+/// Spawn the CLI plugin's terminal process in a PTY for a connection, keyed by
+/// `terminal_id` (one connection may own several terminal tabs). The host asks
+/// the owning plugin (via the `cli.spawn_spec` op) how to launch it, then runs
+/// that command in a PTY and forwards output as Tauri events on
+/// `pty://output/<terminal_id>`. All backend-specific command knowledge lives in
+/// the plugin, so the host stays generic.
 #[tauri::command]
 pub async fn pty_spawn(
     pty: Pty<'_>,
     manager: Manager<'_>,
     app: tauri::AppHandle,
     connection_id: ConnectionId,
+    terminal_id: String,
 ) -> Result<(), String> {
     // Already running? (idempotent — e.g. React StrictMode double-mount.)
-    if crate::pty::is_alive(pty.inner().clone(), connection_id).await {
+    if crate::pty::is_alive(pty.inner().clone(), terminal_id.clone()).await {
         return Ok(());
     }
     // Ask the plugin that owns this connection for its spawn spec.
@@ -151,48 +153,52 @@ pub async fn pty_spawn(
         .map_err(err)?;
     let spec: rdb_core::PtySpawnSpec =
         serde_json::from_value(spec_value).map_err(|e| e.to_string())?;
-    crate::pty::spawn(pty.inner().clone(), app, connection_id, spec).await
+    crate::pty::spawn(pty.inner().clone(), app, connection_id, terminal_id, spec).await
 }
 
-/// Write bytes to the PTY (keystrokes / paste from the terminal).
+/// Write bytes to a terminal's PTY (keystrokes / paste from the terminal).
 #[tauri::command]
 pub async fn pty_write(
     pty: Pty<'_>,
-    connection_id: ConnectionId,
+    terminal_id: String,
     data: Vec<u8>,
 ) -> Result<(), String> {
-    crate::pty::write(pty.inner().clone(), connection_id, data).await
+    crate::pty::write(pty.inner().clone(), terminal_id, data).await
 }
 
-/// Notify the PTY of a terminal resize.
+/// Notify a terminal's PTY of a resize.
 #[tauri::command]
 pub async fn pty_resize(
     pty: Pty<'_>,
-    connection_id: ConnectionId,
+    terminal_id: String,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    crate::pty::resize(pty.inner().clone(), connection_id, cols, rows).await
+    crate::pty::resize(pty.inner().clone(), terminal_id, cols, rows).await
 }
 
-/// Close and drop the PTY for a connection.
+/// Close and drop a single terminal's PTY.
 #[tauri::command]
-pub async fn pty_close(pty: Pty<'_>, connection_id: ConnectionId) -> Result<(), String> {
-    crate::pty::close(pty.inner().clone(), connection_id).await
+pub async fn pty_close(pty: Pty<'_>, terminal_id: String) -> Result<(), String> {
+    crate::pty::close(pty.inner().clone(), terminal_id).await
 }
 
-/// Retained scrollback (recent output) for a connection's PTY, so a freshly
+/// Close and drop every terminal PTY owned by a connection (explicit teardown
+/// on disconnect / delete).
+#[tauri::command]
+pub async fn pty_close_connection(
+    pty: Pty<'_>,
+    connection_id: ConnectionId,
+) -> Result<(), String> {
+    crate::pty::close_connection(pty.inner().clone(), connection_id).await
+}
+
+/// Retained scrollback (recent output) for a terminal's PTY, so a freshly
 /// (re)mounted terminal can repaint its history. Empty if no live PTY.
 #[tauri::command]
 pub async fn pty_snapshot(
     pty: Pty<'_>,
-    connection_id: ConnectionId,
+    terminal_id: String,
 ) -> Result<Vec<u8>, String> {
-    crate::pty::snapshot(pty.inner().clone(), connection_id).await
-}
-
-/// Whether a live PTY exists for this connection.
-#[tauri::command]
-pub async fn pty_alive(pty: Pty<'_>, connection_id: ConnectionId) -> Result<bool, String> {
-    Ok(crate::pty::is_alive(pty.inner().clone(), connection_id).await)
+    crate::pty::snapshot(pty.inner().clone(), terminal_id).await
 }

@@ -12,9 +12,12 @@ import { OverviewTab } from "./rabbitmq/OverviewTab";
 import { QueuesTab } from "./rabbitmq/QueuesTab";
 import { ExchangesTab } from "./rabbitmq/ExchangesTab";
 import { ConnectionsTab } from "./rabbitmq/ConnectionsTab";
+import { ConnScope, useConnectionState } from "../../connectionState";
 
 interface Props {
   connectionId: ConnectionId;
+  /** Stable saved-profile id; scopes session-preserved workspace state. */
+  savedId: string;
 }
 
 type Tab = "overview" | "queues" | "exchanges" | "connections";
@@ -33,9 +36,12 @@ const REFRESH_OPTIONS = [
   { label: "10s", ms: 10000 },
 ];
 
-export function RabbitMqWorkspace({ connectionId }: Props) {
-  const [tab, setTab] = useState<Tab>("overview");
-  const [refreshMs, setRefreshMs] = useState(0);
+export function RabbitMqWorkspace({ connectionId, savedId }: Props) {
+  // The active tab + refresh interval persist across connection switches (tab
+  // data itself is refetched on tab change, so it isn't stored).
+  const scope = ConnScope(savedId, "rabbitmq");
+  const [tab, setTab] = useConnectionState<Tab>(scope, "tab", "overview");
+  const [refreshMs, setRefreshMs] = useConnectionState(scope, "refreshMs", 0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 

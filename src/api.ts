@@ -184,6 +184,45 @@ export interface QueryResult {
   elapsed_ms: number;
 }
 
+/** Accepted browse-filter operators (mirrors `BrowseFilter::OPS` in Rust).
+ * `is_null`/`is_not_null` ignore the value. */
+export type BrowseOp =
+  | "eq"
+  | "ne"
+  | "lt"
+  | "lte"
+  | "gt"
+  | "gte"
+  | "like"
+  | "ilike"
+  | "is_null"
+  | "is_not_null";
+
+/** One `ORDER BY` term for browsing a table. */
+export interface BrowseSort {
+  column: string;
+  descending: boolean;
+}
+
+/** One structured `WHERE` condition: `column <op> value`. The value is sent as
+ * a bound parameter CAST to `type`, so it's never interpolated into SQL. */
+export interface BrowseFilter {
+  column: string;
+  type: string;
+  op: BrowseOp;
+  value: unknown;
+}
+
+/** How to browse a table: structured filters (AND'd), sort terms, a row limit,
+ * an offset for paging, and an optional raw `WHERE` fragment (advanced). */
+export interface BrowseSpec {
+  filters: BrowseFilter[];
+  sorts: BrowseSort[];
+  limit: number;
+  offset: number;
+  where_sql?: string | null;
+}
+
 // --- Document (MongoDB) ---------------------------------------------------
 
 export interface MongoCollection {
@@ -310,6 +349,34 @@ export interface FileEntry {
   permissions: number;
 }
 
+/** Direction of a background transfer. */
+export type TransferKind = "upload" | "download";
+
+/** One file/dir to transfer. For an upload, `local_path` is the source; for a
+ *  download, `remote_path` is. A directory is mirrored recursively. */
+export interface TransferItem {
+  local_path: string;
+  remote_path: string;
+}
+
+/** Lifecycle of a background transfer job (mirrors `JobPhase` in the plugin). */
+export type TransferPhase =
+  | "scanning"
+  | "running"
+  | "done"
+  | "cancelled"
+  | "error";
+
+/** Progress snapshot of the connection's current/last transfer (mirrors
+ *  `TransferStats` in the plugin). `total` is 0 while still scanning. */
+export interface TransferStats {
+  phase: TransferPhase;
+  done: number;
+  total: number;
+  current: string;
+  error: string | null;
+}
+
 // --- Commands -------------------------------------------------------------
 
 /** Forward an opaque capability call to the plugin owning the connection. */
@@ -383,18 +450,18 @@ export const api = {
   cancelLastPluginCall: (connectionId: ConnectionId) =>
     invoke<void>("cancel_last_plugin_call", { connectionId }),
 
-  /** Fetch the first `limit` rows of a table; the plugin builds the
-   * dialect-correct query (quoting + row limit). */
+  /** Fetch rows of a table per a browse spec (filters, sort, limit, paging);
+   * the plugin builds the dialect-correct query, binding filter values. */
   rdbmsBrowseTable: (
     connectionId: ConnectionId,
     schema: string,
     table: string,
-    limit: number,
+    spec: BrowseSpec,
   ) =>
     pluginCall<QueryResult>(connectionId, "rdbms.browse_table", {
       schema,
       table,
-      limit,
+      spec,
     }),
 
   rdbmsApplyChanges: (
@@ -504,40 +571,33 @@ export const api = {
   sftpListDir: (connectionId: ConnectionId, path: string) =>
     pluginCall<FileEntry[]>(connectionId, "filemanager.list_dir", { path }),
 
-  sftpStat: (connectionId: ConnectionId, path: string) =>
-    pluginCall<FileEntry>(connectionId, "filemanager.stat", { path }),
-
-  sftpReadFile: (connectionId: ConnectionId, path: string) =>
-    pluginCall<string>(connectionId, "filemanager.read_file", { path }),
-
-  /** Read a remote file and write it straight to `local_path` on disk (the
-   *  plugin runs locally, so bytes never cross the JSON pipe). */
-  sftpDownloadFileTo: (
+  /** Start an upload or download as a background task *inside the plugin*. Runs
+   *  independent of the workspace component, so it survives a connection switch;
+   *  the frontend polls `sftpLastTransferStats` and can `sftpCancelLastTransfer`.
+   *  One transfer at a time per connection — rejects if one is already running.
+   *  A directory item is mirrored recursively by the plugin. */
+  sftpStartTransfer: (
     connectionId: ConnectionId,
-    remote_path: string,
-    local_path: string,
+    kind: TransferKind,
+    items: TransferItem[],
   ) =>
-    pluginCall<null>(connectionId, "filemanager.download_file_to", {
-      remote_path,
-      local_path,
+    pluginCall<null>(connectionId, "filemanager.start_transfer", {
+      kind,
+      items,
     }),
 
-  /** Upload a local path to the remote via SFTP. If `local_path` is a
-   *  directory, its whole tree is mirrored. Returns the number of files
-   *  written. Bytes never cross the JSON pipe (inverse of sftpDownloadFileTo). */
-  sftpUploadFileFrom: (
-    connectionId: ConnectionId,
-    local_path: string,
-    remote_path: string,
-  ) =>
-    pluginCall<{ files: number }>(
+  /** Progress of the connection's current/last transfer, or null if none has
+   *  run. Cheap to poll. */
+  sftpLastTransferStats: (connectionId: ConnectionId) =>
+    pluginCall<TransferStats | null>(
       connectionId,
-      "filemanager.upload_file_from",
-      { local_path, remote_path },
+      "filemanager.last_transfer_stats",
+      {},
     ),
 
-  sftpWriteFile: (connectionId: ConnectionId, path: string, data_base64: string) =>
-    pluginCall<null>(connectionId, "filemanager.write_file", { path, data_base64 }),
+  /** Cooperatively cancel the current transfer (observed between files). */
+  sftpCancelLastTransfer: (connectionId: ConnectionId) =>
+    pluginCall<null>(connectionId, "filemanager.cancel_last_transfer", {}),
 
   sftpDelete: (connectionId: ConnectionId, path: string) =>
     pluginCall<null>(connectionId, "filemanager.delete", { path }),
@@ -559,43 +619,55 @@ export function errString(e: unknown): string {
 // ---------------------------------------------------------------------------
 // PTY (CLI / SSH workspace)
 // ---------------------------------------------------------------------------
+//
+// A CLI connection can host several terminal tabs, so PTYs are keyed by a
+// frontend-minted `terminalId` (a UUID), not the connection id. `ptySpawn`
+// still needs the connection id to route the `cli.spawn_spec` query to the
+// owning plugin; everything else addresses a terminal directly.
 
-/** Spawn the CLI plugin's terminal process in a PTY for a connection. The host
- * asks the owning plugin how to launch it (`cli.spawn_spec`), so no config is
- * sent from here. Idempotent: a no-op if the PTY is already running. */
-export function ptySpawn(connectionId: ConnectionId): Promise<void> {
-  return invoke("pty_spawn", { connectionId });
+/** Spawn the CLI plugin's terminal process in a PTY for `terminalId`. The host
+ * asks the owning plugin how to launch it (`cli.spawn_spec`, routed by
+ * `connectionId`), so no config is sent from here. Idempotent: a no-op if the
+ * terminal's PTY is already running. */
+export function ptySpawn(
+  connectionId: ConnectionId,
+  terminalId: string,
+): Promise<void> {
+  return invoke("pty_spawn", { connectionId, terminalId });
 }
 
-/** Send raw bytes (keystrokes / paste) to the PTY. */
+/** Send raw bytes (keystrokes / paste) to a terminal's PTY. */
 export function ptyWrite(
-  connectionId: ConnectionId,
+  terminalId: string,
   data: number[],
 ): Promise<void> {
-  return invoke("pty_write", { connectionId, data });
+  return invoke("pty_write", { terminalId, data });
 }
 
-/** Notify the PTY of a terminal resize. */
+/** Notify a terminal's PTY of a resize. */
 export function ptyResize(
-  connectionId: ConnectionId,
+  terminalId: string,
   cols: number,
   rows: number,
 ): Promise<void> {
-  return invoke("pty_resize", { connectionId, cols, rows });
+  return invoke("pty_resize", { terminalId, cols, rows });
 }
 
-/** Close and drop the PTY for a connection. */
-export function ptyClose(connectionId: ConnectionId): Promise<void> {
-  return invoke("pty_close", { connectionId });
+/** Close and drop a single terminal's PTY. */
+export function ptyClose(terminalId: string): Promise<void> {
+  return invoke("pty_close", { terminalId });
 }
 
-/** Retained scrollback (recent output bytes) for a connection's PTY, so a
+/** Close and drop every terminal PTY owned by a connection (teardown on
+ * disconnect / delete). */
+export function ptyCloseConnection(
+  connectionId: ConnectionId,
+): Promise<void> {
+  return invoke("pty_close_connection", { connectionId });
+}
+
+/** Retained scrollback (recent output bytes) for a terminal's PTY, so a
  * remounted terminal can repaint its history. Empty if no live PTY. */
-export function ptySnapshot(connectionId: ConnectionId): Promise<number[]> {
-  return invoke("pty_snapshot", { connectionId });
-}
-
-/** Whether a live PTY (ssh session) exists for this connection. */
-export function ptyAlive(connectionId: ConnectionId): Promise<boolean> {
-  return invoke("pty_alive", { connectionId });
+export function ptySnapshot(terminalId: string): Promise<number[]> {
+  return invoke("pty_snapshot", { terminalId });
 }

@@ -2,17 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { listen } from "@tauri-apps/api/event";
-import { ptySpawn, ptyWrite, ptyResize, ptySnapshot } from "../../api";
+import { ptySpawn, ptyWrite, ptyResize, ptySnapshot, ptyClose } from "../../api";
 import type { ConnectionId } from "../../api";
 import {
+  genId,
   listWorkspaceFiles,
   saveWorkspaceFile,
   deleteWorkspaceFile,
   type WorkspaceFile,
 } from "../../store";
 import { WorkspaceFileList } from "./WorkspaceFileList";
+import { CodeEditor } from "../CodeEditor";
 import { ConfirmDialog } from "../Modal";
 import { useResizable, TREE_MIN, TREE_MAX } from "../../useResizable";
+import { ConnScope, useConnectionState } from "../../connectionState";
 import "@xterm/xterm/css/xterm.css";
 
 interface Props {
@@ -28,42 +31,42 @@ interface Props {
 /** Scripts are stored as `.sh` workspace files (vs `.sql` for RDBMS). */
 const SCRIPT_EXT = "sh";
 
-export function CliWorkspace({
+/** One terminal tab: a frontend-minted PTY id + its display title. */
+interface TerminalTab {
+  id: string;
+  title: string;
+}
+
+/** A single terminal tab's live xterm bound to one PTY.
+ *
+ * The ssh PTY lives in the Tauri host (PtyManager) keyed by `terminalId` and
+ * outlives this component, so the session survives unmount/remount (switching
+ * connections or — because inactive tabs are hidden, not unmounted — switching
+ * tabs). On mount we (idempotently) ensure the PTY is running, subscribe to its
+ * output, and replay the host's retained scrollback. On unmount we only tear
+ * down the xterm + listener — never the PTY (closed explicitly via the tab's ×
+ * or on disconnect).
+ *
+ * Inactive tabs are kept mounted but hidden (`display:none`); xterm can't
+ * measure a hidden element, so we re-fit + resize the PTY whenever the tab
+ * becomes active again.
+ */
+function CliTerminal({
   connectionId,
-  savedId,
-  scriptsWidth,
-  onScriptsWidthChange,
-}: Props) {
+  terminalId,
+  active,
+  registerWriter,
+}: {
+  connectionId: ConnectionId;
+  terminalId: string;
+  active: boolean;
+  /** Publish this terminal's PTY writer so the parent can route "Run" to it. */
+  registerWriter: (terminalId: string, write: ((text: string) => void) | null) => void;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const editorRef = useRef<HTMLTextAreaElement>(null);
-  // Scripts list width (px); restored from per-connection config, resizable.
-  const [width, setWidth] = useState(scriptsWidth);
-  const scriptsResize = useResizable({
-    width,
-    min: TREE_MIN,
-    max: TREE_MAX,
-    onChange: setWidth,
-    onCommit: onScriptsWidthChange,
-  });
-  // The PTY writer is the live terminal: "Run" pipes a script into ssh's stdin.
-  const writeToPty = useRef<(text: string) => void>(() => {});
+  const fitRef = useRef<FitAddon | null>(null);
+  const termRef = useRef<Terminal | null>(null);
 
-  // Saved scripts for this profile, the editor buffer, and the active file.
-  const [files, setFiles] = useState<WorkspaceFile[]>([]);
-  const [script, setScript] = useState("");
-  const [activeFile, setActiveFile] = useState<string | null>(null);
-  const [newName, setNewName] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
-
-  // ----- Terminal lifecycle -----
-  //
-  // The ssh PTY lives in the Tauri host (PtyManager) and outlives this
-  // component, so the session survives unmount/remount (switching connections).
-  // On mount we (idempotently) ensure the PTY is running, subscribe to its
-  // output, and replay the host's retained scrollback so the terminal repaints
-  // its history. On unmount we only tear down the xterm + listener — never the
-  // PTY. The session is closed only on explicit disconnect (see App.disconnect,
-  // which calls ptyClose).
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -77,20 +80,22 @@ export function CliWorkspace({
     term.loadAddon(fit);
     term.open(containerRef.current);
     fit.fit();
+    fitRef.current = fit;
+    termRef.current = term;
 
     const onData = term.onData((data) => {
       const bytes = Array.from(new TextEncoder().encode(data));
-      ptyWrite(connectionId, bytes).catch(() => {});
+      ptyWrite(terminalId, bytes).catch(() => {});
     });
 
-    // Expose a writer so "Run" can pipe a script's text into the PTY.
-    writeToPty.current = (text: string) => {
+    // Expose a writer so "Run" can pipe a script's text into this PTY.
+    registerWriter(terminalId, (text: string) => {
       const bytes = Array.from(new TextEncoder().encode(text));
-      ptyWrite(connectionId, bytes).catch(() => {});
-    };
+      ptyWrite(terminalId, bytes).catch(() => {});
+    });
 
     let disposed = false;
-    const eventName = `pty://output/${connectionId}`;
+    const eventName = `pty://output/${terminalId}`;
     let unlisten: (() => void) | undefined;
 
     // Subscribe to live output first, then replay scrollback, so we never miss
@@ -105,8 +110,8 @@ export function CliWorkspace({
         }
         unlisten = fn;
         // Ensure the PTY exists (idempotent), then repaint retained history.
-        return ptySpawn(connectionId)
-          .then(() => ptySnapshot(connectionId))
+        return ptySpawn(connectionId, terminalId)
+          .then(() => ptySnapshot(terminalId))
           .then((bytes) => {
             if (!disposed && bytes.length) {
               term.write(new Uint8Array(bytes));
@@ -118,8 +123,10 @@ export function CliWorkspace({
       });
 
     const ro = new ResizeObserver(() => {
+      // A hidden tab has zero size; skip so xterm doesn't collapse to 1 col.
+      if (!containerRef.current?.clientHeight) return;
       fit.fit();
-      ptyResize(connectionId, term.cols, term.rows).catch(() => {});
+      ptyResize(terminalId, term.cols, term.rows).catch(() => {});
     });
     ro.observe(containerRef.current);
 
@@ -129,12 +136,126 @@ export function CliWorkspace({
       unlisten?.();
       ro.disconnect();
       term.dispose();
-      writeToPty.current = () => {};
+      fitRef.current = null;
+      termRef.current = null;
+      registerWriter(terminalId, null);
       // Intentionally NOT closing the PTY here: the host keeps the ssh session
-      // alive so a remount (or switching back) reattaches to it.
+      // alive so a remount (switching tabs/connections) reattaches to it.
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Becoming active: the element was display:none so xterm couldn't measure it.
+  // Re-fit and tell the PTY the new size, and focus for typing.
+  useEffect(() => {
+    if (!active) return;
+    const term = termRef.current;
+    const fit = fitRef.current;
+    if (!term || !fit) return;
+    // Defer to after the element is laid out (display flips this same frame).
+    const t = setTimeout(() => {
+      fit.fit();
+      ptyResize(terminalId, term.cols, term.rows).catch(() => {});
+      term.focus();
+    }, 0);
+    return () => clearTimeout(t);
+  }, [active, terminalId]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="cli-terminal"
+      style={active ? undefined : { display: "none" }}
+    />
+  );
+}
+
+export function CliWorkspace({
+  connectionId,
+  savedId,
+  scriptsWidth,
+  onScriptsWidthChange,
+}: Props) {
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  // Scripts list width (px); restored from per-connection config, resizable.
+  const [width, setWidth] = useState(scriptsWidth);
+  const scriptsResize = useResizable({
+    width,
+    min: TREE_MIN,
+    max: TREE_MAX,
+    onChange: setWidth,
+    onCommit: onScriptsWidthChange,
+  });
+  // Live PTY writers per terminal, published by each mounted CliTerminal so
+  // "Run" can pipe a script into the *active* tab.
+  const writers = useRef<Map<string, (text: string) => void>>(new Map());
+  const registerWriter = (
+    terminalId: string,
+    write: ((text: string) => void) | null,
+  ) => {
+    if (write) writers.current.set(terminalId, write);
+    else writers.current.delete(terminalId);
+  };
+
+  // Terminal tabs + the active one. Stored in the session state store so they
+  // survive the workspace unmount/remount that happens on every connection
+  // switch (the PTYs themselves are kept alive by the host); see
+  // connectionState.ts. Seed one tab on first mount so behaviour matches the
+  // old single-terminal workspace.
+  const scope = ConnScope(savedId, "cli");
+  const [tabs, setTabs] = useConnectionState<TerminalTab[]>(scope, "terminals", []);
+  const [activeTab, setActiveTab] = useConnectionState<string | null>(
+    scope,
+    "activeTerminal",
+    null,
+  );
+  // Monotonic counter for terminal titles ("Terminal N"). Persisted so numbers
+  // always increase across adds — deriving the number from the current tab
+  // count would reuse a number after a tab in the middle is closed.
+  const [nextNo, setNextNo] = useConnectionState<number>(scope, "nextTerminalNo", 1);
+  useEffect(() => {
+    if (tabs.length === 0) {
+      const id = genId();
+      setTabs([{ id, title: "Terminal 1" }]);
+      setActiveTab(id);
+      setNextNo(2);
+    } else if (!activeTab || !tabs.some((t) => t.id === activeTab)) {
+      setActiveTab(tabs[0].id);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function addTab() {
+    const id = genId();
+    setTabs((prev) => [...prev, { id, title: `Terminal ${nextNo}` }]);
+    setNextNo((n) => n + 1);
+    setActiveTab(id);
+  }
+
+  function closeTab(id: string) {
+    ptyClose(id).catch(() => {});
+    const idx = tabs.findIndex((t) => t.id === id);
+    const next = tabs.filter((t) => t.id !== id);
+    setTabs(next);
+    // If we closed the active tab, fall back to a neighbour.
+    if (activeTab === id) {
+      const neighbour = next[idx] ?? next[idx - 1] ?? next[0] ?? null;
+      setActiveTab(neighbour ? neighbour.id : null);
+    }
+  }
+
+  // Saved scripts for this profile, the editor buffer, and the active file.
+  // The editor buffer + active file persist across connection switches; see
+  // connectionState.ts.
+  const [files, setFiles] = useState<WorkspaceFile[]>([]);
+  const [script, setScript] = useConnectionState(scope, "script", "");
+  const [activeFile, setActiveFile] = useConnectionState<string | null>(
+    scope,
+    "activeFile",
+    null,
+  );
+  const [newName, setNewName] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   // ----- Saved scripts -----
   useEffect(() => {
@@ -192,13 +313,15 @@ export function CliWorkspace({
     setPendingDelete(null);
   }
 
-  /** Pipe a script's text into the SSH terminal (with a trailing newline so the
-   * shell executes the final line). */
+  /** Pipe a script's text into the active terminal (with a trailing newline so
+   * the shell executes the final line). */
   function runScript(text: string) {
     const trimmed = text.trim();
     if (!trimmed) return;
+    const write = activeTab ? writers.current.get(activeTab) : undefined;
+    if (!write) return;
     const body = text.endsWith("\n") ? text : text + "\n";
-    writeToPty.current(body);
+    write(body);
   }
 
   /** The current selection in the editor, or null if nothing is selected. */
@@ -276,7 +399,7 @@ export function CliWorkspace({
             <div className="cli-editor-actions">
               <button
                 className="primary"
-                title="Run selection, or whole script (Cmd/Ctrl+Enter runs the current line)"
+                title="Run selection, or whole script, in the active terminal (Cmd/Ctrl+Enter runs the current line)"
                 disabled={!script.trim()}
                 onClick={runSelectionOrAll}
               >
@@ -284,13 +407,14 @@ export function CliWorkspace({
               </button>
             </div>
           </div>
-          <textarea
-            ref={editorRef}
+          <CodeEditor
+            textareaRef={editorRef}
             className="cli-editor-area"
+            language="bash"
             value={script}
             placeholder="# Write a shell script, then Run to pipe it into the SSH session…"
             spellCheck={false}
-            onChange={(e) => setScript(e.target.value)}
+            onChange={setScript}
             onKeyDown={(e) => {
               if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                 e.preventDefault();
@@ -300,7 +424,43 @@ export function CliWorkspace({
           />
         </div>
       </div>
-      <div ref={containerRef} className="cli-terminal" />
+      <div className="cli-tabs">
+        {tabs.map((t) => (
+          <div
+            key={t.id}
+            className={"cli-tab" + (t.id === activeTab ? " active" : "")}
+            onClick={() => setActiveTab(t.id)}
+          >
+            <span className="cli-tab-title">{t.title}</span>
+            {tabs.length > 1 && (
+              <button
+                className="cli-tab-close"
+                title="Close terminal"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeTab(t.id);
+                }}
+              >
+                ×
+              </button>
+            )}
+          </div>
+        ))}
+        <button className="cli-tab-add" title="New terminal" onClick={addTab}>
+          +
+        </button>
+      </div>
+      <div className="cli-terminals">
+        {tabs.map((t) => (
+          <CliTerminal
+            key={t.id}
+            connectionId={connectionId}
+            terminalId={t.id}
+            active={t.id === activeTab}
+            registerWriter={registerWriter}
+          />
+        ))}
+      </div>
       {pendingDelete && (
         <ConfirmDialog
           title="Delete script"

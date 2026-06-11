@@ -4,7 +4,13 @@ import type { PluginInfo, ConnectionId } from "../api";
 import type { SavedConnection } from "../store";
 import { pluginLogo } from "../pluginLogos";
 import { THEMES } from "../theme";
+import { Modal } from "./Modal";
+import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { getVersion } from '@tauri-apps/api/app'; // v2 Import
+import pkg from "../../package.json";
+
+/** Project home (from package.json) — opened by Help and shown in About. */
+const REPO_URL = pkg.homepage;
 
 
 interface SidebarProps {
@@ -26,6 +32,7 @@ interface SidebarProps {
   onSelect: (profile: SavedConnection) => void;
   onNew: () => void;
   onEdit: (id: string) => void;
+  onClone: (id: string) => void;
   onDelete: (id: string) => void;
   onDisconnect: (savedId: string) => void;
   onInstallPlugin: () => void;
@@ -47,6 +54,7 @@ export function Sidebar({
   onSelect,
   onNew,
   onEdit,
+  onClone,
   onDelete,
   onDisconnect,
   onInstallPlugin,
@@ -59,7 +67,19 @@ export function Sidebar({
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // Saved-profile id whose per-connection actions popup (⋮) is open, or null.
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  // Viewport coords (right/top, px) to anchor the open popup. The popup is
+  // position:fixed so it escapes the scrollable .conn-list (which would
+  // otherwise clip it and add a scrollbar).
+  const [menuPos, setMenuPos] = useState<{ right: number; top: number } | null>(
+    null,
+  );
+  const connMenuRef = useRef<HTMLDivElement>(null);
+
   const [version, setVersion] = useState('');
+  // When true, the About dialog is shown.
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   useEffect(() => {
     // getVersion returns a Promise <string>
@@ -78,6 +98,27 @@ export function Sidebar({
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, [menuOpen]);
+
+  // Dismiss an open per-connection actions popup on any outside click. The
+  // popup is position:fixed, so also close it on scroll (it wouldn't follow the
+  // row) — captured so a scroll anywhere, including inside .conn-list, fires.
+  useEffect(() => {
+    if (openMenuId === null) return;
+    function onClick(e: MouseEvent) {
+      if (connMenuRef.current && !connMenuRef.current.contains(e.target as Node)) {
+        setOpenMenuId(null);
+      }
+    }
+    function onScroll() {
+      setOpenMenuId(null);
+    }
+    document.addEventListener("mousedown", onClick);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [openMenuId]);
 
   return (
     <aside
@@ -154,26 +195,67 @@ export function Sidebar({
                   ⏏
                 </button>
               )}
-              <button
-                className="icon-btn"
-                title="Edit connection"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit(s.id);
-                }}
+              <div
+                className="conn-menu"
+                ref={openMenuId === s.id ? connMenuRef : undefined}
               >
-                ✎
-              </button>
-              <button
-                className="close-x"
-                title="Delete connection"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(s.id);
-                }}
-              >
-                ×
-              </button>
+                <button
+                  className="icon-btn"
+                  title="More"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (openMenuId === s.id) {
+                      setOpenMenuId(null);
+                      return;
+                    }
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setMenuPos({
+                      right: window.innerWidth - r.right,
+                      top: r.bottom + 4,
+                    });
+                    setOpenMenuId(s.id);
+                  }}
+                >
+                  ⋮
+                </button>
+                {openMenuId === s.id && menuPos && (
+                  <div
+                    className="conn-menu-popup"
+                    style={{ right: menuPos.right, top: menuPos.top }}
+                  >
+                    <button
+                      className="footer-menu-item"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenMenuId(null);
+                        onEdit(s.id);
+                      }}
+                    >
+                      ✎ Edit
+                    </button>
+                    <button
+                      className="footer-menu-item"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenMenuId(null);
+                        onClone(s.id);
+                      }}
+                    >
+                      ⧉ Clone
+                    </button>
+                    <button
+                      className="footer-menu-item danger"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenMenuId(null);
+                        onDelete(s.id);
+                      }}
+                    >
+                      × Delete
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           );
         })}
@@ -229,10 +311,60 @@ export function Sidebar({
               >
                 Check for updates
               </button>
+              <button
+                className="footer-menu-item"
+                onClick={() => {
+                  setMenuOpen(false);
+                  openExternal(REPO_URL).catch(() => {});
+                }}
+              >
+                ? Help
+              </button>
+              <button
+                className="footer-menu-item"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setAboutOpen(true);
+                }}
+              >
+                ⓘ About
+              </button>
             </div>
           )}
         </div>
       </div>
+      {aboutOpen && (
+        <Modal title="About rdb" onClose={() => setAboutOpen(false)}>
+          <div className="about-dialog">
+            <p className="about-name">
+              <span className="logo">rdb</span>{" "}
+              <span className="muted">client</span>
+            </p>
+            <p>
+              Version{" "}
+              <strong>
+                {channel === "nightly" ? `${version} (nightly)` : `v${version}`}
+              </strong>
+            </p>
+            <p className="muted">
+              A cross-platform desktop client for relational databases, document
+              stores, and message brokers.
+            </p>
+            <p>
+              <a
+                href={REPO_URL}
+                onClick={(e) => {
+                  e.preventDefault();
+                  openExternal(REPO_URL).catch(() => {});
+                }}
+              >
+                {REPO_URL}
+              </a>
+            </p>
+            <p className="muted">Licensed under MIT OR Apache-2.0.</p>
+          </div>
+        </Modal>
+      )}
     </aside>
   );
 }

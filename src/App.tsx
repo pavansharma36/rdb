@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, errString, ptyClose } from "./api";
+import { api, errString, ptyCloseConnection } from "./api";
 import type { PluginInfo, ConnectionId, PluginKind } from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { InstallPluginDialog } from "./components/InstallPluginDialog";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ConfirmDialog } from "./components/Modal";
+import { useLoader, WorkspaceLoaderSlot } from "./components/Loader";
+import { clearConnectionState } from "./connectionState";
 import { checkForUpdate, type UpdateInfo } from "./updater";
 import { RdbmsWorkspace } from "./components/workspaces/RdbmsWorkspace";
 import { DocumentWorkspace } from "./components/workspaces/DocumentWorkspace";
@@ -13,7 +15,7 @@ import { RabbitMqWorkspace } from "./components/workspaces/RabbitMqWorkspace";
 import { CliWorkspace } from "./components/workspaces/CliWorkspace";
 import { FileManagerWorkspace } from "./components/workspaces/FileManagerWorkspace";
 import type { SavedConnection } from "./store";
-import { loadConnections, saveConnections, upsert, remove } from "./store";
+import { loadConnections, saveConnections, upsert, remove, genId } from "./store";
 import { loadConfig, saveConfig } from "./store";
 import type { AppConfig } from "./store";
 import { applyTheme, resolveTheme } from "./theme";
@@ -37,6 +39,7 @@ export interface OpenConnection {
 }
 
 export function App() {
+  const loader = useLoader();
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   // Persisted connection profiles (survive app restarts).
   const [saved, setSaved] = useState<SavedConnection[]>([]);
@@ -62,6 +65,9 @@ export function App() {
   const [sidebarCollapsible, setSidebarCollapsible] = useState(false);
   // Saved-profile id pending a delete confirmation (null = no prompt shown).
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  // A clone draft seeding the new-connection form (config of a source profile
+  // with a fresh id and "<name> clone" name); null when not cloning.
+  const [cloneDraft, setCloneDraft] = useState<SavedConnection | null>(null);
 
   useEffect(() => {
     api
@@ -166,21 +172,30 @@ export function App() {
     // If this profile already had a live connection (e.g. editing it), close
     // the stale one so we don't leak a backend connection.
     const prevLive = open.find((o) => o.savedId === profile.id);
-    if (prevLive) {
-      try {
-        await ptyClose(prevLive.id);
-        await api.closeConnection(prevLive.id);
-      } catch {
-        // Best effort.
+    loader.show({ message: "Connecting…", scope: "app" });
+    try {
+      if (prevLive) {
+        try {
+          await ptyCloseConnection(prevLive.id);
+          await api.closeConnection(prevLive.id);
+        } catch {
+          // Best effort.
+        }
+        // Reconnecting after an edit (e.g. a different database/host): the old
+        // workspace state may no longer apply, so start the new session fresh.
+        clearConnectionState(profile.id);
       }
+      const id = await api.openConnection(profile.pluginId, profile.config);
+      const conn = toOpen(profile, id);
+      setOpen((os) => [...os.filter((o) => o.savedId !== profile.id), conn]);
+      setActiveId(id);
+      setCreating(false);
+      setEditingId(null);
+      setCloneDraft(null);
+      setConnectError(null);
+    } finally {
+      loader.hide();
     }
-    const id = await api.openConnection(profile.pluginId, profile.config);
-    const conn = toOpen(profile, id);
-    setOpen((os) => [...os.filter((o) => o.savedId !== profile.id), conn]);
-    setActiveId(id);
-    setCreating(false);
-    setEditingId(null);
-    setConnectError(null);
   }
 
   /** Connect a saved profile from the sidebar (or focus it if already open). */
@@ -193,6 +208,7 @@ export function App() {
       return;
     }
     setConnectError(null);
+    loader.show({ message: "Connecting…", scope: "app" });
     try {
       const id = await api.openConnection(profile.pluginId, profile.config);
       const conn = toOpen(profile, id);
@@ -205,6 +221,8 @@ export function App() {
       setConnectError(errString(e));
       setEditingId(profile.id);
       setCreating(false);
+    } finally {
+      loader.hide();
     }
   }
 
@@ -213,22 +231,26 @@ export function App() {
     const live = open.find((o) => o.savedId === savedId);
     if (!live) return;
     try {
-      // Close the ssh PTY too (no-op for non-CLI connections); the host keeps
-      // it alive across UI unmounts, so disconnect is the explicit teardown.
-      await ptyClose(live.id);
+      // Close every ssh PTY tab too (no-op for non-CLI connections); the host
+      // keeps them alive across UI unmounts, so disconnect is the explicit
+      // teardown.
+      await ptyCloseConnection(live.id);
       await api.closeConnection(live.id);
     } catch {
       // Best effort — drop it locally regardless.
     }
     setOpen((os) => os.filter((o) => o.id !== live.id));
     setActiveId((cur) => (cur === live.id ? null : cur));
+    // Closing the connection ends its session, so drop its preserved workspace
+    // state — a later reconnect starts fresh. (Switching connections keeps it.)
+    clearConnectionState(savedId);
   }
 
   async function deleteSaved(id: string) {
     const live = open.find((o) => o.savedId === id);
     if (live) {
       try {
-        await ptyClose(live.id);
+        await ptyCloseConnection(live.id);
         await api.closeConnection(live.id);
       } catch {
         // Best effort.
@@ -238,6 +260,8 @@ export function App() {
     }
     persist(remove(saved, id));
     setEditingId((cur) => (cur === id ? null : cur));
+    // The profile is gone; discard any preserved workspace state for it.
+    clearConnectionState(id);
   }
 
   function renderWorkspace(conn: OpenConnection) {
@@ -262,12 +286,19 @@ export function App() {
           <DocumentWorkspace
             key={conn.id}
             connectionId={conn.id}
+            savedId={conn.savedId}
             treeWidth={treeWidthFor(conn.savedId, TREE_DEFAULT)}
             onTreeWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
           />
         );
       case "rabbitmq":
-        return <RabbitMqWorkspace key={conn.id} connectionId={conn.id} />;
+        return (
+          <RabbitMqWorkspace
+            key={conn.id}
+            connectionId={conn.id}
+            savedId={conn.savedId}
+          />
+        );
       case "cli": {
         // The ssh PTY lives in the host and survives this component
         // unmounting, so the workspace can mount/unmount like any other; it
@@ -396,11 +427,29 @@ export function App() {
           setCreating(true);
           setEditingId(null);
           setActiveId(null);
+          setCloneDraft(null);
           setConnectError(null);
         }}
         onEdit={(id) => {
           setEditingId(id);
           setCreating(false);
+          setCloneDraft(null);
+          setConnectError(null);
+        }}
+        onClone={(id) => {
+          const src = saved.find((s) => s.id === id);
+          if (!src) return;
+          // Seed a brand-new connection form with the source's settings and a
+          // "<name> clone" name; a fresh id so it saves as a separate profile.
+          setCloneDraft({
+            id: genId(),
+            name: `${src.name} clone`,
+            pluginId: src.pluginId,
+            config: { ...src.config },
+          });
+          setCreating(true);
+          setEditingId(null);
+          setActiveId(null);
           setConnectError(null);
         }}
         onDelete={(id) => setPendingDelete(id)}
@@ -415,13 +464,15 @@ export function App() {
         style={sidebarCollapsible ? { display: "none" } : undefined}
       />
       <main className="main">
+        <WorkspaceLoaderSlot />
         {showForm ? (
           <ConnectionForm
-            key={editingId ?? (creating ? "new" : "default")}
+            key={editingId ?? (cloneDraft ? `clone-${cloneDraft.id}` : creating ? "new" : "default")}
             plugins={plugins}
             error={formError}
             existing={saved}
             initial={editingProfile}
+            prefill={cloneDraft}
             onSaveAndConnect={saveAndConnect}
           />
         ) : (
