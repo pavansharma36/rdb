@@ -123,6 +123,7 @@ impl Plugin for SshPlugin {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| PluginError::Config("user is required".into()))?;
         let _ = (host, user);
+        tracing::info!("ssh connection configured for {user}@{host}");
         Ok(Arc::new(SshConnection { config: cfg }))
     }
 
@@ -143,6 +144,7 @@ impl Plugin for SshPlugin {
         let port = cfg.get("port").and_then(|v| v.as_u64()).unwrap_or(22) as u16;
 
         let addr = format!("{host}:{port}");
+        tracing::info!("ssh reachability test to {addr}");
         // Resolve + connect with a bounded timeout so an unreachable host fails
         // fast instead of hanging the test.
         let connect = tokio::net::TcpStream::connect(&addr);
@@ -226,6 +228,10 @@ fn build_spawn_spec(cfg: &ConnectionConfig) -> Result<PtySpawnSpec> {
 
     args.push(format!("{user}@{host}"));
 
+    tracing::info!(
+        "built ssh spawn spec for {user}@{host}:{port} (auth '{auth_mode}', password auto-answer: {})",
+        prompt_response.is_some()
+    );
     Ok(PtySpawnSpec {
         program: "ssh".into(),
         args,

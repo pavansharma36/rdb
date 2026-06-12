@@ -113,6 +113,7 @@ pub fn run() {
             commands::list_github_plugins,
             commands::preview_github_plugin,
             commands::install_github_plugin,
+            commands::uninstall_plugin,
             commands::app_channel,
             update::check_update,
             update::install_update,

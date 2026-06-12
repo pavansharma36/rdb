@@ -43,7 +43,8 @@ struct Manifest {
 /// tell whether a newer release exists. All plugins share one release tag, so
 /// the tag does not identify the plugin and is not used for staleness: for
 /// `stable` we compare `version`, for `nightly` (whose version is a commit
-/// count) we compare the release's `published_at`.
+/// count) we compare the binary asset's `updated_at` — the release's own
+/// `published_at` is frozen because `plugins-latest` is updated in place.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InstallSource {
@@ -53,9 +54,15 @@ struct InstallSource {
     channel: String,
     /// The installed plugin's version at install time.
     version: String,
-    /// The release's publish timestamp (ISO-8601 UTC); drives nightly compares.
+    /// The release's publish timestamp (ISO-8601 UTC). Frozen for the rolling
+    /// `plugins-latest` tag; kept as a fallback for plugins installed before
+    /// `asset_updated_at` was recorded.
     #[serde(default)]
     published_at: Option<String>,
+    /// The installed binary asset's `updated_at` (ISO-8601 UTC); GitHub bumps
+    /// it on re-upload, so it drives nightly update detection.
+    #[serde(default)]
+    asset_updated_at: Option<String>,
 }
 
 /// A discovered plugin: its advertised info plus the resolved executable path.
@@ -97,6 +104,11 @@ impl PluginProcess {
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| format!("failed to spawn plugin {}: {e}", executable.display()))?;
+        tracing::info!(
+            "spawned plugin process {} (pid {:?})",
+            executable.display(),
+            child.id()
+        );
 
         let mut stdin = child.stdin.take().expect("stdin piped");
         let stdout = child.stdout.take().expect("stdout piped");
@@ -169,6 +181,14 @@ impl PluginProcess {
             }
             alive_r.store(false, Ordering::SeqCst);
             let mut p = pending_r.lock().await;
+            let dropped = p.len();
+            if dropped > 0 {
+                tracing::warn!(
+                    "plugin process exited with {dropped} in-flight request(s) pending"
+                );
+            } else {
+                tracing::info!("plugin process stdout closed (process exited)");
+            }
             for (_, tx) in p.drain() {
                 let _ = tx.send(Err(RpcError {
                     kind: "backend".into(),
@@ -357,6 +377,7 @@ impl PluginManager {
             if p.is_alive() {
                 return Ok(p.clone());
             }
+            tracing::warn!("plugin '{plugin_id}' process is dead; respawning");
             procs.remove(plugin_id);
         }
         let executable = {
@@ -402,16 +423,20 @@ impl PluginManager {
         proc.request("connect", json!({ "connectionId": id, "config": config }))
             .await?;
         self.routes.lock().await.insert(id, plugin_id.to_string());
+        tracing::info!("opened connection {id:?} on plugin '{plugin_id}'");
         Ok(id)
     }
 
     pub async fn close_connection(&self, id: ConnectionId) -> Result<(), PluginError> {
         let plugin_id = self.routes.lock().await.remove(&id);
         if let Some(plugin_id) = plugin_id {
+            tracing::info!("closing connection {id:?} on plugin '{plugin_id}'");
             // Best-effort: if the process is gone the connection is already gone.
             if let Some(proc) = self.processes.lock().await.get(&plugin_id).cloned() {
                 let _ = proc.request("close", json!({ "connectionId": id })).await;
             }
+        } else {
+            tracing::debug!("close_connection for unknown connection {id:?} (no-op)");
         }
         Ok(())
     }
@@ -434,6 +459,7 @@ impl PluginManager {
         // Record this call as the connection's cancellable in-flight request, so
         // `cancel` can target it; clear it once the call settles.
         let id = proc.reserve_id();
+        tracing::debug!("plugin_call '{op}' (plugin '{plugin_id}', conn {connection_id:?}, req {id})");
         self.in_flight
             .lock()
             .await
@@ -442,10 +468,13 @@ impl PluginManager {
             .request_with_id(
                 id,
                 "call",
-                json!({ "connectionId": connection_id, "op": op, "params": params }),
+                json!({ "connectionId": connection_id, "op": &op, "params": params }),
             )
             .await;
         self.in_flight.lock().await.remove(&connection_id);
+        if let Err(e) = &res {
+            tracing::warn!("plugin_call '{op}' failed (plugin '{plugin_id}', req {id}): {e}");
+        }
         res
     }
 
@@ -457,6 +486,7 @@ impl PluginManager {
         let Some((plugin_id, id)) = target else {
             return Ok(());
         };
+        tracing::info!("cancelling in-flight req {id} for connection {connection_id:?} (plugin '{plugin_id}')");
         let proc = self.process(&plugin_id).await?;
         proc.request("cancel", json!({ "id": id })).await?;
         Ok(())
@@ -559,6 +589,9 @@ impl PluginManager {
         let actual = github::sha256_hex(&bytes);
         if let Some(expected) = &expected_sha {
             if !actual.eq_ignore_ascii_case(expected) {
+                tracing::warn!(
+                    "checksum mismatch installing from {repo}@{tag}: expected {expected}, got {actual}"
+                );
                 return Err(format!(
                     "checksum mismatch: expected {expected}, downloaded {actual}"
                 ));
@@ -581,8 +614,10 @@ impl PluginManager {
             ));
         }
 
-        // Record install provenance (channel from the tag, plus the release's
-        // publish date) so the installer can later detect a newer release.
+        // Record install provenance (channel from the tag, the release's publish
+        // date, and the asset's updated_at) so the installer can later detect a
+        // newer release. For nightly, asset_updated_at is the freshness signal.
+        let asset_updated_at = asset.updated_at.clone();
         let source = github::is_plugins_release(&release.tag_name).map(|(channel, _)| {
             InstallSource {
                 repo: repo.to_string(),
@@ -590,6 +625,7 @@ impl PluginManager {
                 channel: channel.as_str().to_string(),
                 version: info.version.clone(),
                 published_at: release.published_at.clone(),
+                asset_updated_at: asset_updated_at.clone(),
             }
         });
 
@@ -619,6 +655,63 @@ impl PluginManager {
         tracing::info!("installed plugin '{}' from {repo}@{tag}", info.id);
         Ok(info)
     }
+
+    /// Uninstall a plugin: stop its process (if running), drop it from the
+    /// in-memory registry, and delete its manifest and executable from the
+    /// plugins dir. Refuses if the plugin has open connections, so a live
+    /// workspace isn't yanked out from under the user. Only files inside the
+    /// plugins dir are deleted; an absolute executable path pointing elsewhere
+    /// (e.g. a dev symlink) is left alone. Idempotent for an unknown id.
+    pub async fn uninstall(&self, plugin_id: &str) -> Result<(), String> {
+        // Guard against a path-escaping id reaching `join` below.
+        if plugin_id.is_empty()
+            || plugin_id == ".."
+            || plugin_id.contains('/')
+            || plugin_id.contains('\\')
+        {
+            return Err(format!("invalid plugin id: {plugin_id:?}"));
+        }
+
+        // Refuse while connections route to this plugin — closing them is the
+        // user's call, not a side effect of uninstall.
+        if self
+            .routes
+            .lock()
+            .await
+            .values()
+            .any(|p| p == plugin_id)
+        {
+            return Err(format!(
+                "plugin '{plugin_id}' has open connections; close them first"
+            ));
+        }
+
+        // Drop the registry entry; capture the executable path to delete it.
+        let executable = self.plugins.write().unwrap().remove(plugin_id).map(|p| p.executable);
+
+        // Kill the running process, if any (kill_on_drop fires when the last
+        // Arc is dropped here).
+        self.processes.lock().await.remove(plugin_id);
+
+        // Delete the manifest.
+        let manifest_path = self.plugins_dir.join(format!("{plugin_id}.plugin.json"));
+        if manifest_path.exists() {
+            std::fs::remove_file(&manifest_path)
+                .map_err(|e| format!("failed to remove manifest: {e}"))?;
+        }
+
+        // Delete the executable, but only if it lives inside the plugins dir —
+        // leave manually-placed/symlinked dev binaries elsewhere untouched.
+        if let Some(exe) = executable {
+            if exe.starts_with(&self.plugins_dir) && exe.exists() {
+                std::fs::remove_file(&exe)
+                    .map_err(|e| format!("failed to remove executable: {e}"))?;
+            }
+        }
+
+        tracing::info!("uninstalled plugin '{plugin_id}'");
+        Ok(())
+    }
 }
 
 /// Compute the install/update status of an available release `pr` against the
@@ -640,16 +733,28 @@ fn status_for(
             (Some(_), Some(_)) => PluginStatus::UpToDate,
             _ => PluginStatus::Unknown,
         },
-        // Nightly: no version in the tag; compare release publish timestamps
-        // (ISO-8601 UTC sorts lexicographically).
-        github::Channel::Nightly => match (
-            pr.published_at,
-            source.as_ref().and_then(|s| s.published_at.as_deref()),
-        ) {
-            (Some(avail), Some(inst)) if avail > inst => PluginStatus::UpdateAvailable,
-            (Some(_), Some(_)) => PluginStatus::UpToDate,
-            _ => PluginStatus::Unknown,
-        },
+        // Nightly: no version in the tag, and the release's `published_at` is
+        // frozen because `plugins-latest` is updated in place. Compare the
+        // binary asset's `updated_at` (which GitHub bumps on re-upload). Fall
+        // back to `published_at` for plugins installed before we recorded the
+        // asset timestamp. (ISO-8601 UTC sorts lexicographically.)
+        github::Channel::Nightly => {
+            let (avail, inst) = match (
+                pr.asset_updated_at,
+                source.as_ref().and_then(|s| s.asset_updated_at.as_deref()),
+            ) {
+                (Some(a), Some(i)) => (Some(a), Some(i)),
+                _ => (
+                    pr.published_at,
+                    source.as_ref().and_then(|s| s.published_at.as_deref()),
+                ),
+            };
+            match (avail, inst) {
+                (Some(avail), Some(inst)) if avail > inst => PluginStatus::UpdateAvailable,
+                (Some(_), Some(_)) => PluginStatus::UpToDate,
+                _ => PluginStatus::Unknown,
+            }
+        }
     }
 }
 
@@ -763,6 +868,40 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[tokio::test]
+    async fn uninstall_removes_manifest_and_executable() {
+        let dir = std::env::temp_dir().join("rdb_pm_test_uninstall");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = dir.join("x.plugin.json");
+        let exe = dir.join("x-bin");
+        std::fs::write(&exe, b"#!/bin/sh\n").unwrap();
+        std::fs::write(&manifest, manifest_json(PROTOCOL_VERSION, "./x-bin")).unwrap();
+
+        let mgr = PluginManager::discover(&dir, None);
+        assert_eq!(mgr.list_plugins().len(), 1);
+
+        mgr.uninstall("x").await.unwrap();
+        assert!(mgr.list_plugins().is_empty());
+        assert!(!manifest.exists(), "manifest should be deleted");
+        assert!(!exe.exists(), "executable should be deleted");
+
+        // Idempotent: uninstalling an unknown id is a no-op success.
+        mgr.uninstall("x").await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn uninstall_rejects_path_escaping_id() {
+        let dir = std::env::temp_dir().join("rdb_pm_test_uninstall_guard");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mgr = PluginManager::discover(&dir, None);
+        for bad in ["", "..", "a/b", "a\\b"] {
+            assert!(mgr.uninstall(bad).await.is_err(), "should reject {bad:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn status_for_covers_all_cases() {
         use github::{Asset, Channel, PluginRelease};
@@ -770,6 +909,7 @@ mod tests {
             name: "bin".into(),
             browser_download_url: "u".into(),
             size: 1,
+            ..Default::default()
         };
         let none: Option<InstallSource> = None;
 
@@ -780,6 +920,7 @@ mod tests {
             channel: Channel::Stable,
             version: Some("0.2.0".into()),
             published_at: None,
+            asset_updated_at: None,
             asset: &asset,
         };
         assert!(matches!(status_for(&stable, None), PluginStatus::NotInstalled));
@@ -797,13 +938,15 @@ mod tests {
             PluginStatus::Unknown
         ));
 
-        // Nightly: published-date compare.
+        // Nightly fallback: no asset_updated_at on either side -> compare the
+        // release published_at (legacy installs).
         let nightly = PluginRelease {
             id: "p".into(),
             tag: "p-latest",
             channel: Channel::Nightly,
             version: None,
             published_at: Some("2026-02-01T00:00:00Z"),
+            asset_updated_at: None,
             asset: &asset,
         };
         let older = Some(InstallSource {
@@ -826,6 +969,44 @@ mod tests {
         assert!(matches!(
             status_for(&nightly, Some(("x", &none))),
             PluginStatus::Unknown
+        ));
+
+        // Nightly preferred path: both sides carry asset_updated_at, which is
+        // what actually changes per build on the rolling `plugins-latest` tag.
+        let nightly_asset = PluginRelease {
+            id: "p".into(),
+            tag: "p-latest",
+            channel: Channel::Nightly,
+            version: None,
+            // published_at frozen (same on both sides) -> proves we key off
+            // the asset timestamp, not the release date.
+            published_at: Some("2026-02-01T00:00:00Z"),
+            asset_updated_at: Some("2026-03-10T00:00:00Z"),
+            asset: &asset,
+        };
+        let asset_older = Some(InstallSource {
+            published_at: Some("2026-02-01T00:00:00Z".into()),
+            asset_updated_at: Some("2026-03-01T00:00:00Z".into()),
+            ..Default::default()
+        });
+        let asset_same = Some(InstallSource {
+            published_at: Some("2026-02-01T00:00:00Z".into()),
+            asset_updated_at: Some("2026-03-10T00:00:00Z".into()),
+            ..Default::default()
+        });
+        assert!(matches!(
+            status_for(&nightly_asset, Some(("x", &asset_older))),
+            PluginStatus::UpdateAvailable
+        ));
+        assert!(matches!(
+            status_for(&nightly_asset, Some(("x", &asset_same))),
+            PluginStatus::UpToDate
+        ));
+        // Available has asset_updated_at but the install predates it -> fall
+        // back to published_at (here both equal -> up to date).
+        assert!(matches!(
+            status_for(&nightly_asset, Some(("x", &same))),
+            PluginStatus::UpToDate
         ));
     }
 }

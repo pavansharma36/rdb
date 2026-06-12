@@ -138,6 +138,7 @@ pub async fn spawn(
 
     let event_name = format!("pty://output/{}", terminal_id);
     let reader_writer = writer.clone();
+    let reader_terminal_id = terminal_id.clone();
     let scrollback: Arc<std::sync::Mutex<Scrollback>> =
         Arc::new(std::sync::Mutex::new(Scrollback::default()));
     let reader_scrollback = scrollback.clone();
@@ -171,6 +172,8 @@ pub async fn spawn(
                 }
             }
         }
+        // Reader returned EOF/error: the child's PTY closed (process exited).
+        tracing::info!("pty reader for terminal {reader_terminal_id} ended (process exited)");
     });
 
     let handle = PtyHandle {
@@ -188,7 +191,10 @@ pub async fn spawn(
         .routes
         .lock()
         .await
-        .insert(terminal_id, connection_id);
+        .insert(terminal_id.clone(), connection_id);
+    tracing::info!(
+        "pty spawned for terminal {terminal_id} (connection {connection_id:?})"
+    );
     Ok(())
 }
 
@@ -250,6 +256,7 @@ pub async fn resize(
 
 pub async fn close(manager: Arc<PtyManager>, terminal_id: String) -> Result<(), String> {
     if let Some(mut handle) = manager.handles.lock().await.remove(&terminal_id) {
+        tracing::info!("closing pty for terminal {terminal_id}");
         // Kill the process; dropping the master alone leaves it running.
         let _ = handle.child.kill();
         let _ = handle.child.wait();
@@ -278,5 +285,6 @@ pub async fn close_connection(
     for tid in victims {
         let _ = close(manager.clone(), tid).await;
     }
+    tracing::debug!("closed all ptys for connection {connection_id:?}");
     Ok(())
 }

@@ -298,10 +298,15 @@ impl Plugin for SftpPlugin {
             .unwrap_or("password")
             .to_owned();
 
+        tracing::info!("connecting sftp to {user}@{host}:{port} (auth '{auth_mode}')");
+
         let config = Arc::new(client::Config::default());
         let mut handle = client::connect(config, (host.as_str(), port), ClientHandler)
             .await
-            .map_err(|e| PluginError::Connection(format!("cannot reach {host}:{port}: {e}")))?;
+            .map_err(|e| {
+                tracing::warn!("sftp: cannot reach {host}:{port}: {e}");
+                PluginError::Connection(format!("cannot reach {host}:{port}: {e}"))
+            })?;
 
         let authed = match auth_mode.as_str() {
             "key" => {
@@ -381,8 +386,10 @@ impl Plugin for SftpPlugin {
         };
 
         if !authed {
+            tracing::warn!("sftp authentication failed for {user}@{host}:{port}");
             return Err(PluginError::Connection("authentication failed".into()));
         }
+        tracing::info!("sftp authenticated as {user}@{host}:{port}");
 
         let channel = handle
             .channel_open_session()
@@ -395,6 +402,7 @@ impl Plugin for SftpPlugin {
         let sftp = SftpSession::new(channel.into_stream())
             .await
             .map_err(|e| PluginError::Connection(format!("sftp session failed: {e}")))?;
+        tracing::info!("sftp subsystem ready for {user}@{host}:{port}");
 
         Ok(Arc::new(SftpConnection {
             sftp: Arc::new(sftp),
@@ -509,6 +517,11 @@ impl rdb_plugin_runtime::Dispatcher for SftpDispatcher {
                 let sftp = conn.sftp.clone();
                 let kind = req.kind;
                 let items = req.items;
+                tracing::info!(
+                    "starting {:?} transfer of {} item(s)",
+                    kind,
+                    items.len()
+                );
                 tokio::spawn(async move {
                     let result = run_transfer(&sftp, kind, &items, &job).await;
                     match result {
@@ -517,9 +530,13 @@ impl rdb_plugin_runtime::Dispatcher for SftpDispatcher {
                             // don't overwrite it with Done.
                             if job.phase() == JobPhase::Running {
                                 job.set_phase(JobPhase::Done);
+                                tracing::info!("{kind:?} transfer completed");
+                            } else {
+                                tracing::info!("{kind:?} transfer cancelled");
                             }
                         }
                         Err(e) => {
+                            tracing::warn!("{kind:?} transfer failed: {e}");
                             *job.error.lock().await = Some(e.to_string());
                             job.set_phase(JobPhase::Error);
                         }
@@ -550,6 +567,7 @@ impl rdb_plugin_runtime::Dispatcher for SftpDispatcher {
                 // between files and transitions to Cancelled.
                 let slot = conn.job.lock().await;
                 if let Some(job) = slot.as_ref() {
+                    tracing::info!("cancelling in-progress transfer");
                     job.cancel.store(true, Ordering::SeqCst);
                 }
                 Ok(serde_json::Value::Null)
@@ -558,11 +576,13 @@ impl rdb_plugin_runtime::Dispatcher for SftpDispatcher {
                 // Recursive: removes a file, or a directory and all its contents
                 // (plain SFTP rmdir only removes empty directories).
                 let path = require_path(&params, "path")?;
+                tracing::info!("deleting '{path}' (recursive)");
                 remove_recursive(sftp, &path).await?;
                 Ok(serde_json::Value::Null)
             }
             "filemanager.mkdir" => {
                 let path = require_path(&params, "path")?;
+                tracing::info!("creating directory '{path}'");
                 sftp.create_dir(path)
                     .await
                     .map_err(|e| PluginError::Backend(format!("create_dir: {e}")))?;
@@ -577,6 +597,7 @@ impl rdb_plugin_runtime::Dispatcher for SftpDispatcher {
                     .as_str()
                     .ok_or_else(|| PluginError::Config("to is required".into()))?
                     .to_owned();
+                tracing::info!("renaming '{from}' -> '{to}'");
                 sftp.rename(from, to)
                     .await
                     .map_err(|e| PluginError::Backend(format!("rename: {e}")))?;

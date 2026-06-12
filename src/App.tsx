@@ -272,14 +272,18 @@ export function App() {
     const mod = conn.uiModule || conn.kind;
     switch (mod) {
       case "rdbms": {
-        // The configured database seeds the workspace's database picker.
-        const db = saved.find((s) => s.id === conn.savedId)?.config?.database;
+        // The configured database seeds the workspace's database picker; the
+        // optional configured schema is expanded by default in the tree.
+        const cfg = saved.find((s) => s.id === conn.savedId)?.config;
+        const db = cfg?.database;
+        const sch = cfg?.schema;
         return (
           <RdbmsWorkspace
             key={conn.id}
             connectionId={conn.id}
             savedId={conn.savedId}
             database={typeof db === "string" ? db : null}
+            defaultSchema={typeof sch === "string" && sch ? sch : null}
             treeWidth={treeWidthFor(conn.savedId, TREE_DEFAULT)}
             onTreeWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
             editorHeight={editorHeightFor(conn.savedId, RDBMS_EDITOR_DEFAULT)}
@@ -518,6 +522,7 @@ export function App() {
         <InstallPluginDialog
           onClose={() => setInstalling(false)}
           onInstalled={() => refreshPlugins()}
+          onUninstalled={() => refreshPlugins()}
         />
       )}
       {update && (

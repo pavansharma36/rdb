@@ -50,6 +50,9 @@ interface Props {
   /** The database this connection was opened against; the initial selection for
    * the database picker. Null when the profile didn't specify one. */
   database?: string | null;
+  /** Schema to expand by default in the tree (from the connection config), if
+   * present in the schema list. Null when the profile didn't specify one. */
+  defaultSchema?: string | null;
   /** Initial width (px) of the tree panel, restored from per-connection config. */
   treeWidth: number;
   /** Called with the final width (px) when the user finishes dragging. */
@@ -84,6 +87,7 @@ export function RdbmsWorkspace({
   connectionId,
   savedId,
   database,
+  defaultSchema,
   treeWidth,
   onTreeWidthChange,
   editorHeight,
@@ -373,19 +377,34 @@ export function RdbmsWorkspace({
     }
   }
 
-  /** When a connection/database has exactly one schema, expand it and load its
-   * tables automatically so the user doesn't have to click to reach them.
-   * Skipped when tree state was restored from the store on this mount, so a
-   * connection switch-back doesn't clobber what the user had open. */
-  function autoOpenSingle(list: Schema[]) {
-    if (list.length !== 1) return;
-    if (restoredOnMount.current) return;
-    const only = list[0].name;
-    setOpenSchema(only);
+  /** Expand a schema and load its tables (only fetching when not cached). */
+  function expandSchema(name: string) {
+    setOpenSchema(name);
+    if (tables[name]) return;
     api
-      .rdbmsListTables(connectionId, only)
-      .then((t) => setTables((m) => ({ ...m, [only]: t })))
+      .rdbmsListTables(connectionId, name)
+      .then((t) => setTables((m) => ({ ...m, [name]: t })))
       .catch((e) => setError(errString(e)));
+  }
+
+  /** Pick the schema to expand by default and load its tables, so the user
+   * doesn't have to click to reach them. Prefers the schema configured on the
+   * connection (if it exists in the list); otherwise falls back to the sole
+   * schema when there's exactly one. Skipped when tree state was restored from
+   * the store on this mount, so a connection switch-back doesn't clobber what
+   * the user had open. */
+  function autoOpenSingle(list: Schema[]) {
+    if (restoredOnMount.current) return;
+    const configured =
+      defaultSchema && list.some((s) => s.name === defaultSchema)
+        ? defaultSchema
+        : null;
+    if (configured) {
+      expandSchema(configured);
+      return;
+    }
+    if (list.length !== 1) return;
+    expandSchema(list[0].name);
   }
 
   async function toggleSchema(name: string) {
@@ -393,15 +412,7 @@ export function RdbmsWorkspace({
       setOpenSchema(null);
       return;
     }
-    setOpenSchema(name);
-    if (!tables[name]) {
-      try {
-        const t = await api.rdbmsListTables(connectionId, name);
-        setTables((m) => ({ ...m, [name]: t }));
-      } catch (e) {
-        setError(errString(e));
-      }
-    }
+    expandSchema(name);
   }
 
   /** Re-fetch the schema list and the open schema's tables from the server,

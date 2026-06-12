@@ -78,7 +78,7 @@ export interface AvailablePlugin {
   sizeBytes: number;
   /** Available version (stable releases only; nightly has none in the tag). */
   availableVersion: string | null;
-  /** Release publish timestamp (drives nightly update detection). */
+  /** Release publish timestamp (informational; `status` is computed host-side). */
   publishedAt: string | null;
   /** The currently-installed version, if installed. */
   installedVersion: string | null;
@@ -414,6 +414,11 @@ export const api = {
 
   installGithubPlugin: (repo: string, tag: string, pluginId: string, expectedSha: string | null) =>
     invoke<PluginInfo>("install_github_plugin", { repo, tag, pluginId, expectedSha }),
+
+  /** Uninstall a plugin (stops its process, deletes its files). Rejects if the
+   *  plugin has open connections. */
+  uninstallPlugin: (pluginId: string) =>
+    invoke<void>("uninstall_plugin", { pluginId }),
 
   // RDBMS
   rdbmsListSchemas: (connectionId: ConnectionId) =>

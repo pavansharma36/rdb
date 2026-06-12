@@ -98,31 +98,44 @@ where
         "describe" => to_value(describe(plugin)),
         "connect" => {
             let p: ConnectParams = parse(req.params)?;
+            let conn_id = p.connection_id;
             let conn = plugin.connect(p.config).await?;
-            conns.lock().await.insert(p.connection_id, conn);
+            conns.lock().await.insert(conn_id, conn);
+            tracing::info!("connected {conn_id:?}");
             Ok(Value::Null)
         }
         "test" => {
             let p: TestParams = parse(req.params)?;
             plugin.test(p.config).await?;
+            tracing::debug!("test connection ok");
             Ok(Value::Null)
         }
         "close" => {
             let p: CloseParams = parse(req.params)?;
             conns.lock().await.remove(&p.connection_id);
+            tracing::info!("closed {:?}", p.connection_id);
             Ok(Value::Null)
         }
         "call" => {
             let p: CallParams = parse(req.params)?;
+            let op = p.op;
             let conn = conns
                 .lock()
                 .await
                 .get(&p.connection_id)
                 .cloned()
                 .ok_or_else(|| PluginError::NotFound(format!("connection {:?}", p.connection_id)))?;
-            dispatcher.dispatch(&p.op, p.params, conn).await
+            tracing::debug!("dispatch '{op}' for {:?}", p.connection_id);
+            let res = dispatcher.dispatch(&op, p.params, conn).await;
+            if let Err(e) = &res {
+                tracing::warn!("dispatch '{op}' failed: {e}");
+            }
+            res
         }
-        other => Err(PluginError::Backend(format!("unknown method: {other}"))),
+        other => {
+            tracing::warn!("unknown method: {other}");
+            Err(PluginError::Backend(format!("unknown method: {other}")))
+        }
     }
 }
 
@@ -168,6 +181,7 @@ where
         let req: Request = match serde_json::from_str(&line) {
             Ok(r) => r,
             Err(e) => {
+                tracing::warn!("received malformed request line: {e}");
                 // We can't recover the request id, so reply under id 0.
                 let resp = Response::err(
                     0,
@@ -185,6 +199,7 @@ where
         // just ack the cancel here.
         if req.method == "cancel" {
             if let Some(target) = req.params.get("id").and_then(|v| v.as_u64()) {
+                tracing::info!("cancel requested for req {target}");
                 if let Some(tx) = in_flight.lock().await.remove(&target) {
                     let _ = tx.send(());
                 }

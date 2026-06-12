@@ -725,6 +725,13 @@ select option:hover {
   min-width: 0;
 }
 
+.plugin-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .plugin-name {
   font-size: 13px;
   font-weight: 600;

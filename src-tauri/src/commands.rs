@@ -122,6 +122,16 @@ pub async fn install_github_plugin(
     manager.install_github(&repo, &tag, Some(&plugin_id), expected_sha).await
 }
 
+/// Uninstall a plugin: stop its process and delete its manifest + executable
+/// from the plugins dir. Fails if the plugin has open connections.
+#[tauri::command]
+pub async fn uninstall_plugin(
+    manager: Manager<'_>,
+    plugin_id: String,
+) -> Result<(), String> {
+    manager.uninstall(&plugin_id).await
+}
+
 // ---------------------------------------------------------------------------
 // PTY commands (CLI / SSH workspace)
 // ---------------------------------------------------------------------------
@@ -144,6 +154,7 @@ pub async fn pty_spawn(
 ) -> Result<(), String> {
     // Already running? (idempotent — e.g. React StrictMode double-mount.)
     if crate::pty::is_alive(pty.inner().clone(), terminal_id.clone()).await {
+        tracing::debug!("pty_spawn: terminal {terminal_id} already alive (no-op)");
         return Ok(());
     }
     // Ask the plugin that owns this connection for its spawn spec.
@@ -153,6 +164,11 @@ pub async fn pty_spawn(
         .map_err(err)?;
     let spec: rdb_core::PtySpawnSpec =
         serde_json::from_value(spec_value).map_err(|e| e.to_string())?;
+    tracing::info!(
+        "pty_spawn: terminal {terminal_id} -> '{}' ({} args)",
+        spec.program,
+        spec.args.len()
+    );
     crate::pty::spawn(pty.inner().clone(), app, connection_id, terminal_id, spec).await
 }
 

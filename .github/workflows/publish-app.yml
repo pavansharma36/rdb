@@ -228,9 +228,14 @@ jobs:
             if gh release view latest >/dev/null 2>&1; then
               gh release view latest --json assets --jq '.assets[].name' | while read -r asset; do
                 [ -n "$asset" ] || continue
-                # Keep the updater manifest (fixed name, no version) and the
-                # current build's assets; delete only stale prior-build assets.
-                if [[ "$asset" == "latest.json" || "$asset" == *"$CURRENT_VERSION"* ]]; then
+                # Keep the updater manifest (fixed name, no version), the macOS
+                # updater bundles (Tauri names these without a version, so they
+                # never match $CURRENT_VERSION), and the current build's assets;
+                # delete only stale prior-build assets.
+                if [[ "$asset" == "latest.json" \
+                      || "$asset" == rdb_aarch64.app.tar.gz* \
+                      || "$asset" == rdb_x64.app.tar.gz* \
+                      || "$asset" == *"$CURRENT_VERSION"* ]]; then
                   echo "Keeping asset: $asset"
                 else
                   echo "Deleting asset: $asset"

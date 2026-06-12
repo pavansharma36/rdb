@@ -224,14 +224,26 @@ impl Plugin for MongoPlugin {
     async fn connect(&self, cfg: ConnectionConfig) -> Result<Arc<dyn Connection>> {
         let uri = build_mongo_uri(&cfg)?;
         let default_db = cfg_str_opt(&cfg, "database");
-        let client = Client::with_uri_str(&uri)
-            .await
-            .map_err(|e| PluginError::Connection(e.to_string()))?;
+        // Never log `uri` — it can carry credentials. Log only safe fields.
+        tracing::info!(
+            "connecting to mongodb host={} srv={} default_db={}",
+            cfg_str_opt(&cfg, "host").as_deref().unwrap_or("(uri)"),
+            cfg_bool(&cfg, "srv"),
+            default_db.as_deref().unwrap_or("-"),
+        );
+        let client = Client::with_uri_str(&uri).await.map_err(|e| {
+            tracing::warn!("mongodb client init failed: {e}");
+            PluginError::Connection(e.to_string())
+        })?;
         client
             .database("admin")
             .run_command(doc! { "ping": 1 })
             .await
-            .map_err(|e| PluginError::Connection(e.to_string()))?;
+            .map_err(|e| {
+                tracing::warn!("mongodb ping failed: {e}");
+                PluginError::Connection(e.to_string())
+            })?;
+        tracing::info!("mongodb connected (ping ok)");
         Ok(Arc::new(MongoConnection { client, default_db }))
     }
 }
@@ -300,9 +312,14 @@ impl MongoPlugin {
                 bson::deserialize_from_document(doc).map_err(|e| PluginError::Backend(e.to_string()))?;
             out.push(v);
         }
+        let elapsed_ms = start.elapsed().as_millis();
+        tracing::debug!(
+            "find {database}.{collection} returned {} doc(s) in {elapsed_ms}ms (limit {limit})",
+            out.len()
+        );
         Ok(FindResult {
             documents: out,
-            elapsed_ms: start.elapsed().as_millis(),
+            elapsed_ms,
         })
     }
 }

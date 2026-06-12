@@ -60,12 +60,17 @@ pub struct Release {
 }
 
 /// A downloadable file attached to a release.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Asset {
     pub name: String,
     pub browser_download_url: String,
     #[serde(default)]
     pub size: u64,
+    /// ISO-8601 UTC timestamp; GitHub refreshes this when the asset binary is
+    /// re-uploaded. The rolling `plugins-latest` release keeps a fixed release
+    /// `published_at`, so this is what drives nightly update detection.
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 fn is_aux(name: &str) -> bool {
@@ -138,6 +143,10 @@ pub struct PluginRelease<'a> {
     /// version is only known after `--describe`.
     pub version: Option<String>,
     pub published_at: Option<&'a str>,
+    /// The selected binary asset's `updated_at` (refreshes on re-upload).
+    /// Drives nightly update detection, where the release `published_at` is
+    /// frozen because `plugins-latest` is updated in place.
+    pub asset_updated_at: Option<&'a str>,
     pub asset: &'a Asset,
 }
 
@@ -242,6 +251,7 @@ pub fn select_plugin_releases<'a>(
                     channel: ch,
                     version: version.clone(),
                     published_at: r.published_at.as_deref(),
+                    asset_updated_at: asset.updated_at.as_deref(),
                     asset,
                 };
                 match channel {
@@ -412,6 +422,7 @@ mod tests {
                     name: (*n).into(),
                     browser_download_url: format!("https://example/{n}"),
                     size: 10,
+                    ..Default::default()
                 })
                 .collect(),
         }
@@ -535,6 +546,7 @@ mod tests {
                     name: format!("rdb-{triple}.dmg"),
                     browser_download_url: "https://example/app".into(),
                     size: 1,
+                    ..Default::default()
                 }],
             },
             // Plugins release with all three plugins -> each returned separately.
@@ -546,21 +558,25 @@ mod tests {
                         name: format!("rdb-plugin-postgres-{triple}"),
                         browser_download_url: "https://example/pg".into(),
                         size: 2,
+                        updated_at: Some("2026-03-01T00:00:00Z".into()),
                     },
                     Asset {
                         name: format!("rdb-plugin-mongodb-{triple}"),
                         browser_download_url: "https://example/mongo".into(),
                         size: 3,
+                        ..Default::default()
                     },
                     Asset {
                         name: format!("rdb-plugin-rabbitmq-{triple}"),
                         browser_download_url: "https://example/rabbit".into(),
                         size: 4,
+                        ..Default::default()
                     },
                     Asset {
                         name: "SHA256SUMS".into(),
                         browser_download_url: "https://example/SHA256SUMS".into(),
                         size: 1,
+                        ..Default::default()
                     },
                 ],
             },
@@ -572,6 +588,7 @@ mod tests {
                     name: "rdb-plugin-postgres-x86_64-pc-windows-msvc.exe".into(),
                     browser_download_url: "https://example/pg-win".into(),
                     size: 3,
+                    ..Default::default()
                 }],
             },
         ];
@@ -582,6 +599,9 @@ mod tests {
         assert!(ids.contains(&"mongodb"));
         assert!(ids.contains(&"rabbitmq"));
         assert!(got.iter().all(|p| p.tag == "plugins-latest"));
+        // The asset's updated_at is threaded through for nightly staleness.
+        let pg = got.iter().find(|p| p.id == "postgres").unwrap();
+        assert_eq!(pg.asset_updated_at, Some("2026-03-01T00:00:00Z"));
     }
 
     #[test]
@@ -595,11 +615,13 @@ mod tests {
                     name: format!("rdb-plugin-postgres-{triple}"),
                     browser_download_url: "https://example/pg".into(),
                     size: 2,
+                    ..Default::default()
                 },
                 Asset {
                     name: format!("rdb-plugin-mongodb-{triple}"),
                     browser_download_url: "https://example/mongo".into(),
                     size: 3,
+                    ..Default::default()
                 },
             ],
         };

@@ -122,6 +122,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so the moved tag resolves cleanly
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -165,3 +169,13 @@ jobs:
           prerelease: ${{ steps.meta.outputs.prerelease }}
           make_latest: false
           files: release/*
+
+      # Nightly only: move the rolling `plugins-latest` git tag to this commit so
+      # it tracks the most recent master build (mirrors publish-app.yml's `latest`
+      # tag). Tag builds publish an immutable `plugins-v<semver>` tag instead.
+      - name: Run plugins-latest tag
+        if: github.ref_type != 'tag'
+        uses: EndBug/latest-tag@v1
+        with:
+          description: "Points to the most recent plugins build on master"
+          tag-name: "plugins-latest"

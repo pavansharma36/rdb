@@ -190,6 +190,17 @@ impl Plugin for PostgresPlugin {
                     }),
                 },
                 ConfigField {
+                    key: "schema".into(),
+                    label: "Schema".into(),
+                    field_type: ConfigFieldType::Text,
+                    required: false,
+                    default: None,
+                    placeholder: Some("public".into()),
+                    // No show_if: applies to both connection modes; it only
+                    // controls which schema the UI expands by default.
+                    show_if: None,
+                },
+                ConfigField {
                     key: "user".into(),
                     label: "User".into(),
                     field_type: ConfigFieldType::Text,
@@ -238,7 +249,20 @@ impl Plugin for PostgresPlugin {
             let database = cfg_str(&cfg, "database")?;
             build_url(&cfg, &database)?
         };
-        let pool = make_pool(&url).await?;
+        // Never log `url` — it carries the password. Log only safe fields.
+        tracing::info!(
+            "connecting to postgres host={} port={} db={}",
+            cfg_str_opt(&cfg, "host").as_deref().unwrap_or("?"),
+            cfg_str_opt(&cfg, "port")
+                .or_else(|| cfg.get("port").map(|v| v.to_string()))
+                .as_deref()
+                .unwrap_or("?"),
+            cfg_str_opt(&cfg, "database").as_deref().unwrap_or("?"),
+        );
+        let pool = make_pool(&url).await.inspect_err(|e| {
+            tracing::warn!("postgres connection failed: {e}");
+        })?;
+        tracing::info!("postgres pool established");
         Ok(Arc::new(PostgresConnection {
             pool: RwLock::new(pool),
             config: cfg,
@@ -277,6 +301,7 @@ impl RdbmsPlugin for PostgresPlugin {
 
     async fn use_database(&self, conn: Arc<dyn Connection>, database: &str) -> Result<()> {
         let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        tracing::info!("switching database to '{database}' (rebuilding pool)");
         // Build and validate the new pool before swapping, so a failed switch
         // leaves the existing connection untouched.
         let url = if cfg_str_opt(&conn.config, "mode").as_deref() == Some("url") {
@@ -606,23 +631,35 @@ impl RdbmsPlugin for PostgresPlugin {
         for stmt in split_statements(sql) {
             let start = Instant::now();
             if is_select(&stmt) {
-                let (columns, rows) = select_result(&pool, &stmt).await?;
+                let (columns, rows) = select_result(&pool, &stmt).await.inspect_err(|e| {
+                    tracing::warn!("postgres select failed: {e}");
+                })?;
+                let elapsed_ms = start.elapsed().as_millis();
+                tracing::debug!("select returned {} row(s) in {elapsed_ms}ms", rows.len());
                 results.push(QueryResult {
                     columns,
                     rows,
                     rows_affected: None,
-                    elapsed_ms: start.elapsed().as_millis(),
+                    elapsed_ms,
                 });
             } else {
                 let res = sqlx::query(AssertSqlSafe(stmt.clone()))
                     .execute(&pool)
                     .await
-                    .map_err(|e| PluginError::Backend(e.to_string()))?;
+                    .map_err(|e| {
+                        tracing::warn!("postgres statement failed: {e}");
+                        PluginError::Backend(e.to_string())
+                    })?;
+                let elapsed_ms = start.elapsed().as_millis();
+                tracing::debug!(
+                    "statement affected {} row(s) in {elapsed_ms}ms",
+                    res.rows_affected()
+                );
                 results.push(QueryResult {
                     columns: Vec::new(),
                     rows: Vec::new(),
                     rows_affected: Some(res.rows_affected()),
-                    elapsed_ms: start.elapsed().as_millis(),
+                    elapsed_ms,
                 });
             }
         }

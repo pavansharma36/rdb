@@ -358,9 +358,18 @@ impl Plugin for RabbitMqPlugin {
             password,
             default_vhost,
         };
+        tracing::info!(
+            "connecting to rabbitmq management API at {} (vhost '{}')",
+            conn.base,
+            conn.default_vhost
+        );
         // Validate eagerly so a bad host / disabled management plugin fails at
         // connect time rather than on first capability call.
-        conn.get_json::<Overview>("/api/overview").await?;
+        conn.get_json::<Overview>("/api/overview").await.map_err(|e| {
+            tracing::warn!("rabbitmq connect validation failed: {e}");
+            e
+        })?;
+        tracing::info!("rabbitmq management API reachable");
         Ok(Arc::new(conn))
     }
 }
@@ -379,6 +388,7 @@ impl RabbitMqConnection {
             return Ok(resp);
         }
         let body = resp.text().await.unwrap_or_default();
+        tracing::warn!("management API {} {}", status, body.trim());
         let hint = if status == reqwest::StatusCode::NOT_FOUND {
             " (is the rabbitmq_management plugin enabled?)"
         } else if status == reqwest::StatusCode::UNAUTHORIZED {
@@ -473,6 +483,7 @@ impl RabbitMqPlugin {
         payload: &str,
     ) -> Result<PublishResult> {
         let conn = downcast(&conn)?;
+        tracing::info!("publishing to exchange '{exchange}' (vhost '{vhost}', key '{routing_key}')");
         let path = format!(
             "/api/exchanges/{}/{}/publish",
             urlencode(vhost),
@@ -508,6 +519,7 @@ impl RabbitMqPlugin {
         queue: &str,
     ) -> Result<PurgeResult> {
         let conn = downcast(&conn)?;
+        tracing::info!("purging queue '{queue}' (vhost '{vhost}')");
         let path = format!(
             "/api/queues/{}/{}/contents",
             urlencode(vhost),
@@ -532,6 +544,7 @@ impl RabbitMqPlugin {
         durable: bool,
     ) -> Result<Queue> {
         let conn = downcast(&conn)?;
+        tracing::info!("declaring queue '{queue}' (vhost '{vhost}', durable {durable})");
         let path = format!("/api/queues/{}/{}", urlencode(vhost), urlencode(queue));
         let body = serde_json::json!({
             "durable": durable,
@@ -556,6 +569,7 @@ impl RabbitMqPlugin {
         queue: &str,
     ) -> Result<()> {
         let conn = downcast(&conn)?;
+        tracing::info!("deleting queue '{queue}' (vhost '{vhost}')");
         let path = format!("/api/queues/{}/{}", urlencode(vhost), urlencode(queue));
         let resp = conn
             .req(reqwest::Method::DELETE, &path)

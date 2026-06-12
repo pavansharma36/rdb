@@ -8,6 +8,8 @@ interface InstallPluginDialogProps {
   onClose: () => void;
   /** Called after a successful install with the new plugin's info. */
   onInstalled: (info: PluginInfo) => void;
+  /** Called after a plugin is uninstalled, with its id. */
+  onUninstalled: (pluginId: string) => void;
 }
 
 function formatSize(bytes: number): string {
@@ -34,7 +36,7 @@ function actionLabel(status: PluginStatus): string {
  *  (the app channel's releases) are fetched up front with a per-plugin
  *  install/update status, so there is no repo/tag to type — pick a plugin,
  *  confirm the checksum, install. */
-export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialogProps) {
+export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: InstallPluginDialogProps) {
   const [repo, setRepo] = useState<string>("");
   const [channel, setChannel] = useState<string>("");
   const [available, setAvailable] = useState<AvailablePlugin[] | null>(null);
@@ -45,6 +47,10 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
   const [selected, setSelected] = useState<AvailablePlugin | null>(null);
   const [preview, setPreview] = useState<GithubPreview | null>(null);
   const [busy, setBusy] = useState<"preview" | "install" | null>(null);
+  // Id of the plugin currently being uninstalled, if any.
+  const [uninstalling, setUninstalling] = useState<string | null>(null);
+  // Id of the plugin awaiting inline uninstall confirmation, if any.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Load the configured repo + app channel, then the available plugin list
@@ -116,6 +122,34 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
     }
   }
 
+  /** Uninstall an installed plugin (after inline confirmation), then refresh
+   *  the list. */
+  async function onUninstall(plugin: AvailablePlugin) {
+    setError(null);
+    setConfirmingId(null);
+    setUninstalling(plugin.id);
+    try {
+      await api.uninstallPlugin(plugin.id);
+      // Reflect removal: this plugin is now installable again.
+      setAvailable((list) =>
+        (list ?? []).map((p) =>
+          p.id === plugin.id
+            ? { ...p, status: "not_installed", installedVersion: null }
+            : p,
+        ),
+      );
+      if (selected?.id === plugin.id) {
+        setSelected(null);
+        setPreview(null);
+      }
+      onUninstalled(plugin.id);
+    } catch (e) {
+      setError(errString(e));
+    } finally {
+      setUninstalling(null);
+    }
+  }
+
   /** Secondary line under a plugin name: size + install/update state. */
   function statusNote(plugin: AvailablePlugin): string {
     const size = formatSize(plugin.sizeBytes);
@@ -159,21 +193,57 @@ export function InstallPluginDialog({ onClose, onInstalled }: InstallPluginDialo
               {available.map((plugin) => {
                 const active = selected?.id === plugin.id;
                 const upToDate = plugin.status === "up_to_date";
+                const installed = plugin.status !== "not_installed";
+                const removing = uninstalling === plugin.id;
+                const confirming = confirmingId === plugin.id;
                 return (
                   <li key={plugin.id} className="plugin-row">
                     <div className="plugin-row-main">
                       <span className="plugin-name">{plugin.id}</span>
-                      <span className="muted small">{statusNote(plugin)}</span>
+                      <span className="muted small">
+                        {confirming ? "Delete this plugin's files?" : statusNote(plugin)}
+                      </span>
                     </div>
-                    <button
-                      onClick={() => onSelect(plugin)}
-                      disabled={busy !== null || upToDate}
-                      className={plugin.status === "update_available" ? "primary" : ""}
-                    >
-                      {active && busy === "preview"
-                        ? "Fetching…"
-                        : actionLabel(plugin.status)}
-                    </button>
+                    <div className="plugin-row-actions">
+                      {confirming ? (
+                        <>
+                          <button
+                            onClick={() => onUninstall(plugin)}
+                            disabled={uninstalling !== null}
+                            className="danger"
+                          >
+                            {removing ? "Uninstalling…" : "Confirm"}
+                          </button>
+                          <button
+                            onClick={() => setConfirmingId(null)}
+                            disabled={uninstalling !== null}
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => onSelect(plugin)}
+                            disabled={busy !== null || uninstalling !== null || upToDate}
+                            className={plugin.status === "update_available" ? "primary" : ""}
+                          >
+                            {active && busy === "preview"
+                              ? "Fetching…"
+                              : actionLabel(plugin.status)}
+                          </button>
+                          {installed && (
+                            <button
+                              onClick={() => setConfirmingId(plugin.id)}
+                              disabled={busy !== null || uninstalling !== null}
+                              className="danger"
+                            >
+                              Uninstall
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </li>
                 );
               })}
