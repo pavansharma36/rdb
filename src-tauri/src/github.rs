@@ -285,6 +285,40 @@ pub fn find_checksum<'a>(release: &'a Release, binary_name: &str) -> Option<&'a 
     })
 }
 
+/// Asset name of the aggregate plugin-metadata file published by
+/// `publish-plugins.yml` (a map of plugin id -> [`PluginMeta`]).
+pub const PLUGIN_INFO_ASSET: &str = "plugin_info.json";
+
+/// Human-facing metadata for one plugin, as published in `plugin_info.json`.
+/// Generated from each binary's `--describe` so the installer can show a name,
+/// description, and version BEFORE downloading or executing anything. All fields
+/// are optional so a partial/older file still parses.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PluginMeta {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+}
+
+/// Find the published `plugin_info.json` asset in `release`, if present
+/// (case-insensitive match on the asset name).
+pub fn find_plugin_info(release: &Release) -> Option<&Asset> {
+    release
+        .assets
+        .iter()
+        .find(|a| a.name.eq_ignore_ascii_case(PLUGIN_INFO_ASSET))
+}
+
+/// Parse the aggregate `plugin_info.json` (a JSON object mapping plugin id ->
+/// metadata). Best-effort: returns an empty map on any parse error so listing
+/// still works when the file is missing or malformed.
+pub fn parse_plugin_info(text: &str) -> std::collections::HashMap<String, PluginMeta> {
+    serde_json::from_str(text).unwrap_or_default()
+}
+
 /// Extract the hex SHA-256 for `binary_name` from checksum-file `text`.
 ///
 /// Handles both the aggregate `<hash>  <name>` format (coreutils `sha256sum`,
@@ -645,5 +679,35 @@ mod tests {
             sha256_hex(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn finds_plugin_info_asset_case_insensitively() {
+        let r = release_with(&["rdb-plugin-postgres-aarch64-apple-darwin", "Plugin_Info.json"]);
+        assert_eq!(find_plugin_info(&r).unwrap().name, "Plugin_Info.json");
+        let none = release_with(&["rdb-plugin-postgres-aarch64-apple-darwin"]);
+        assert!(find_plugin_info(&none).is_none());
+    }
+
+    #[test]
+    fn parses_plugin_info_map() {
+        let text = r#"{
+            "postgres": {"name": "PostgreSQL", "description": "Connect to Postgres", "version": "0.2.41"},
+            "mongodb":  {"name": "MongoDB"}
+        }"#;
+        let map = parse_plugin_info(text);
+        assert_eq!(map["postgres"].name.as_deref(), Some("PostgreSQL"));
+        assert_eq!(map["postgres"].description.as_deref(), Some("Connect to Postgres"));
+        assert_eq!(map["postgres"].version.as_deref(), Some("0.2.41"));
+        // Missing fields are None, not an error.
+        assert_eq!(map["mongodb"].name.as_deref(), Some("MongoDB"));
+        assert_eq!(map["mongodb"].description, None);
+    }
+
+    #[test]
+    fn parse_plugin_info_is_empty_on_garbage() {
+        assert!(parse_plugin_info("not json").is_empty());
+        assert!(parse_plugin_info("[1, 2, 3]").is_empty());
+        assert!(parse_plugin_info("").is_empty());
     }
 }

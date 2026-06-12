@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use futures_util::TryStreamExt;
 use rdb_core::{
     ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError, PluginInfo,
     PluginKind, Result,
@@ -70,6 +71,10 @@ fn cfg_u16(cfg: &ConnectionConfig, key: &str, default: u16) -> u16 {
         .map(|n| n as u16)
         .unwrap_or(default)
 }
+
+/// Cap on rows fetched per query. Bounds memory use for large result sets;
+/// fetching stops at this count and the result is flagged as truncated.
+const DEFAULT_MAX_ROW_COUNT: u64 = 10_000;
 
 /// Build a `postgres://` URL from a config, pointed at `database`. The database
 /// is passed explicitly (rather than read from `cfg`) so the same credentials
@@ -617,6 +622,9 @@ impl RdbmsPlugin for PostgresPlugin {
             rows: data,
             rows_affected: None,
             elapsed_ms: start.elapsed().as_millis(),
+            // Browsing is page-based (LIMIT/OFFSET from BrowseSpec), so the
+            // per-query row cap doesn't apply.
+            result_truncated: false,
         })
     }
 
@@ -631,16 +639,24 @@ impl RdbmsPlugin for PostgresPlugin {
         for stmt in split_statements(sql) {
             let start = Instant::now();
             if is_select(&stmt) {
-                let (columns, rows) = select_result(&pool, &stmt).await.inspect_err(|e| {
-                    tracing::warn!("postgres select failed: {e}");
-                })?;
+                let (columns, rows, result_truncated) =
+                    select_result(&pool, &stmt, DEFAULT_MAX_ROW_COUNT)
+                        .await
+                        .inspect_err(|e| {
+                            tracing::warn!("postgres select failed: {e}");
+                        })?;
                 let elapsed_ms = start.elapsed().as_millis();
-                tracing::debug!("select returned {} row(s) in {elapsed_ms}ms", rows.len());
+                tracing::debug!(
+                    "select returned {} row(s){} in {elapsed_ms}ms",
+                    rows.len(),
+                    if result_truncated { " (truncated)" } else { "" }
+                );
                 results.push(QueryResult {
                     columns,
                     rows,
                     rows_affected: None,
                     elapsed_ms,
+                    result_truncated,
                 });
             } else {
                 let res = sqlx::query(AssertSqlSafe(stmt.clone()))
@@ -660,6 +676,7 @@ impl RdbmsPlugin for PostgresPlugin {
                     rows: Vec::new(),
                     rows_affected: Some(res.rows_affected()),
                     elapsed_ms,
+                    result_truncated: false,
                 });
             }
         }
@@ -945,17 +962,36 @@ fn is_select(sql: &str) -> bool {
     matches!(head.as_str(), "select" | "with" | "show" | "explain")
 }
 
-/// Run one SELECT-ish statement and return its column metadata + JSON rows.
-/// When zero rows come back we `describe` the statement so the grid still shows
-/// the column headers rather than nothing.
+/// Run one SELECT-ish statement and return its column metadata + JSON rows,
+/// plus whether the result was truncated. Streams rows and stops once `max`
+/// have been collected (fetching one extra to detect that more remain), so a
+/// huge result set never materializes fully in memory. When zero rows come back
+/// we `describe` the statement so the grid still shows the column headers rather
+/// than nothing.
 async fn select_result(
     pool: &PgPool,
     stmt: &str,
-) -> Result<(Vec<ColumnMeta>, Vec<Vec<serde_json::Value>>)> {
-    let rows = sqlx::query(AssertSqlSafe(stmt))
-        .fetch_all(pool)
+    max: u64,
+) -> Result<(Vec<ColumnMeta>, Vec<Vec<serde_json::Value>>, bool)> {
+    let mut stream = sqlx::query(AssertSqlSafe(stmt)).fetch(pool);
+    let mut rows: Vec<PgRow> = Vec::new();
+    let mut truncated = false;
+    // Fetch up to `max` rows; pull one more only to learn whether the result
+    // extends past the cap, then discard it.
+    while let Some(row) = stream
+        .try_next()
         .await
-        .map_err(|e| PluginError::Backend(e.to_string()))?;
+        .map_err(|e| PluginError::Backend(e.to_string()))?
+    {
+        if rows.len() as u64 >= max {
+            truncated = true;
+            break;
+        }
+        rows.push(row);
+    }
+    // Drop the stream (and its borrow of the pool) before any further awaits.
+    drop(stream);
+
     let columns: Vec<ColumnMeta> = if let Some(first) = rows.first() {
         columns_of(first)
     } else {
@@ -972,7 +1008,7 @@ async fn select_result(
         }
     };
     let data = rows.iter().map(row_to_json).collect();
-    Ok((columns, data))
+    Ok((columns, data, truncated))
 }
 
 /// Column metadata (name + type) for a fetched row.

@@ -74,9 +74,13 @@ export interface AvailablePlugin {
   tag: string;
   /** `"nightly"` or `"stable"` — the channel this listing reflects. */
   channel: string;
+  /** Human-facing name from the release's `plugin_info.json`, if published. */
+  name?: string | null;
+  /** Plugin description from `plugin_info.json`, if published. */
+  description?: string | null;
   assetName: string;
   sizeBytes: number;
-  /** Available version (stable releases only; nightly has none in the tag). */
+  /** Available version (from the tag for stable, or `plugin_info.json` for nightly). */
   availableVersion: string | null;
   /** Release publish timestamp (informational; `status` is computed host-side). */
   publishedAt: string | null;
@@ -182,6 +186,8 @@ export interface QueryResult {
   rows: unknown[][];
   rows_affected: number | null;
   elapsed_ms: number;
+  /** True when the result was capped at the row limit, so `rows` is partial. */
+  result_truncated?: boolean;
 }
 
 /** Accepted browse-filter operators (mirrors `BrowseFilter::OPS` in Rust).

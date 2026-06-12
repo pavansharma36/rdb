@@ -12,7 +12,9 @@ name: Publish plugins
 #
 # Release layout: all plugins are published as assets in a single release.
 # Each release holds all plugin binaries (one per platform, named with the target
-# triple) plus an aggregate `SHA256SUMS`. Install in-app by pointing at this
+# triple), an aggregate `SHA256SUMS`, and a `plugin_info.json` (id -> name/
+# description/version, from each binary's `--describe`) the in-app installer reads
+# to show plugin metadata before download. Install in-app by pointing at this
 # repo and choosing the tag (e.g., `v0.2.0` or `plugins-latest`).
 
 on:
@@ -109,6 +111,24 @@ jobs:
             cp "$src" "$dest"
             echo "staged $dest"
           done
+
+      # Generate the aggregate plugin_info.json from each binary's `--describe`
+      # output (id, name, description, version). PluginInfo is platform-independent,
+      # so we build it once on the native Linux job (binaries run on this host) and
+      # publish it as a single release asset. The in-app installer reads it to show
+      # each plugin's name/description/version BEFORE downloading (github.rs).
+      - name: Generate plugin_info.json
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          set -euo pipefail
+          info="{}"
+          for crate in rdb-plugin-postgres rdb-plugin-mongodb rdb-plugin-rabbitmq rdb-plugin-ssh rdb-plugin-sftp; do
+            described=$("target/${{ matrix.target }}/release/${crate}" --describe)
+            info=$(jq -n --argjson acc "$info" --argjson d "$described" \
+              '$acc + { ($d.id): { name: $d.name, description: $d.description, version: $d.version } }')
+          done
+          echo "$info" | jq . | tee dist/plugin_info.json
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

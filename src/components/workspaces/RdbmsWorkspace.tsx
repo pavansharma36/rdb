@@ -1417,6 +1417,14 @@ export function RdbmsWorkspace({
                 {result.rows_affected !== null
                   ? `${result.rows_affected} row(s) affected`
                   : `${result.rows.length} row(s)`}
+                {result.result_truncated && (
+                  <span
+                    className="truncated-note"
+                    title={`Showing the first ${result.rows.length} rows; more rows exist but were not fetched to limit memory use.`}
+                  >
+                    {" "}· truncated
+                  </span>
+                )}
               </span>
             )}
             {edit && (

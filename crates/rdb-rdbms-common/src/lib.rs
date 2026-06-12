@@ -107,6 +107,11 @@ pub struct QueryResult {
     pub rows: Vec<Vec<serde_json::Value>>,
     pub rows_affected: Option<u64>,
     pub elapsed_ms: u128,
+    /// True when fetching stopped at the connection's `max_row_count` cap, so
+    /// `rows` is a partial view of the full result set. The UI surfaces this so
+    /// the user knows more rows exist than are shown.
+    #[serde(default)]
+    pub result_truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -306,6 +311,7 @@ pub trait RdbmsPlugin: Send + Sync {
             rows: Vec::new(),
             rows_affected: None,
             elapsed_ms: 0,
+            result_truncated: false,
         }))
     }
 
@@ -474,6 +480,7 @@ mod tests {
                 rows: vec![],
                 rows_affected: Some(0),
                 elapsed_ms: 0,
+                result_truncated: false,
             }])
         }
     }

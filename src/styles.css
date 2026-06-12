@@ -2095,6 +2095,11 @@ table.grid tr.new-row td {
   flex: 1;
 }
 
+.grid-footer .truncated-note {
+  color: var(--warn);
+  cursor: help;
+}
+
 .view-switch {
   display: inline-flex;
 }

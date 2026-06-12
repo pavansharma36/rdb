@@ -4112,6 +4112,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "futures-util",
  "rdb-core",
  "rdb-plugin-runtime",
  "rdb-rdbms-common",
