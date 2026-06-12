@@ -162,7 +162,7 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
       case "unknown":
         return `${size} · installed${v ? ` (v${v})` : ""}`;
       case "not_installed":
-        return size;
+        return plugin.availableVersion ? `${size} · v${plugin.availableVersion}` : size;
     }
   }
 
@@ -199,7 +199,10 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
                 return (
                   <li key={plugin.id} className="plugin-row">
                     <div className="plugin-row-main">
-                      <span className="plugin-name">{plugin.id}</span>
+                      <span className="plugin-name">{plugin.name ?? plugin.id}</span>
+                      {plugin.description && (
+                        <span className="muted small">{plugin.description}</span>
+                      )}
                       <span className="muted small">
                         {confirming ? "Delete this plugin's files?" : statusNote(plugin)}
                       </span>
@@ -255,8 +258,11 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
           <div className="preview">
             <div className="preview-row">
               <span className="muted">Plugin</span>
-              <span>{selected.id}</span>
+              <span>{selected.name ?? selected.id}</span>
             </div>
+            {selected.description && (
+              <p className="muted small">{selected.description}</p>
+            )}
             <div className="preview-row">
               <span className="muted">Asset</span>
               <span>{preview.assetName}</span>

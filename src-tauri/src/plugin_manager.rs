@@ -311,9 +311,15 @@ pub struct AvailablePlugin {
     pub tag: String,
     /// `"nightly"` or `"stable"` — the channel this listing reflects.
     pub channel: String,
+    /// Human-facing name from the release's `plugin_info.json`, if published.
+    /// Falls back to `None` (UI shows `id`) for releases without the file.
+    pub name: Option<String>,
+    /// Plugin description from `plugin_info.json`, if published.
+    pub description: Option<String>,
     pub asset_name: String,
     pub size_bytes: u64,
-    /// Available version (stable releases only; nightly has none in the tag).
+    /// Available version. For stable this comes from the tag; for nightly (no
+    /// version in the tag) it is filled from `plugin_info.json` when present.
     pub available_version: Option<String>,
     /// Release publish timestamp (used for nightly update detection).
     pub published_at: Option<String>,
@@ -505,7 +511,35 @@ impl PluginManager {
             .ok_or_else(|| "unsupported platform: no known target triple".to_string())?;
         let channel = github::Channel::parse(crate::release_channel());
         let releases = github::fetch_releases(repo).await?;
-        Ok(github::select_plugin_releases(&releases, triple, channel)
+        let selected = github::select_plugin_releases(&releases, triple, channel);
+
+        // Fetch each selected release's `plugin_info.json` once (small, no
+        // execution — same safety class as the checksum fetch in preview_github),
+        // building a tag -> (id -> metadata) cache. Best-effort: a missing or
+        // malformed file just leaves names/descriptions empty.
+        let mut meta_by_tag: std::collections::HashMap<&str, std::collections::HashMap<String, github::PluginMeta>> =
+            std::collections::HashMap::new();
+        for pr in &selected {
+            if meta_by_tag.contains_key(pr.tag) {
+                continue;
+            }
+            let metas = match releases.iter().find(|r| r.tag_name == pr.tag) {
+                Some(r) => match github::find_plugin_info(r) {
+                    Some(asset) => match github::download_text(&asset.browser_download_url).await {
+                        Ok(text) => github::parse_plugin_info(&text),
+                        Err(e) => {
+                            tracing::warn!("failed to fetch plugin_info.json for {}: {e}", pr.tag);
+                            Default::default()
+                        }
+                    },
+                    None => Default::default(),
+                },
+                None => Default::default(),
+            };
+            meta_by_tag.insert(pr.tag, metas);
+        }
+
+        Ok(selected
             .into_iter()
             .map(|pr| {
                 // Snapshot what's installed for this id (version + provenance).
@@ -517,13 +551,22 @@ impl PluginManager {
                 };
                 let installed_version = installed.as_ref().map(|(v, _)| v.clone());
                 let status = status_for(&pr, installed.as_ref().map(|(v, s)| (v.as_str(), s)));
+                let meta = meta_by_tag.get(pr.tag).and_then(|m| m.get(&pr.id));
+                let name = meta.and_then(|m| m.name.clone());
+                let description = meta.and_then(|m| m.description.clone());
+                // Tag carries the version for stable; fall back to plugin_info.json
+                // (the only version source for nightly).
+                let available_version =
+                    pr.version.clone().or_else(|| meta.and_then(|m| m.version.clone()));
                 AvailablePlugin {
                     id: pr.id,
                     tag: pr.tag.to_string(),
                     channel: pr.channel.as_str().to_string(),
+                    name,
+                    description,
                     asset_name: pr.asset.name.clone(),
                     size_bytes: pr.asset.size,
-                    available_version: pr.version,
+                    available_version,
                     published_at: pr.published_at.map(str::to_string),
                     installed_version,
                     status,
