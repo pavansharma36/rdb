@@ -552,6 +552,12 @@ select option:hover {
   gap: 8px;
 }
 
+/* When both the app-update and plugin-update banners are shown, lift the
+   plugin one above the app one (both are fixed at bottom-right). */
+.update-banner-stacked {
+  bottom: 120px;
+}
+
 .update-toast {
   position: fixed;
   right: 16px;
@@ -706,6 +712,30 @@ select option:hover {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* Header row above the plugin list: the "make sure no connections are open"
+   warning on the left, the "Update all" action on the right. */
+.plugin-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.plugin-list-head .msg.warn {
+  margin: 0;
+  flex: 1;
+}
+
+.plugin-list-head > button {
+  white-space: nowrap;
+}
+
+.plugin-search {
+  width: 100%;
+  margin: 8px 0;
+  box-sizing: border-box;
 }
 
 .plugin-row {

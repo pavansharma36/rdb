@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use rdb_core::{
-    ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError, PluginInfo,
-    PluginKind, Result, ShowIf,
+    cfg_secret, ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError,
+    PluginInfo, PluginKind, Result, ShowIf,
 };
 use russh::client::{self, Handle};
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
@@ -317,10 +317,8 @@ impl Plugin for SftpPlugin {
                     .ok_or_else(|| {
                         PluginError::Config("key_path is required for key auth".into())
                     })?;
-                let passphrase = cfg
-                    .get("passphrase")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty());
+                let passphrase = cfg_secret(&cfg, "passphrase")?;
+                let passphrase = passphrase.as_deref().filter(|s| !s.is_empty());
                 let key = load_secret_key(key_path, passphrase)
                     .map_err(|e| PluginError::Connection(format!("cannot load key: {e}")))?;
                 let key = PrivateKeyWithHashAlg::new(Arc::new(key), None);
@@ -376,7 +374,7 @@ impl Plugin for SftpPlugin {
                 ok
             }
             _ => {
-                let password = cfg.get("password").and_then(|v| v.as_str()).unwrap_or("");
+                let password = cfg_secret(&cfg, "password")?.unwrap_or_default();
                 handle
                     .authenticate_password(&user, password)
                     .await

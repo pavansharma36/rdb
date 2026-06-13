@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use mongodb::{bson::doc, Client};
 use rdb_core::{
-    ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError, PluginInfo,
-    PluginKind, Result, ShowIf,
+    cfg_secret, ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError,
+    PluginInfo, PluginKind, Result, ShowIf,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -95,7 +95,7 @@ fn build_mongo_uri(cfg: &ConnectionConfig) -> Result<String> {
 
     let host = cfg_str(cfg, "host")?;
     let user = cfg_str_opt(cfg, "user").unwrap_or_default();
-    let password = cfg_str_opt(cfg, "password").unwrap_or_default();
+    let password = cfg_secret(cfg, "password")?.unwrap_or_default();
     let srv = cfg_bool(cfg, "srv");
 
     let scheme = if srv { "mongodb+srv" } else { "mongodb" };

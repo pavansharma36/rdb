@@ -124,6 +124,7 @@ pub fn run() {
             workspace_files::list_workspace_files,
             workspace_files::save_workspace_file,
             workspace_files::delete_workspace_file,
+            workspace_files::delete_workspace_dir,
             commands::pty_spawn,
             commands::pty_write,
             commands::pty_resize,

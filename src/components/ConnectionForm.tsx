@@ -1,6 +1,11 @@
 import { useMemo, useState } from "react";
-import { api, errString } from "../api";
-import type { PluginInfo, ConfigField, ConnectionConfig } from "../api";
+import { api, errString, plainSecret } from "../api";
+import type {
+  PluginInfo,
+  ConfigField,
+  ConnectionConfig,
+  SecretField,
+} from "../api";
 import type { SavedConnection } from "../store";
 import { genId } from "../store";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
@@ -26,9 +31,17 @@ function defaultValues(fields: ConfigField[]): ConnectionConfig {
   for (const f of fields) {
     if (f.default !== undefined && f.default !== null) out[f.key] = f.default;
     else if (f.type.kind === "boolean") out[f.key] = false;
+    // Password fields carry a `SecretField` ({ type, value }) rather than a
+    // bare string, so the value is self-describing about how it's stored.
+    else if (f.type.kind === "password") out[f.key] = plainSecret("");
     else out[f.key] = "";
   }
   return out;
+}
+
+/** Read a `SecretField`-shaped value back as its plaintext for display. */
+function secretValue(value: unknown): string {
+  return (value as SecretField | undefined)?.value ?? "";
 }
 
 /** A field shows unless its `show_if` rule is unmet by the current values. */
@@ -84,6 +97,8 @@ export function ConnectionForm({
 
   function coerce(field: ConfigField, raw: string): unknown {
     if (field.type.kind === "number") return raw === "" ? "" : Number(raw);
+    // Wrap secrets so the stored config keeps the `{ type, value }` shape.
+    if (field.type.kind === "password") return plainSecret(raw);
     return raw;
   }
 
@@ -285,7 +300,13 @@ function Field({
                 ? "number"
                 : "text"
           }
-          value={value === undefined || value === null ? "" : String(value)}
+          value={
+            t.kind === "password"
+              ? secretValue(value)
+              : value === undefined || value === null
+                ? ""
+                : String(value)
+          }
           placeholder={field.placeholder ?? ""}
           onChange={(e) => onChange(coerce(field, e.target.value))}
         />

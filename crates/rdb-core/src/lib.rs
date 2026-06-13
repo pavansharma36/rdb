@@ -106,6 +106,51 @@ pub struct PluginInfo {
 
 pub type ConnectionConfig = HashMap<String, serde_json::Value>;
 
+/// A credential stored in a [`ConnectionConfig`]. Every `Password`-kind config
+/// field carries one of these instead of a bare string, so a secret is
+/// self-describing about *how* it is stored.
+///
+/// Only `PlainText` exists today (the value is stored verbatim, in plaintext —
+/// the same as before this type existed). The `type` tag is the stable wire
+/// discriminant, so future storage strategies (OS keychain, env var, encrypted
+/// blob, …) can be added as new variants without changing the field shape.
+///
+/// Wire/disk form: `{ "type": "PLAIN_TEXT", "value": "hunter2" }`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", content = "value")]
+pub enum SecretField {
+    #[serde(rename = "PLAIN_TEXT")]
+    PlainText(String),
+}
+
+impl SecretField {
+    /// A plaintext secret (the only kind supported today).
+    pub fn plaintext(value: impl Into<String>) -> Self {
+        Self::PlainText(value.into())
+    }
+
+    /// The resolved plaintext secret. For `PlainText` this is the stored value.
+    /// Future variants resolve their value here (e.g. read from a keychain).
+    pub fn reveal(&self) -> &str {
+        match self {
+            SecretField::PlainText(v) => v,
+        }
+    }
+}
+
+/// Read a [`SecretField`] config value as plaintext. Returns `None` when the
+/// key is absent; errors if present but not a valid `SecretField`.
+pub fn cfg_secret(cfg: &ConnectionConfig, key: &str) -> Result<Option<String>> {
+    match cfg.get(key) {
+        None => Ok(None),
+        Some(v) => {
+            let secret: SecretField = serde_json::from_value(v.clone())
+                .map_err(|e| PluginError::Config(format!("field {key}: {e}")))?;
+            Ok(Some(secret.reveal().to_owned()))
+        }
+    }
+}
+
 /// How a `cli`-kind plugin tells the host to launch its terminal process.
 ///
 /// The host knows nothing about ssh/telnet/etc.; it asks the plugin (via the
@@ -171,5 +216,43 @@ pub trait Plugin: Send + Sync {
     async fn test(&self, config: ConnectionConfig) -> Result<()> {
         let _ = self.connect(config).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn secret_field_serializes_with_type_and_value() {
+        let secret = SecretField::plaintext("hunter2");
+        assert_eq!(
+            serde_json::to_value(&secret).unwrap(),
+            json!({ "type": "PLAIN_TEXT", "value": "hunter2" }),
+        );
+    }
+
+    #[test]
+    fn cfg_secret_round_trips_a_plain_text_secret() {
+        let mut cfg = ConnectionConfig::new();
+        cfg.insert(
+            "password".into(),
+            serde_json::to_value(SecretField::plaintext("hunter2")).unwrap(),
+        );
+        assert_eq!(cfg_secret(&cfg, "password").unwrap().as_deref(), Some("hunter2"));
+    }
+
+    #[test]
+    fn cfg_secret_is_none_when_absent() {
+        let cfg = ConnectionConfig::new();
+        assert_eq!(cfg_secret(&cfg, "password").unwrap(), None);
+    }
+
+    #[test]
+    fn cfg_secret_rejects_a_bare_string() {
+        let mut cfg = ConnectionConfig::new();
+        cfg.insert("password".into(), json!("hunter2"));
+        assert!(cfg_secret(&cfg, "password").is_err());
     }
 }

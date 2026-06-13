@@ -5,6 +5,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { InstallPluginDialog } from "./components/InstallPluginDialog";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { PluginUpdateBanner } from "./components/PluginUpdateBanner";
 import { ConfirmDialog } from "./components/Modal";
 import { useLoader, WorkspaceLoaderSlot } from "./components/Loader";
 import { clearConnectionState } from "./connectionState";
@@ -16,7 +17,7 @@ import { CliWorkspace } from "./components/workspaces/CliWorkspace";
 import { FileManagerWorkspace } from "./components/workspaces/FileManagerWorkspace";
 import type { SavedConnection } from "./store";
 import { loadConnections, saveConnections, upsert, remove, genId } from "./store";
-import { loadConfig, saveConfig } from "./store";
+import { loadConfig, saveConfig, deleteWorkspaceDir } from "./store";
 import type { AppConfig } from "./store";
 import { applyTheme, resolveTheme } from "./theme";
 
@@ -61,6 +62,9 @@ export function App() {
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   // Transient note from a manual update check ("up to date" / error).
   const [updateNote, setUpdateNote] = useState<string | null>(null);
+  // Number of installed plugins with a newer release available (checked on
+  // launch). >0 shows a dismissible banner; null/0 = none / not yet checked.
+  const [pluginUpdates, setPluginUpdates] = useState<number>(0);
   // Persisted app config (UI prefs); kept so width saves merge other fields.
   const [config, setConfig] = useState<AppConfig | null>(null);
   // Sidebar width in px, restored from config and updated by the drag handle.
@@ -104,6 +108,19 @@ export function App() {
           setInstalling(true);
           saveConfig(effective).catch(() => {});
         }
+        // Check the configured repo for newer plugin releases. Each entry
+        // already carries its install/update status from the host; surface a
+        // banner if any installed plugin is outdated. Non-blocking; errors
+        // (offline, no repo configured, rate limit) are ignored.
+        api
+          .listGithubPlugins(cfg.pluginRepo)
+          .then((avail) => {
+            const n = avail.filter(
+              (p) => p.status === "update_available",
+            ).length;
+            if (n > 0) setPluginUpdates(n);
+          })
+          .catch(() => {});
       })
       .catch(() => {});
     // Auto-check for an app update shortly after launch (non-blocking; errors,
@@ -266,6 +283,16 @@ export function App() {
     setEditingId((cur) => (cur === id ? null : cur));
     // The profile is gone; discard any preserved workspace state for it.
     clearConnectionState(id);
+    // Drop the profile's persisted UI settings from config.json.
+    setConfig((c) => {
+      if (!c?.connectionSettings?.[id]) return c;
+      const { [id]: _removed, ...rest } = c.connectionSettings;
+      const next = { ...c, connectionSettings: rest };
+      saveConfig(next).catch(() => {});
+      return next;
+    });
+    // Remove its on-disk workspace folder (saved SQL/scripts). Best effort.
+    deleteWorkspaceDir(id).catch(() => {});
   }
 
   function renderWorkspace(conn: OpenConnection) {
@@ -527,6 +554,17 @@ export function App() {
       )}
       {update && (
         <UpdateBanner update={update} onDismiss={() => setUpdate(null)} />
+      )}
+      {pluginUpdates > 0 && !installing && (
+        <PluginUpdateBanner
+          count={pluginUpdates}
+          stacked={Boolean(update)}
+          onReview={() => {
+            setPluginUpdates(0);
+            setInstalling(true);
+          }}
+          onDismiss={() => setPluginUpdates(0)}
+        />
       )}
       {updateNote && <div className="update-toast">{updateNote}</div>}
       {pendingDelete && (

@@ -2,8 +2,9 @@
 //!
 //! Profiles are stored as human-readable JSON, grouped by the plugin that owns
 //! them: `<app_data_dir>/connections/<plugin_id>/connections.json`. The files
-//! survive restarts and can be inspected. NOTE: a file includes any password
-//! field in plaintext.
+//! survive restarts and can be inspected. NOTE: a credential field is stored as
+//! a `SecretField` (`{"type":"PLAIN_TEXT","value":...}`); the `PLAIN_TEXT`
+//! variant holds the secret in plaintext.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs;

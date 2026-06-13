@@ -122,3 +122,16 @@ pub fn delete_workspace_file(
         Err(e) => Err(e.to_string()),
     }
 }
+
+/// Delete the entire workspace folder for `connection_id` (all saved files,
+/// every extension). Used when a connection profile is deleted so no orphaned
+/// snippets/scripts linger. A missing folder is treated as success.
+#[tauri::command]
+pub fn delete_workspace_dir(app: AppHandle, connection_id: String) -> Result<(), String> {
+    let dir = workspace_dir(&app, &connection_id)?;
+    match fs::remove_dir_all(&dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}

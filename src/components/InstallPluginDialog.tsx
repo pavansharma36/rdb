@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, errString } from "../api";
 import type { AvailablePlugin, GithubPreview, PluginInfo, PluginStatus } from "../api";
 import { loadConfig } from "../store";
@@ -41,6 +41,8 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
   const [channel, setChannel] = useState<string>("");
   const [available, setAvailable] = useState<AvailablePlugin[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Free-text filter over the plugin list (matches name / id / description).
+  const [query, setQuery] = useState<string>("");
 
   // The plugin the user picked, plus its fetched preview (asset + checksum)
   // awaiting confirmation.
@@ -52,6 +54,26 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
   // Id of the plugin awaiting inline uninstall confirmation, if any.
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // "Update all" progress: the plugin id currently updating + how many of the
+  // batch are done, or null when no bulk update is running.
+  const [updatingAll, setUpdatingAll] = useState<{
+    id: string;
+    done: number;
+    total: number;
+  } | null>(null);
+
+  // The list narrowed by the search box (case-insensitive over name/id/desc).
+  // "Update all" still acts on the full list, not just what's shown.
+  const filtered = useMemo(() => {
+    if (!available) return null;
+    const q = query.trim().toLowerCase();
+    if (!q) return available;
+    return available.filter((p) =>
+      [p.name, p.id, p.description]
+        .filter((s): s is string => Boolean(s))
+        .some((s) => s.toLowerCase().includes(q)),
+    );
+  }, [available, query]);
 
   // Load the configured repo + app channel, then the available plugin list
   // (each entry already carries its install/update status from the host).
@@ -122,8 +144,49 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
     }
   }
 
-  /** Uninstall an installed plugin (after inline confirmation), then refresh
-   *  the list. */
+  /** Update every plugin with an available update, one at a time. Each plugin
+   *  is previewed (to resolve its asset + published checksum) then installed,
+   *  verifying the checksum when one is published. Stops at the first failure
+   *  so a broken release doesn't cascade; plugins already updated stay updated. */
+  async function onUpdateAll() {
+    const outdated = (available ?? []).filter(
+      (p) => p.status === "update_available",
+    );
+    if (outdated.length === 0) return;
+    setError(null);
+    // Clear any pending single-plugin selection so the two flows don't fight.
+    setSelected(null);
+    setPreview(null);
+    let done = 0;
+    for (const plugin of outdated) {
+      setUpdatingAll({ id: plugin.id, done, total: outdated.length });
+      try {
+        const pv = await api.previewGithubPlugin(repo, plugin.tag, plugin.id);
+        const info = await api.installGithubPlugin(
+          pv.repo,
+          pv.tag,
+          plugin.id,
+          pv.sha256,
+        );
+        setAvailable((list) =>
+          (list ?? []).map((p) =>
+            p.id === info.id
+              ? { ...p, status: "up_to_date", installedVersion: info.version }
+              : p,
+          ),
+        );
+        onInstalled(info);
+      } catch (e) {
+        setError(`Updating ${plugin.name ?? plugin.id} failed: ${errString(e)}`);
+        setUpdatingAll(null);
+        return;
+      }
+      done += 1;
+    }
+    setUpdatingAll(null);
+  }
+
+
   async function onUninstall(plugin: AvailablePlugin) {
     setError(null);
     setConfirmingId(null);
@@ -168,7 +231,12 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
 
   return (
     <Modal
-      onClose={onClose}
+      onClose={() => {
+        // Don't let a backdrop click / × close the dialog mid-bulk-update;
+        // closing would orphan the in-flight install progress.
+        if (updatingAll) return;
+        onClose();
+      }}
       title={
         <>
           Install plugin{repo ? ` from ${repo}` : ""}
@@ -188,14 +256,44 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
 
         {available && available.length > 0 && (
           <div>
-            <p className="msg warn">Make sure no connections are open while updating plugin.</p>
-            <ul className="plugin-list">
-              {available.map((plugin) => {
+            <div className="plugin-list-head">
+              <p className="msg warn">Make sure no connections are open while updating plugin.</p>
+              {available.some((p) => p.status === "update_available") && (
+                <button
+                  className="primary"
+                  onClick={onUpdateAll}
+                  disabled={
+                    busy !== null ||
+                    uninstalling !== null ||
+                    updatingAll !== null
+                  }
+                >
+                  {updatingAll
+                    ? `Updating ${updatingAll.done + 1}/${updatingAll.total}…`
+                    : `Update all (${available.filter((p) => p.status === "update_available").length})`}
+                </button>
+              )}
+            </div>
+            <input
+              type="text"
+              className="plugin-search"
+              placeholder="Search plugins…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              disabled={updatingAll !== null}
+            />
+            {filtered && filtered.length === 0 ? (
+              <p className="muted">No plugins match “{query.trim()}”.</p>
+            ) : (
+              <ul className="plugin-list">
+                {(filtered ?? []).map((plugin) => {
                 const active = selected?.id === plugin.id;
                 const upToDate = plugin.status === "up_to_date";
                 const installed = plugin.status !== "not_installed";
                 const removing = uninstalling === plugin.id;
                 const confirming = confirmingId === plugin.id;
+                // This row is the one currently being updated by "Update all".
+                const bulkUpdating = updatingAll?.id === plugin.id;
                 return (
                   <li key={plugin.id} className="plugin-row">
                     <div className="plugin-row-main">
@@ -204,7 +302,11 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
                         <span className="muted small">{plugin.description}</span>
                       )}
                       <span className="muted small">
-                        {confirming ? "Delete this plugin's files?" : statusNote(plugin)}
+                        {confirming
+                          ? "Delete this plugin's files?"
+                          : bulkUpdating
+                          ? "Updating…"
+                          : statusNote(plugin)}
                       </span>
                     </div>
                     <div className="plugin-row-actions">
@@ -228,17 +330,28 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
                         <>
                           <button
                             onClick={() => onSelect(plugin)}
-                            disabled={busy !== null || uninstalling !== null || upToDate}
+                            disabled={
+                              busy !== null ||
+                              uninstalling !== null ||
+                              updatingAll !== null ||
+                              upToDate
+                            }
                             className={plugin.status === "update_available" ? "primary" : ""}
                           >
-                            {active && busy === "preview"
+                            {bulkUpdating
+                              ? "Updating…"
+                              : active && busy === "preview"
                               ? "Fetching…"
                               : actionLabel(plugin.status)}
                           </button>
                           {installed && (
                             <button
                               onClick={() => setConfirmingId(plugin.id)}
-                              disabled={busy !== null || uninstalling !== null}
+                              disabled={
+                                busy !== null ||
+                                uninstalling !== null ||
+                                updatingAll !== null
+                              }
                               className="danger"
                             >
                               Uninstall
@@ -250,7 +363,8 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
                   </li>
                 );
               })}
-            </ul>
+              </ul>
+            )}
           </div>
         )}
 

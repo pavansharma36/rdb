@@ -9,8 +9,8 @@
 
 use async_trait::async_trait;
 use rdb_core::{
-    ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError, PluginInfo,
-    PluginKind, Result,
+    cfg_secret, ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError,
+    PluginInfo, PluginKind, Result,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -342,7 +342,7 @@ impl Plugin for RabbitMqPlugin {
         let host = cfg_str(&cfg, "host")?;
         let port = cfg_u16(&cfg, "port", 15672);
         let user = cfg_str_opt(&cfg, "user").unwrap_or_else(|| "guest".into());
-        let password = cfg_str_opt(&cfg, "password").unwrap_or_else(|| "guest".into());
+        let password = cfg_secret(&cfg, "password")?.unwrap_or_else(|| "guest".into());
         let default_vhost = cfg_str_opt(&cfg, "vhost").unwrap_or_else(|| "/".into());
         let scheme = if cfg_bool(&cfg, "tls") { "https" } else { "http" };
         let base = format!("{scheme}://{host}:{port}");

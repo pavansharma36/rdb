@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use rdb_core::{
-    ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError, PluginInfo,
-    PluginKind, PtyPromptResponse, PtySpawnSpec, Result, ShowIf,
+    cfg_secret, ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError,
+    PluginInfo, PluginKind, PtyPromptResponse, PtySpawnSpec, Result, ShowIf,
 };
 use std::sync::Arc;
 
@@ -179,7 +179,7 @@ fn build_spawn_spec(cfg: &ConnectionConfig) -> Result<PtySpawnSpec> {
         .get("auth_mode")
         .and_then(|v| v.as_str())
         .unwrap_or("password");
-    let password = cfg.get("password").and_then(|v| v.as_str());
+    let password = cfg_secret(cfg, "password")?;
     let key_path = cfg.get("key_path").and_then(|v| v.as_str());
 
     let mut args: Vec<String> = vec![
@@ -220,7 +220,7 @@ fn build_spawn_spec(cfg: &ConnectionConfig) -> Result<PtySpawnSpec> {
             if let Some(pw) = password.filter(|p| !p.is_empty()) {
                 prompt_response = Some(PtyPromptResponse {
                     pattern: "password:".into(),
-                    send: pw.into(),
+                    send: pw,
                 });
             }
         }

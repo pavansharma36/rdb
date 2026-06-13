@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
 use rdb_core::{
-    ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError, PluginInfo,
-    PluginKind, Result,
+    cfg_secret, ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError,
+    PluginInfo, PluginKind, Result,
 };
 use rdb_rdbms_common::{
     downcast_conn, ApplyResult, BrowseFilter, BrowseSpec, Column, ColumnMeta, ColumnValue,
@@ -83,7 +83,7 @@ fn build_url(cfg: &ConnectionConfig, database: &str) -> Result<String> {
     let host = cfg_str(cfg, "host")?;
     let port = cfg_u16(cfg, "port", 5432);
     let user = cfg_str(cfg, "user")?;
-    let password = cfg_str_opt(cfg, "password").unwrap_or_default();
+    let password = cfg_secret(cfg, "password")?.unwrap_or_default();
     let ssl = cfg_str_opt(cfg, "ssl").unwrap_or_else(|| "prefer".into());
     Ok(format!(
         "postgres://{u}:{p}@{host}:{port}/{database}?sslmode={ssl}",

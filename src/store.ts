@@ -135,3 +135,9 @@ export function deleteWorkspaceFile(
 ): Promise<void> {
   return invoke<void>("delete_workspace_file", { connectionId, name, ext });
 }
+
+/** Delete a connection profile's entire workspace folder (all saved files of
+ * every extension). Used when the profile itself is deleted. */
+export function deleteWorkspaceDir(connectionId: string): Promise<void> {
+  return invoke<void>("delete_workspace_dir", { connectionId });
+}
