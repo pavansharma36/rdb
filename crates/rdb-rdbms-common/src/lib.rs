@@ -112,6 +112,12 @@ pub struct QueryResult {
     /// the user knows more rows exist than are shown.
     #[serde(default)]
     pub result_truncated: bool,
+    /// The single SQL statement that produced this result, when it is a
+    /// re-runnable query (SELECT-ish / browse). `None` for DML/DDL statements
+    /// whose result is a row count, not a row set. Carried so the frontend can
+    /// ask the plugin to re-run it and export the full result set.
+    #[serde(default)]
+    pub sql: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,11 +318,26 @@ pub trait RdbmsPlugin: Send + Sync {
             rows_affected: None,
             elapsed_ms: 0,
             result_truncated: false,
+            sql: None,
         }))
     }
 
     /// Run a SQL script and return one [`QueryResult`] per statement, in order.
     async fn execute(&self, conn: Arc<dyn Connection>, sql: &str) -> Result<Vec<QueryResult>>;
+
+    /// Run a single re-runnable query (`sql`) and write its **full** result set
+    /// (no row cap) to `path` as CSV, returning the number of data rows written.
+    /// The plugin owns the connection pool, so it streams rows straight to disk
+    /// rather than shipping them across the wire. Plugins that don't support
+    /// CSV export return [`PluginError::Unsupported`].
+    async fn export_csv(
+        &self,
+        _conn: Arc<dyn Connection>,
+        _sql: &str,
+        _path: &str,
+    ) -> Result<u64> {
+        Err(PluginError::Unsupported)
+    }
 
     /// Apply a batch of inserts/updates/deletes to one table atomically (in a
     /// single transaction). Plugins that don't support editing return
@@ -337,6 +358,91 @@ pub fn downcast_conn<T: 'static>(conn: &Arc<dyn Connection>) -> Result<&T> {
     conn.as_any()
         .downcast_ref::<T>()
         .ok_or_else(|| PluginError::Backend("connection type mismatch".into()))
+}
+
+// ---------------------------------------------------------------------------
+// CSV export (shared by RDBMS plugins implementing `export_csv`)
+// ---------------------------------------------------------------------------
+
+use std::fs::File;
+use std::io::{BufWriter, Write as _};
+use std::path::Path;
+
+/// Render one JSON cell as a CSV field (unescaped): `Null` -> empty string,
+/// `String` -> its text, anything else -> its compact JSON rendering (so a
+/// number stays `42`, a bool `true`, an array/object its JSON text). The
+/// returned string is escaped by [`CsvWriter`] as needed.
+fn cell_to_csv(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => String::new(),
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// Escape a CSV field per RFC 4180: wrap in double quotes (doubling any
+/// internal quote) when it contains a comma, quote, or newline.
+fn escape_csv_field(s: &str) -> String {
+    if s.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+/// A streaming CSV writer over a buffered file. RDBMS plugins implementing
+/// [`RdbmsPlugin::export_csv`] create one, write the header, then push rows as
+/// they stream from the backend — keeping memory bounded on large exports.
+///
+/// Each row is `&[serde_json::Value]` (the same cell representation the grid
+/// uses, via the plugin's value decoder), so dialects share the formatting and
+/// escaping. Lines are terminated with `\r\n` (RFC 4180); cells use
+/// [`cell_to_csv`] + [`escape_csv_field`].
+pub struct CsvWriter {
+    out: BufWriter<File>,
+    cols: usize,
+}
+
+impl CsvWriter {
+    /// Create the file at `path` and write the header row built from `columns`.
+    /// The number of columns fixes the field count for subsequent rows.
+    pub fn create(path: impl AsRef<Path>, columns: &[ColumnMeta]) -> Result<Self> {
+        let file = File::create(path).map_err(|e| PluginError::Backend(e.to_string()))?;
+        let mut w = CsvWriter {
+            out: BufWriter::new(file),
+            cols: columns.len(),
+        };
+        let header: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+        w.write_line(header.iter().map(|s| escape_csv_field(s)))?;
+        Ok(w)
+    }
+
+    /// Write one data row. Extra cells beyond the header width are ignored and
+    /// missing ones are left blank, so a ragged row never corrupts the file.
+    pub fn write_row(&mut self, cells: &[serde_json::Value]) -> Result<()> {
+        let fields = (0..self.cols).map(|i| {
+            cells
+                .get(i)
+                .map(|v| escape_csv_field(&cell_to_csv(v)))
+                .unwrap_or_default()
+        });
+        self.write_line(fields)
+    }
+
+    /// Flush any buffered bytes to disk. Call once after the last row.
+    pub fn finish(mut self) -> Result<()> {
+        self.out
+            .flush()
+            .map_err(|e| PluginError::Backend(e.to_string()))
+    }
+
+    fn write_line(&mut self, fields: impl Iterator<Item = String>) -> Result<()> {
+        let line = fields.collect::<Vec<_>>().join(",");
+        self.out
+            .write_all(line.as_bytes())
+            .and_then(|_| self.out.write_all(b"\r\n"))
+            .map_err(|e| PluginError::Backend(e.to_string()))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +481,12 @@ struct BrowseTableParams {
 #[derive(Deserialize)]
 struct ExecuteParams {
     sql: String,
+}
+
+#[derive(Deserialize)]
+struct ExportCsvParams {
+    sql: String,
+    path: String,
 }
 
 #[derive(Deserialize)]
@@ -430,6 +542,10 @@ pub async fn dispatch_rdbms(
             let p: ExecuteParams = parse(params)?;
             to_value(plugin.execute(conn, &p.sql).await?)
         }
+        "rdbms.export_csv" => {
+            let p: ExportCsvParams = parse(params)?;
+            to_value(plugin.export_csv(conn, &p.sql, &p.path).await?)
+        }
         "rdbms.apply_changes" => {
             let p: ApplyChangesParams = parse(params)?;
             to_value(plugin.apply_changes(conn, &p.schema, &p.table, p.changes).await?)
@@ -481,6 +597,7 @@ mod tests {
                 rows_affected: Some(0),
                 elapsed_ms: 0,
                 result_truncated: false,
+                sql: None,
             }])
         }
     }

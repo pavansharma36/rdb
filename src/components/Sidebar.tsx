@@ -362,6 +362,7 @@ export function Sidebar({
               </a>
             </p>
             <p className="muted">Licensed under MIT OR Apache-2.0.</p>
+            <p className="muted">Made in India, with love ❤️</p>
           </div>
         </Modal>
       )}

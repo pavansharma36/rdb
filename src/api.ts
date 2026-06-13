@@ -188,6 +188,9 @@ export interface QueryResult {
   elapsed_ms: number;
   /** True when the result was capped at the row limit, so `rows` is partial. */
   result_truncated?: boolean;
+  /** The SQL that produced this result, when re-runnable (SELECT-ish/browse).
+   * `null`/absent for DML whose result is a row count. Used to export. */
+  sql?: string | null;
 }
 
 /** Accepted browse-filter operators (mirrors `BrowseFilter::OPS` in Rust).
@@ -456,6 +459,11 @@ export const api = {
   /** Run a SQL script; returns one result per statement, in order. */
   rdbmsExecute: (connectionId: ConnectionId, sql: string) =>
     pluginCall<QueryResult[]>(connectionId, "rdbms.execute", { sql }),
+
+  /** Re-run `sql` and have the plugin write the full result set (no row cap) to
+   * `path` as CSV. Returns the number of data rows written. */
+  rdbmsExportCsv: (connectionId: ConnectionId, sql: string, path: string) =>
+    pluginCall<number>(connectionId, "rdbms.export_csv", { sql, path }),
 
   /** Cancel the in-flight plugin call for a connection (aborts it on the server). */
   cancelLastPluginCall: (connectionId: ConnectionId) =>
