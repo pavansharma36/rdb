@@ -6,7 +6,7 @@ use rdb_core::{
 };
 use rdb_rdbms_common::{
     downcast_conn, ApplyResult, BrowseFilter, BrowseSpec, Column, ColumnMeta, ColumnValue,
-    ForeignKey, Index, QueryResult, RdbmsPlugin, RowChanges, Schema, Table, TableKind,
+    CsvWriter, ForeignKey, Index, QueryResult, RdbmsPlugin, RowChanges, Schema, Table, TableKind,
 };
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column as _, Executor, Row, TypeInfo};
@@ -597,6 +597,11 @@ impl RdbmsPlugin for PostgresPlugin {
             .await
             .map_err(|e| PluginError::Backend(e.to_string()))?;
 
+        // Only a parameterless browse SQL is re-runnable as-is for export;
+        // structured filters bind `$n` params that `export_csv` can't supply.
+        // Capture it before `sql` may be consumed by the describe path below.
+        let export_sql = params.is_empty().then(|| sql.clone());
+
         // Headers from the first row, or by describing the statement when empty
         // (so the grid still shows columns). The describe path can't bind, but
         // an empty result means the filters excluded everything — the column
@@ -625,6 +630,7 @@ impl RdbmsPlugin for PostgresPlugin {
             // Browsing is page-based (LIMIT/OFFSET from BrowseSpec), so the
             // per-query row cap doesn't apply.
             result_truncated: false,
+            sql: export_sql,
         })
     }
 
@@ -657,6 +663,7 @@ impl RdbmsPlugin for PostgresPlugin {
                     rows_affected: None,
                     elapsed_ms,
                     result_truncated,
+                    sql: Some(stmt.clone()),
                 });
             } else {
                 let res = sqlx::query(AssertSqlSafe(stmt.clone()))
@@ -677,10 +684,57 @@ impl RdbmsPlugin for PostgresPlugin {
                     rows_affected: Some(res.rows_affected()),
                     elapsed_ms,
                     result_truncated: false,
+                    sql: None,
                 });
             }
         }
         Ok(results)
+    }
+
+    async fn export_csv(&self, conn: Arc<dyn Connection>, sql: &str, path: &str) -> Result<u64> {
+        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        let pool = conn.pool();
+
+        // Stream the full result set (no row cap) straight to the file so a
+        // large export never materialises in memory. Column headers come from
+        // the first row, or `describe` when the result is empty.
+        let mut stream = sqlx::query(AssertSqlSafe(sql)).fetch(&pool);
+        let mut writer: Option<CsvWriter> = None;
+        let mut count: u64 = 0;
+        while let Some(row) = stream.try_next().await.map_err(|e| {
+            tracing::warn!("postgres export query failed: {e}");
+            PluginError::Backend(e.to_string())
+        })? {
+            if writer.is_none() {
+                writer = Some(CsvWriter::create(path, &columns_of(&row))?);
+            }
+            // Safe: set on the first iteration above.
+            writer.as_mut().unwrap().write_row(&row_to_json(&row))?;
+            count += 1;
+        }
+        drop(stream);
+
+        // Empty result: still write a header-only file using the described columns.
+        let writer = match writer {
+            Some(w) => w,
+            None => {
+                let columns = match pool.describe(AssertSqlSafe(sql).into_sql_str()).await {
+                    Ok(d) => d
+                        .columns
+                        .iter()
+                        .map(|c| ColumnMeta {
+                            name: c.name().to_string(),
+                            data_type: c.type_info().name().to_string(),
+                        })
+                        .collect::<Vec<_>>(),
+                    Err(_) => Vec::new(),
+                };
+                CsvWriter::create(path, &columns)?
+            }
+        };
+        writer.finish()?;
+        tracing::debug!("exported {count} row(s) to {path}");
+        Ok(count)
     }
 
     async fn apply_changes(

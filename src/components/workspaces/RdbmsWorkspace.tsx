@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { api, errString } from "../../api";
 import type {
   BrowseFilter,
@@ -237,6 +238,7 @@ export function RdbmsWorkspace({
   );
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // Set when a blur should be ignored because the edit was already staged or
@@ -901,6 +903,36 @@ export function RdbmsWorkspace({
     setNotice(null);
   }
 
+  // Export the active result as CSV. The plugin re-runs `result.sql` (no row
+  // cap) and writes the full set to the chosen path, so a truncated grid still
+  // exports completely. Hidden unless the result carries re-runnable SQL.
+  async function exportCsv() {
+    if (!result?.sql) return;
+    const base = edit ? edit.table : "export";
+    let path: string | null;
+    try {
+      path = await saveDialog({
+        defaultPath: `${base}.csv`,
+        filters: [{ name: "CSV", extensions: ["csv"] }],
+      });
+    } catch (e) {
+      setError(errString(e));
+      return;
+    }
+    if (!path) return; // user cancelled the dialog
+    setExporting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const rows = await api.rdbmsExportCsv(connectionId, result.sql, path);
+      setNotice(`Exported ${rows} row(s) to ${path}.`);
+    } catch (e) {
+      setError(errString(e));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   const editable =
     edit !== null &&
     result !== null &&
@@ -1434,6 +1466,15 @@ export function RdbmsWorkspace({
             )}
             {tableView === "data" && <span>{result.elapsed_ms} ms</span>}
             <span className="spacer" />
+            {tableView === "data" && result.sql && (
+              <button
+                disabled={exporting}
+                title="Export the full result set as CSV"
+                onClick={exportCsv}
+              >
+                {exporting ? "Exporting…" : "Export CSV"}
+              </button>
+            )}
             {editable && dirty && (
               <>
                 <span className="status-line">
