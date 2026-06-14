@@ -359,7 +359,13 @@ impl RdbmsPlugin for SnowflakePlugin {
 
                 let nullable = r.get(3).map(json_to_string).unwrap_or_default();
 
-                let default_value = r.get(4).map(json_to_string);
+                let default_value = match r.get(4) {
+                  Some(v) => match v {
+                      serde_json::Value::String(s) => Some(s.into()),
+                      _ => None,
+                  },
+                  _ => None
+                };
 
                 let primary_key = r.get(5).map(json_to_string).unwrap_or_default();
 
@@ -688,14 +694,6 @@ fn json_to_string(v: &serde_json::Value) -> String {
     }
 }
 
-fn json_to_i32(v: &serde_json::Value) -> Option<i32> {
-    match v {
-        serde_json::Value::Number(n) => n.as_i64().map(|n| n as i32),
-        serde_json::Value::String(s) => s.parse().ok(),
-        _ => None,
-    }
-}
-
 fn build_update(
     schema: &str,
     table: &str,
@@ -1004,7 +1002,7 @@ fn dollar_tag_end(b: &[u8], start: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rdb_core::test_utils::{find_connection_config, SavedConnection};
+    use rdb_core::test_utils::{find_connection_config};
     use std::path::Path;
 
     /// Live integration test against a real Snowflake account.
@@ -1040,9 +1038,6 @@ mod tests {
             .connect(cfg)
             .await
             .expect("failed to open snowflake connection");
-
-        let sql = std::env::var("RDB_SNOWFLAKE_QUERY")
-            .unwrap_or_else(|_| "SELECT CURRENT_VERSION() AS version".to_string());
 
         let results = plugin
             .describe_table(conn, "TEST_SCHEMA", "CALL_CENTER", false)
