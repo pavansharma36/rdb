@@ -60,8 +60,7 @@
       </p>
       <div class="callout">
         <b>macOS Gatekeeper:</b> builds may be unsigned/un-notarized. If the app
-        is blocked on first launch, right-click the app and choose <b>Open</b>,
-        then confirm.
+        is blocked on first launch, run <b>"xattr -c /Applications/rdb.app"</b> to allow it.
       </div>
       <p>
         The app ships with <b>no database drivers</b> — those live in plugins.
