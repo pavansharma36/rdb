@@ -203,4 +203,4 @@ jobs:
         uses: EndBug/latest-tag@v1
         with:
           description: "Points to the most recent plugins build on master"
-          tag-name: "plugins-latest"
+          ref: "plugins-latest"
