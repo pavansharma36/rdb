@@ -9,15 +9,15 @@ use rdb_rdbms_common::{
     CsvWriter, ForeignKey, Index, QueryResult, RdbmsPlugin, RowChanges, Schema, Table,
     TableDescription, TableKind,
 };
-use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
+use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
 use sqlx::{Column as _, Executor, Row, TypeInfo};
 use sqlx::{AssertSqlSafe, SqlSafeStr};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-pub struct PostgresPlugin;
+pub struct MysqlPlugin;
 
-impl PostgresPlugin {
+impl MysqlPlugin {
     pub fn new() -> Self {
         Self
     }
@@ -26,26 +26,20 @@ impl PostgresPlugin {
     /// [`describe_table`](RdbmsPlugin::describe_table) when `include_indexes` is set.
     async fn list_indexes(
         &self,
-        conn: &PostgresConnection,
+        conn: &MysqlConnection,
         schema: &str,
         table: &str,
     ) -> Result<Vec<Index>> {
-        // Each index's columns come back as a text[] of column expressions in
-        // key order. `indkey` is a 0-based int2vector, but pg_get_indexdef's
-        // column number is 1-based (and 0 means "the whole index" → it would
-        // return the full CREATE INDEX statement), so offset the subscript by 1.
-        let rows: Vec<(String, String, bool, bool, Vec<String>)> = sqlx::query_as(
-            "select i.relname, am.amname, ix.indisunique, ix.indisprimary, \
-                    array(select pg_get_indexdef(ix.indexrelid, k.n + 1, true) \
-                          from generate_subscripts(ix.indkey, 1) as k(n) \
-                          order by k.n) \
-             from pg_index ix \
-             join pg_class i on i.oid = ix.indexrelid \
-             join pg_class t on t.oid = ix.indrelid \
-             join pg_namespace n on n.oid = t.relnamespace \
-             join pg_am am on am.oid = i.relam \
-             where n.nspname = $1 and t.relname = $2 \
-             order by ix.indisprimary desc, i.relname",
+        // statistics has one row per index column; aggregate into one Index per
+        // index name with columns ordered by seq_in_index.
+        let rows: Vec<(String, String, i64, String)> = sqlx::query_as(
+            // non_unique is unsigned on some servers, signed on others; CAST to
+            // SIGNED for a deterministic decode. seq_in_index is only needed for
+            // ordering, so it stays in ORDER BY and out of the projection.
+            "select index_name, column_name, cast(non_unique as signed), index_type \
+             from information_schema.statistics \
+             where table_schema = ? and table_name = ? \
+             order by (index_name = 'PRIMARY') desc, index_name, seq_in_index",
         )
         .bind(schema)
         .bind(table)
@@ -53,47 +47,53 @@ impl PostgresPlugin {
         .await
         .map_err(|e| PluginError::Backend(e.to_string()))?;
 
-        Ok(rows
-            .into_iter()
-            .map(|(name, method, unique, primary, columns)| Index {
-                name,
-                method,
-                unique,
-                primary,
-                columns,
-            })
-            .collect())
+        // Group consecutive rows by index_name (the query orders by name).
+        let mut out: Vec<Index> = Vec::new();
+        for (name, column, non_unique, method) in rows {
+            if let Some(last) = out.last_mut().filter(|ix| ix.name == name) {
+                last.columns.push(column);
+            } else {
+                out.push(Index {
+                    primary: name == "PRIMARY",
+                    unique: non_unique == 0,
+                    method,
+                    columns: vec![column],
+                    name,
+                });
+            }
+        }
+        Ok(out)
     }
 }
 
-impl Default for PostgresPlugin {
+impl Default for MysqlPlugin {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// A live connection to one database on a Postgres server.
+/// A live connection to one database on a MySQL server.
 ///
-/// The pool sits behind a lock so the active database can be switched in place
-/// (Postgres binds a connection to a single database, so switching means
-/// building a fresh pool) without changing the connection's id. `config` keeps
-/// the original host/credentials so a new pool can be built for another
-/// database on the same server.
-pub struct PostgresConnection {
-    pool: RwLock<PgPool>,
+/// In MySQL a "schema" *is* a database, and a connection is scoped to one
+/// default database. The pool sits behind a lock so the active database can be
+/// switched in place (by building a fresh pool pointed at the new database)
+/// without changing the connection's id. `config` keeps the original
+/// host/credentials so a new pool can be built for another database.
+pub struct MysqlConnection {
+    pool: RwLock<MySqlPool>,
     config: ConnectionConfig,
 }
 
-impl PostgresConnection {
+impl MysqlConnection {
     /// A cheap clone of the current pool (sqlx pools are internally `Arc`d). The
     /// lock is released before the returned pool is awaited on, so a concurrent
     /// `use_database` swap never blocks in-flight queries.
-    fn pool(&self) -> PgPool {
+    fn pool(&self) -> MySqlPool {
         self.pool.read().unwrap().clone()
     }
 }
 
-impl Connection for PostgresConnection {
+impl Connection for MysqlConnection {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -120,36 +120,34 @@ fn cfg_u16(cfg: &ConnectionConfig, key: &str, default: u16) -> u16 {
 /// fetching stops at this count and the result is flagged as truncated.
 const DEFAULT_MAX_ROW_COUNT: u64 = 10_000;
 
-/// Build a `postgres://` URL from a config, pointed at `database`. The database
-/// is passed explicitly (rather than read from `cfg`) so the same credentials
-/// can be reused to connect to a different database when switching.
+/// Build a `mysql://` URL from a config, pointed at `database`. The database is
+/// passed explicitly (rather than read from `cfg`) so the same credentials can
+/// be reused to connect to a different database when switching.
 fn build_url(cfg: &ConnectionConfig, database: &str) -> Result<String> {
     let host = cfg_str(cfg, "host")?;
-    let port = cfg_u16(cfg, "port", 5432);
+    let port = cfg_u16(cfg, "port", 3306);
     let user = cfg_str(cfg, "user")?;
     let password = cfg_secret(cfg, "password")?.unwrap_or_default();
-    let ssl = cfg_str_opt(cfg, "ssl").unwrap_or_else(|| "prefer".into());
+    let ssl = cfg_str_opt(cfg, "ssl").unwrap_or_else(|| "preferred".into());
     Ok(format!(
-        "postgres://{u}:{p}@{host}:{port}/{database}?sslmode={ssl}",
+        "mysql://{u}:{p}@{host}:{port}/{database}?ssl-mode={ssl}",
         u = urlencode(&user),
         p = urlencode(&password),
         database = urlencode(database),
     ))
 }
 
-async fn make_pool(url: &str) -> Result<PgPool> {
-    PgPoolOptions::new()
+async fn make_pool(url: &str) -> Result<MySqlPool> {
+    MySqlPoolOptions::new()
         .max_connections(8)
         .connect(url)
         .await
         .map_err(|e| PluginError::Connection(e.to_string()))
 }
 
-/// Replace the database path segment in a `postgres://` URL with `database`.
-/// Finds the path component (after the authority) and replaces it.
+/// Replace the database path segment in a `mysql://` URL with `database`.
 fn swap_database_in_url(base: &str, database: &str) -> Result<String> {
-    // A postgres URL looks like: postgres://user:pass@host:port/dbname[?params]
-    // Find the third '/' (end of authority) and replace everything up to '?'.
+    // A mysql URL looks like: mysql://user:pass@host:port/dbname[?params]
     let after_scheme = base
         .find("://")
         .map(|i| i + 3)
@@ -160,22 +158,41 @@ fn swap_database_in_url(base: &str, database: &str) -> Result<String> {
         .ok_or_else(|| PluginError::Config("invalid connection string: no database path".into()))?;
     let query_start = base[path_start..].find('?').map(|i| path_start + i);
     let suffix = query_start.map(|i| &base[i..]).unwrap_or("");
-    Ok(format!(
-        "{}/{}{suffix}",
-        &base[..path_start],
-        urlencode(database),
-    ))
+    Ok(format!("{}/{}{suffix}", &base[..path_start], urlencode(database)))
+}
+
+/// The default database for a connection: the `database` field, or the one
+/// embedded in a connection-string URL.
+fn current_database(cfg: &ConnectionConfig) -> Result<String> {
+    if cfg_str_opt(cfg, "mode").as_deref() == Some("url") {
+        let url = cfg_str(cfg, "connection_string")?;
+        let after_scheme = url
+            .find("://")
+            .map(|i| i + 3)
+            .ok_or_else(|| PluginError::Config("invalid connection string: no scheme".into()))?;
+        let path_start = url[after_scheme..]
+            .find('/')
+            .map(|i| after_scheme + i + 1)
+            .ok_or_else(|| PluginError::Config("connection string has no database".into()))?;
+        let end = url[path_start..]
+            .find('?')
+            .map(|i| path_start + i)
+            .unwrap_or(url.len());
+        Ok(urldecode(&url[path_start..end]))
+    } else {
+        cfg_str(cfg, "database")
+    }
 }
 
 #[async_trait]
-impl Plugin for PostgresPlugin {
+impl Plugin for MysqlPlugin {
     fn info(&self) -> PluginInfo {
         PluginInfo {
-            id: "postgres".into(),
-            name: "PostgreSQL".into(),
+            id: "mysql".into(),
+            name: "MySQL".into(),
             kind: PluginKind::Rdbms,
             version: env!("CARGO_PKG_VERSION").into(),
-            description: "Connect to PostgreSQL 12+ databases.".into(),
+            description: "Connect to MySQL 8.0+ and MariaDB databases.".into(),
             ui_module: Some("rdbms".into()),
             protocol_version: rdb_core::PROTOCOL_VERSION,
             config_schema: vec![
@@ -195,8 +212,8 @@ impl Plugin for PostgresPlugin {
                     label: "Connection string".into(),
                     field_type: ConfigFieldType::Text,
                     required: true,
-                    default: Some("postgres://user:password@localhost:5432/dbname".into()),
-                    placeholder: Some("postgres://user:password@localhost:5432/dbname".into()),
+                    default: Some("mysql://user:password@localhost:3306/dbname".into()),
+                    placeholder: Some("mysql://user:password@localhost:3306/dbname".into()),
                     show_if: Some(rdb_core::ShowIf {
                         field: "mode".into(),
                         equals: "url".into(),
@@ -219,7 +236,7 @@ impl Plugin for PostgresPlugin {
                     label: "Port".into(),
                     field_type: ConfigFieldType::Number,
                     required: true,
-                    default: Some(serde_json::json!(5432)),
+                    default: Some(serde_json::json!(3306)),
                     placeholder: None,
                     show_if: Some(rdb_core::ShowIf {
                         field: "mode".into(),
@@ -232,30 +249,19 @@ impl Plugin for PostgresPlugin {
                     field_type: ConfigFieldType::Text,
                     required: true,
                     default: None,
-                    placeholder: Some("postgres".into()),
+                    placeholder: Some("mysql".into()),
                     show_if: Some(rdb_core::ShowIf {
                         field: "mode".into(),
                         equals: "individual".into(),
                     }),
                 },
                 ConfigField {
-                    key: "schema".into(),
-                    label: "Schema".into(),
-                    field_type: ConfigFieldType::Text,
-                    required: false,
-                    default: None,
-                    placeholder: Some("public".into()),
-                    // No show_if: applies to both connection modes; it only
-                    // controls which schema the UI expands by default.
-                    show_if: None,
-                },
-                ConfigField {
                     key: "user".into(),
                     label: "User".into(),
                     field_type: ConfigFieldType::Text,
                     required: true,
-                    default: None,
-                    placeholder: Some("postgres".into()),
+                    default: Some(serde_json::json!("root")),
+                    placeholder: Some("root".into()),
                     show_if: Some(rdb_core::ShowIf {
                         field: "mode".into(),
                         equals: "individual".into(),
@@ -275,12 +281,16 @@ impl Plugin for PostgresPlugin {
                 },
                 ConfigField {
                     key: "ssl".into(),
-                    label: "SSL".into(),
+                    label: "SSL mode".into(),
                     field_type: ConfigFieldType::Select {
-                        options: vec!["disable".into(), "prefer".into(), "require".into()],
+                        options: vec![
+                            "disabled".into(),
+                            "preferred".into(),
+                            "required".into(),
+                        ],
                     },
                     required: false,
-                    default: Some(serde_json::json!("prefer")),
+                    default: Some(serde_json::json!("preferred")),
                     placeholder: None,
                     show_if: Some(rdb_core::ShowIf {
                         field: "mode".into(),
@@ -300,19 +310,16 @@ impl Plugin for PostgresPlugin {
         };
         // Never log `url` — it carries the password. Log only safe fields.
         tracing::info!(
-            "connecting to postgres host={} port={} db={}",
+            "connecting to mysql host={} port={} db={}",
             cfg_str_opt(&cfg, "host").as_deref().unwrap_or("?"),
-            cfg_str_opt(&cfg, "port")
-                .or_else(|| cfg.get("port").map(|v| v.to_string()))
-                .as_deref()
-                .unwrap_or("?"),
+            cfg.get("port").map(|v| v.to_string()).as_deref().unwrap_or("?"),
             cfg_str_opt(&cfg, "database").as_deref().unwrap_or("?"),
         );
         let pool = make_pool(&url).await.inspect_err(|e| {
-            tracing::warn!("postgres connection failed: {e}");
+            tracing::warn!("mysql connection failed: {e}");
         })?;
-        tracing::info!("postgres pool established");
-        Ok(Arc::new(PostgresConnection {
+        tracing::info!("mysql pool established");
+        Ok(Arc::new(MysqlConnection {
             pool: RwLock::new(pool),
             config: cfg,
         }))
@@ -320,27 +327,24 @@ impl Plugin for PostgresPlugin {
 }
 
 #[async_trait]
-impl RdbmsPlugin for PostgresPlugin {
+impl RdbmsPlugin for MysqlPlugin {
     async fn list_schemas(&self, conn: Arc<dyn Connection>) -> Result<Vec<Schema>> {
-        let conn = downcast_conn::<PostgresConnection>(&conn)?;
-        let rows: Vec<(String,)> = sqlx::query_as(
-            "select schema_name from information_schema.schemata \
-             where schema_name not in ('pg_catalog','information_schema') \
-             and schema_name not like 'pg_toast%' and schema_name not like 'pg_temp%' \
-             order by schema_name",
-        )
-        .fetch_all(&conn.pool())
-        .await
-        .map_err(|e| PluginError::Backend(e.to_string()))?;
-        Ok(rows.into_iter().map(|(n,)| Schema { name: n }).collect())
+        // In MySQL a schema is a database. Expose only the connection's current
+        // database as the browsable "schema" (the database picker, via
+        // list_databases, covers the rest), so the tree matches what the active
+        // pool can actually query.
+        let conn = downcast_conn::<MysqlConnection>(&conn)?;
+        let db = current_database(&conn.config)?;
+        Ok(vec![Schema { name: db }])
     }
 
     async fn list_databases(&self, conn: Arc<dyn Connection>) -> Result<Vec<String>> {
-        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        let conn = downcast_conn::<MysqlConnection>(&conn)?;
         let rows: Vec<(String,)> = sqlx::query_as(
-            "select datname from pg_database \
-             where datistemplate = false and datallowconn = true \
-             order by datname",
+            "select schema_name from information_schema.schemata \
+             where schema_name not in \
+               ('mysql','information_schema','performance_schema','sys') \
+             order by schema_name",
         )
         .fetch_all(&conn.pool())
         .await
@@ -349,7 +353,7 @@ impl RdbmsPlugin for PostgresPlugin {
     }
 
     async fn use_database(&self, conn: Arc<dyn Connection>, database: &str) -> Result<()> {
-        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        let conn = downcast_conn::<MysqlConnection>(&conn)?;
         tracing::info!("switching database to '{database}' (rebuilding pool)");
         // Build and validate the new pool before swapping, so a failed switch
         // leaves the existing connection untouched.
@@ -365,10 +369,10 @@ impl RdbmsPlugin for PostgresPlugin {
     }
 
     async fn list_tables(&self, conn: Arc<dyn Connection>, schema: &str) -> Result<Vec<Table>> {
-        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        let conn = downcast_conn::<MysqlConnection>(&conn)?;
         let rows: Vec<(String, String)> = sqlx::query_as(
             "select table_name, table_type from information_schema.tables \
-             where table_schema = $1 order by table_name",
+             where table_schema = ? order by table_name",
         )
         .bind(schema)
         .fetch_all(&conn.pool())
@@ -380,9 +384,10 @@ impl RdbmsPlugin for PostgresPlugin {
             .map(|(name, kind)| Table {
                 schema: schema.to_string(),
                 name,
+                // MySQL reports BASE TABLE / VIEW / SYSTEM VIEW. There are no
+                // materialized views in MySQL.
                 kind: match kind.as_str() {
-                    "VIEW" => TableKind::View,
-                    "MATERIALIZED VIEW" => TableKind::MaterializedView,
+                    "VIEW" | "SYSTEM VIEW" => TableKind::View,
                     _ => TableKind::Table,
                 },
             })
@@ -396,85 +401,43 @@ impl RdbmsPlugin for PostgresPlugin {
         table: &str,
         include_indexes: bool,
     ) -> Result<TableDescription> {
-        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        let conn = downcast_conn::<MysqlConnection>(&conn)?;
         let rows: Vec<(
             String,         // column_name
-            String,         // data_type
-            String,         // udt_name
-            String,         // is_nullable
-            Option<i32>,    // character_maximum_length
-            Option<i32>,    // numeric_precision
-            Option<i32>,    // numeric_scale
-            Option<String>, // pk
+            String,         // data_type (e.g. "int", "varchar")
+            String,         // column_type (e.g. "int unsigned", "varchar(255)")
+            String,         // is_nullable (YES/NO)
+            Option<i64>,    // character_maximum_length
+            Option<i64>,    // numeric_precision
+            Option<i64>,    // numeric_scale
+            String,         // column_key (PRI/UNI/MUL/'')
             Option<String>, // column_default
-            Option<String>, // unique (single-col UNIQUE constraint)
             Option<String>, // fk_table
             Option<String>, // fk_column
         )> = sqlx::query_as(
+            // The numeric_* / length columns are typed inconsistently across
+            // MySQL and MariaDB versions (signed vs unsigned BIGINT), so CAST
+            // them to SIGNED for a deterministic wire type sqlx can decode.
             "select
                c.column_name,
                c.data_type,
-               c.udt_name,
+               c.column_type,
                c.is_nullable,
-               c.character_maximum_length,
-               c.numeric_precision,
-               c.numeric_scale,
-               -- primary key
-               (select 'YES'
-                  from information_schema.table_constraints tc
-                  join information_schema.key_column_usage kcu
-                       using (constraint_name, table_schema)
-                 where tc.constraint_type = 'PRIMARY KEY'
-                   and tc.table_schema = c.table_schema
-                   and tc.table_name   = c.table_name
-                   and kcu.column_name = c.column_name
-                 limit 1),
+               cast(c.character_maximum_length as signed),
+               cast(c.numeric_precision as signed),
+               cast(c.numeric_scale as signed),
+               c.column_key,
                c.column_default,
-               -- single-column unique constraint (excludes PK-backed unique indexes)
-               (select 'YES'
-                  from information_schema.table_constraints tc
-                  join information_schema.key_column_usage kcu
-                       using (constraint_name, table_schema)
-                 where tc.constraint_type = 'UNIQUE'
-                   and tc.table_schema = c.table_schema
-                   and tc.table_name   = c.table_name
-                   and kcu.column_name = c.column_name
-                   and (select count(*)
-                          from information_schema.key_column_usage kcu2
-                         where kcu2.constraint_name = tc.constraint_name
-                           and kcu2.table_schema    = tc.table_schema) = 1
-                 limit 1),
-               -- foreign key: referenced table (via pg_catalog for correctness)
-               (select ref_cls.relname
-                  from pg_constraint con
-                  join pg_class     src_cls on src_cls.oid = con.conrelid
-                  join pg_namespace src_ns  on src_ns.oid  = src_cls.relnamespace
-                  join pg_attribute src_att on src_att.attrelid = con.conrelid
-                                           and src_att.attnum   = any(con.conkey)
-                  join pg_class     ref_cls on ref_cls.oid = con.confrelid
-                 where con.contype = 'f'
-                   and src_ns.nspname  = c.table_schema
-                   and src_cls.relname = c.table_name
-                   and src_att.attname = c.column_name
-                 limit 1),
-               -- foreign key: referenced column
-               (select ref_att.attname
-                  from pg_constraint con
-                  join pg_class     src_cls on src_cls.oid = con.conrelid
-                  join pg_namespace src_ns  on src_ns.oid  = src_cls.relnamespace
-                  join pg_attribute src_att on src_att.attrelid = con.conrelid
-                                           and src_att.attnum   = any(con.conkey)
-                  join pg_attribute ref_att on ref_att.attrelid = con.confrelid
-                                           and ref_att.attnum   = con.confkey[
-                                                 array_position(con.conkey, src_att.attnum)]
-                 where con.contype = 'f'
-                   and src_ns.nspname  = c.table_schema
-                   and src_cls.relname = c.table_name
-                   and src_att.attname = c.column_name
-                 limit 1)
+               kcu.referenced_table_name,
+               kcu.referenced_column_name
              from information_schema.columns c
-            where c.table_schema = $1 and c.table_name = $2
-            order by c.ordinal_position",
+             left join information_schema.key_column_usage kcu
+               on  kcu.table_schema = c.table_schema
+               and kcu.table_name   = c.table_name
+               and kcu.column_name  = c.column_name
+               and kcu.referenced_table_name is not null
+             where c.table_schema = ? and c.table_name = ?
+             order by c.ordinal_position",
         )
         .bind(schema)
         .bind(table)
@@ -485,24 +448,31 @@ impl RdbmsPlugin for PostgresPlugin {
         let columns = rows
             .into_iter()
             .map(
-                |(name, dtype, udt, nullable, char_len, precision, scale,
-                  pk, default_value, unique_flag, fk_table, fk_col)| {
-                    let u = udt.to_ascii_lowercase();
-                    let json = u == "json" || u == "jsonb";
-                    let large = json || dtype == "text" || dtype == "xml" || u == "citext";
-                    let foreign_key = fk_table.zip(fk_col).map(|(table, column)| ForeignKey { table, column });
+                |(name, dtype, col_type, nullable, char_len, precision, scale,
+                  col_key, default_value, fk_table, fk_col)| {
+                    let d = dtype.to_ascii_lowercase();
+                    let json = d == "json";
+                    let large = json
+                        || d.contains("text")
+                        || d.contains("blob")
+                        || d == "longtext";
+                    let foreign_key = fk_table
+                        .zip(fk_col)
+                        .map(|(table, column)| ForeignKey { table, column });
                     Column {
                         name,
                         data_type: dtype,
-                        udt_name: Some(udt),
+                        // MySQL has no separate udt; surface the full column type
+                        // (e.g. "int unsigned", "varchar(255)") for display.
+                        udt_name: Some(col_type),
                         nullable: nullable == "YES",
-                        primary_key: pk.is_some(),
-                        unique: unique_flag.is_some(),
+                        primary_key: col_key == "PRI",
+                        unique: col_key == "UNI",
                         default_value,
                         foreign_key,
-                        char_max_length: char_len,
-                        numeric_precision: precision,
-                        numeric_scale: scale,
+                        char_max_length: char_len.map(|n| n as i32),
+                        numeric_precision: precision.map(|n| n as i32),
+                        numeric_scale: scale.map(|n| n as i32),
                         json,
                         large,
                     }
@@ -524,66 +494,25 @@ impl RdbmsPlugin for PostgresPlugin {
         schema: &str,
         table: &str,
     ) -> Result<String> {
-        let columns = self
-            .describe_table(conn.clone(), schema, table, false)
-            .await?
-            .columns;
-        if columns.is_empty() {
-            return Err(PluginError::Backend(format!(
-                "table {schema}.{table} not found or has no columns"
-            )));
-        }
-        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        let conn = downcast_conn::<MysqlConnection>(&conn)?;
+        // MySQL exposes the authoritative DDL directly.
+        let sql = format!("SHOW CREATE TABLE {}.{}", quote_ident(schema), quote_ident(table));
+        let row: MySqlRow = sqlx::query(AssertSqlSafe(sql))
+            .fetch_one(&conn.pool())
+            .await
+            .map_err(|e| PluginError::Backend(e.to_string()))?;
 
-        // Column definitions, then the primary key (if any).
-        let mut lines: Vec<String> = columns
-            .iter()
-            .map(|c| {
-                let ty = match (c.data_type.as_str(), &c.udt_name) {
-                    ("USER-DEFINED", Some(udt)) => udt.clone(),
-                    _ => c.data_type.clone(),
-                };
-                let null = if c.nullable { "" } else { " NOT NULL" };
-                format!("  \"{}\" {}{}", c.name, ty, null)
-            })
-            .collect();
-        let pks: Vec<String> = columns
-            .iter()
-            .filter(|c| c.primary_key)
-            .map(|c| format!("\"{}\"", c.name))
-            .collect();
-        if !pks.is_empty() {
-            lines.push(format!("  PRIMARY KEY ({})", pks.join(", ")));
-        }
-        let mut ddl = format!(
+        // `SHOW CREATE TABLE` returns ("Table","Create Table") for a base table,
+        // or ("View","Create View",...) for a view. The create statement is the
+        // second column in both cases.
+        let ddl: String = row
+            .try_get::<String, _>(1)
+            .map_err(|e| PluginError::Backend(e.to_string()))?;
+
+        Ok(format!(
             "-- Generated DDL statements -- \n\n\n\
-            -- Table: {schema}.{table} Definition -- \n\n\
-            CREATE TABLE IF NOT EXISTS \"{schema}\".\"{table}\" (\n{}\n);",
-            lines.join(",\n")
-        );
-
-        ddl.push_str("\n\n\n -- Indexes --");
-        // Append non-primary-key indexes via pg_get_indexdef.
-        let indexes: Vec<(String,)> = sqlx::query_as(
-            "select pg_get_indexdef(ix.indexrelid) \
-             from pg_index ix \
-             join pg_class t on t.oid = ix.indrelid \
-             join pg_namespace n on n.oid = t.relnamespace \
-             where n.nspname = $1 and t.relname = $2 and not ix.indisprimary \
-             order by ix.indexrelid::regclass::text",
-        )
-        .bind(schema)
-        .bind(table)
-        .fetch_all(&conn.pool())
-        .await
-        .map_err(|e| PluginError::Backend(e.to_string()))?;
-
-        for (def,) in indexes {
-            ddl.push_str("\n\n");
-            ddl.push_str(&def);
-            ddl.push(';');
-        }
-        Ok(ddl)
+            -- Table: {schema}.{table} Definition -- \n\n{ddl};"
+        ))
     }
 
     async fn browse_table(
@@ -593,14 +522,12 @@ impl RdbmsPlugin for PostgresPlugin {
         table: &str,
         spec: BrowseSpec,
     ) -> Result<QueryResult> {
-        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        let conn = downcast_conn::<MysqlConnection>(&conn)?;
         let pool = conn.pool();
 
         let (sql, params) = build_browse(schema, table, &spec)?;
         let start = Instant::now();
 
-        // Bind the structured-filter values as text params; the surrounding
-        // CASTs coerce them. Mirrors `run_dml`'s binding.
         let mut q = sqlx::query(AssertSqlSafe(sql.clone()));
         for p in &params {
             q = q.bind(p);
@@ -610,15 +537,10 @@ impl RdbmsPlugin for PostgresPlugin {
             .await
             .map_err(|e| PluginError::Backend(e.to_string()))?;
 
-        // Only a parameterless browse SQL is re-runnable as-is for export;
-        // structured filters bind `$n` params that `export_csv` can't supply.
-        // Capture it before `sql` may be consumed by the describe path below.
+        // Only a parameterless browse SQL is re-runnable as-is for export.
         let export_sql = params.is_empty().then(|| sql.clone());
 
-        // Headers from the first row, or by describing the statement when empty
-        // (so the grid still shows columns). The describe path can't bind, but
-        // an empty result means the filters excluded everything — the column
-        // shape is independent of the bound values, so the bare SQL describes fine.
+        // Headers from the first row, or by describing the statement when empty.
         let columns = if let Some(first) = rows.first() {
             columns_of(first)
         } else {
@@ -640,20 +562,15 @@ impl RdbmsPlugin for PostgresPlugin {
             rows: data,
             rows_affected: None,
             elapsed_ms: start.elapsed().as_millis(),
-            // Browsing is page-based (LIMIT/OFFSET from BrowseSpec), so the
-            // per-query row cap doesn't apply.
             result_truncated: false,
             sql: export_sql,
         })
     }
 
     async fn execute(&self, conn: Arc<dyn Connection>, sql: &str) -> Result<Vec<QueryResult>> {
-        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        let conn = downcast_conn::<MysqlConnection>(&conn)?;
         let pool = conn.pool();
 
-        // A script may hold several statements; run them in order on the same
-        // pool and return one result each. SELECT-ish statements yield a row
-        // grid; other statements yield their affected-row count.
         let mut results = Vec::new();
         for stmt in split_statements(sql) {
             let start = Instant::now();
@@ -662,7 +579,7 @@ impl RdbmsPlugin for PostgresPlugin {
                     select_result(&pool, &stmt, DEFAULT_MAX_ROW_COUNT)
                         .await
                         .inspect_err(|e| {
-                            tracing::warn!("postgres select failed: {e}");
+                            tracing::warn!("mysql select failed: {e}");
                         })?;
                 let elapsed_ms = start.elapsed().as_millis();
                 tracing::debug!(
@@ -683,7 +600,7 @@ impl RdbmsPlugin for PostgresPlugin {
                     .execute(&pool)
                     .await
                     .map_err(|e| {
-                        tracing::warn!("postgres statement failed: {e}");
+                        tracing::warn!("mysql statement failed: {e}");
                         PluginError::Backend(e.to_string())
                     })?;
                 let elapsed_ms = start.elapsed().as_millis();
@@ -705,29 +622,25 @@ impl RdbmsPlugin for PostgresPlugin {
     }
 
     async fn export_csv(&self, conn: Arc<dyn Connection>, sql: &str, path: &str) -> Result<u64> {
-        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        let conn = downcast_conn::<MysqlConnection>(&conn)?;
         let pool = conn.pool();
 
-        // Stream the full result set (no row cap) straight to the file so a
-        // large export never materialises in memory. Column headers come from
-        // the first row, or `describe` when the result is empty.
+        // Stream the full result set (no row cap) straight to the file.
         let mut stream = sqlx::query(AssertSqlSafe(sql)).fetch(&pool);
         let mut writer: Option<CsvWriter> = None;
         let mut count: u64 = 0;
         while let Some(row) = stream.try_next().await.map_err(|e| {
-            tracing::warn!("postgres export query failed: {e}");
+            tracing::warn!("mysql export query failed: {e}");
             PluginError::Backend(e.to_string())
         })? {
             if writer.is_none() {
                 writer = Some(CsvWriter::create(path, &columns_of(&row))?);
             }
-            // Safe: set on the first iteration above.
             writer.as_mut().unwrap().write_row(&row_to_json(&row))?;
             count += 1;
         }
         drop(stream);
 
-        // Empty result: still write a header-only file using the described columns.
         let writer = match writer {
             Some(w) => w,
             None => {
@@ -757,7 +670,7 @@ impl RdbmsPlugin for PostgresPlugin {
         table: &str,
         changes: RowChanges,
     ) -> Result<ApplyResult> {
-        let conn = downcast_conn::<PostgresConnection>(&conn)?;
+        let conn = downcast_conn::<MysqlConnection>(&conn)?;
         let mut tx = conn
             .pool()
             .begin()
@@ -789,7 +702,7 @@ impl RdbmsPlugin for PostgresPlugin {
 /// Bind `params` to `sql` and execute it on the transaction, returning the
 /// number of affected rows.
 async fn run_dml(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
     sql: &str,
     params: &[String],
 ) -> Result<u64> {
@@ -835,11 +748,7 @@ fn build_update(
 }
 
 /// Build an `INSERT INTO ...` and its bound parameters.
-fn build_insert(
-    schema: &str,
-    table: &str,
-    values: &[ColumnValue],
-) -> Result<(String, Vec<String>)> {
+fn build_insert(schema: &str, table: &str, values: &[ColumnValue]) -> Result<(String, Vec<String>)> {
     let mut params: Vec<String> = Vec::new();
     let mut cols = Vec::new();
     let mut vals = Vec::new();
@@ -848,11 +757,7 @@ fn build_insert(
         vals.push(value_expr(cv, &mut params)?);
     }
     let sql = if cols.is_empty() {
-        format!(
-            "INSERT INTO {}.{} DEFAULT VALUES",
-            quote_ident(schema),
-            quote_ident(table),
-        )
+        format!("INSERT INTO {}.{} () VALUES ()", quote_ident(schema), quote_ident(table))
     } else {
         format!(
             "INSERT INTO {}.{} ({}) VALUES ({})",
@@ -878,9 +783,8 @@ fn build_delete(schema: &str, table: &str, pk: &[ColumnValue]) -> Result<(String
     Ok((sql, params))
 }
 
-/// Build the browse `SELECT * FROM s.t [WHERE ...] [ORDER BY ...] LIMIT n OFFSET m`
-/// and its bound parameters. Structured filters bind their values (via
-/// `value_expr`); the raw `where_sql` fragment, if any, is AND'd in verbatim.
+/// Build the browse `SELECT * FROM `s`.`t` [WHERE ...] [ORDER BY ...]
+/// LIMIT n OFFSET m` and its bound parameters.
 fn build_browse(schema: &str, table: &str, spec: &BrowseSpec) -> Result<(String, Vec<String>)> {
     let mut params: Vec<String> = Vec::new();
     let mut conds: Vec<String> = Vec::new();
@@ -897,11 +801,7 @@ fn build_browse(schema: &str, table: &str, spec: &BrowseSpec) -> Result<(String,
         conds.push(format!("({w})"));
     }
 
-    let mut sql = format!(
-        "SELECT * FROM {}.{}",
-        quote_ident(schema),
-        quote_ident(table),
-    );
+    let mut sql = format!("SELECT * FROM {}.{}", quote_ident(schema), quote_ident(table));
     if !conds.is_empty() {
         sql.push_str(&format!(" WHERE {}", conds.join(" AND ")));
     }
@@ -925,9 +825,8 @@ fn build_browse(schema: &str, table: &str, spec: &BrowseSpec) -> Result<(String,
 }
 
 /// Render one structured filter as a SQL condition, binding its value when the
-/// operator takes one. The operator comes from the fixed allow-list
-/// ([`BrowseFilter::OPS`]); anything else is rejected so no operator text is
-/// interpolated unchecked.
+/// operator takes one. MySQL has no `ILIKE`; `like`/`ilike` both map to `LIKE`,
+/// which is case-insensitive under the common `*_ci` collations.
 fn filter_expr(f: &BrowseFilter, params: &mut Vec<String>) -> Result<String> {
     let col = quote_ident(&f.column);
     match f.op.as_str() {
@@ -941,13 +840,9 @@ fn filter_expr(f: &BrowseFilter, params: &mut Vec<String>) -> Result<String> {
                 "lte" => "<=",
                 "gt" => ">",
                 "gte" => ">=",
-                "like" => "LIKE",
-                "ilike" => "ILIKE",
+                "like" | "ilike" => "LIKE",
                 _ => return Err(PluginError::Config(format!("invalid filter operator: {op}"))),
             };
-            // Reuse the edit path's value binding: CAST($n AS type). A null
-            // value with a comparison operator never matches, which is the
-            // sensible result for "= NULL" via the UI.
             let cv = ColumnValue {
                 column: f.column.clone(),
                 type_name: f.type_name.clone(),
@@ -958,19 +853,17 @@ fn filter_expr(f: &BrowseFilter, params: &mut Vec<String>) -> Result<String> {
     }
 }
 
-/// Quote an SQL identifier, escaping embedded double quotes.
+/// Quote an SQL identifier with backticks, escaping embedded backticks.
 fn quote_ident(s: &str) -> String {
-    format!("\"{}\"", s.replace('"', "\"\""))
+    format!("`{}`", s.replace('`', "``"))
 }
 
 /// Reject type names that aren't a plausible SQL type, so they can be
 /// interpolated into a `CAST(... AS <type>)` without opening an injection hole.
-/// Postgres type names are letters/digits/underscores plus spaces, parens and
-/// brackets (`character varying`, `numeric(10,2)`, `int[]`).
 fn validate_type(t: &str) -> Result<&str> {
     let ok = !t.is_empty()
         && t.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '(' | ')' | '[' | ']' | ',' | '.'));
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '(' | ')' | ',' ));
     if ok {
         Ok(t)
     } else {
@@ -978,23 +871,48 @@ fn validate_type(t: &str) -> Result<&str> {
     }
 }
 
-/// Render the SQL expression for a value: `NULL`, or a `CAST($n AS <type>)`
-/// placeholder whose bound text is appended to `params`.
+/// MySQL's `CAST` only accepts a restricted set of target types (e.g. `CHAR`,
+/// `SIGNED`, `UNSIGNED`, `DECIMAL`, `DATE`, `DATETIME`, `JSON`), not arbitrary
+/// column types like `varchar(255)` or `int`. Map the column's declared type to
+/// the nearest valid CAST target; default to `CHAR` so the bound string is
+/// compared/stored as text and let MySQL coerce it.
+fn cast_target(type_name: &str) -> &'static str {
+    let t = type_name.to_ascii_lowercase();
+    if t.contains("int") || t == "bit" || t == "bool" || t == "boolean" {
+        "SIGNED"
+    } else if t.contains("decimal") || t.contains("numeric") || t.contains("float") || t.contains("double") {
+        "DECIMAL(65,30)"
+    } else if t == "date" {
+        "DATE"
+    } else if t == "datetime" || t == "timestamp" {
+        "DATETIME"
+    } else if t == "time" {
+        "TIME"
+    } else if t == "json" {
+        "JSON"
+    } else {
+        "CHAR"
+    }
+}
+
+/// Render the SQL expression for a value: `NULL`, or a `CAST(? AS <target>)`
+/// placeholder whose bound text is appended to `params`. The `?` placeholder is
+/// MySQL's positional bind marker.
 fn value_expr(cv: &ColumnValue, params: &mut Vec<String>) -> Result<String> {
     if cv.value.is_null() {
         return Ok("NULL".into());
     }
-    let ty = validate_type(&cv.type_name)?;
+    // Validate the declared type (defensive — it isn't interpolated directly,
+    // but keeps malformed input out), then bind via a safe CAST target.
+    validate_type(&cv.type_name)?;
     params.push(bind_text(&cv.value));
-    Ok(format!("CAST(${} AS {})", params.len(), ty))
+    Ok(format!("CAST(? AS {})", cast_target(&cv.type_name)))
 }
 
 /// Build a `WHERE` clause that matches a single row by the given key columns.
 fn build_where(key: &[ColumnValue], params: &mut Vec<String>) -> Result<String> {
     if key.is_empty() {
-        return Err(PluginError::Config(
-            "cannot identify row: no key columns".into(),
-        ));
+        return Err(PluginError::Config("cannot identify row: no key columns".into()));
     }
     let mut parts = Vec::new();
     for cv in key {
@@ -1007,13 +925,18 @@ fn build_where(key: &[ColumnValue], params: &mut Vec<String>) -> Result<String> 
     Ok(parts.join(" AND "))
 }
 
-/// Text form of a JSON value to bind as a string parameter; Postgres coerces it
-/// via the surrounding `CAST`. Objects/arrays serialize back to JSON text (for
-/// `json`/`jsonb`/array columns).
+/// Text form of a JSON value to bind as a string parameter; MySQL coerces it via
+/// the surrounding `CAST`. Objects/arrays serialize back to JSON text.
 fn bind_text(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Bool(b) => {
+            if *b {
+                "1".into()
+            } else {
+                "0".into()
+            }
+        }
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::Null => String::new(),
         other => other.to_string(),
@@ -1026,25 +949,21 @@ fn is_select(sql: &str) -> bool {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
-    matches!(head.as_str(), "select" | "with" | "show" | "explain")
+    matches!(head.as_str(), "select" | "with" | "show" | "explain" | "describe" | "desc")
 }
 
-/// Run one SELECT-ish statement and return its column metadata + JSON rows,
-/// plus whether the result was truncated. Streams rows and stops once `max`
-/// have been collected (fetching one extra to detect that more remain), so a
-/// huge result set never materializes fully in memory. When zero rows come back
-/// we `describe` the statement so the grid still shows the column headers rather
-/// than nothing.
+/// Run one SELECT-ish statement and return its column metadata + JSON rows, plus
+/// whether the result was truncated. Streams rows and stops once `max` have been
+/// collected. When zero rows come back we `describe` the statement so the grid
+/// still shows the column headers.
 async fn select_result(
-    pool: &PgPool,
+    pool: &MySqlPool,
     stmt: &str,
     max: u64,
 ) -> Result<(Vec<ColumnMeta>, Vec<Vec<serde_json::Value>>, bool)> {
     let mut stream = sqlx::query(AssertSqlSafe(stmt)).fetch(pool);
-    let mut rows: Vec<PgRow> = Vec::new();
+    let mut rows: Vec<MySqlRow> = Vec::new();
     let mut truncated = false;
-    // Fetch up to `max` rows; pull one more only to learn whether the result
-    // extends past the cap, then discard it.
     while let Some(row) = stream
         .try_next()
         .await
@@ -1056,7 +975,6 @@ async fn select_result(
         }
         rows.push(row);
     }
-    // Drop the stream (and its borrow of the pool) before any further awaits.
     drop(stream);
 
     let columns: Vec<ColumnMeta> = if let Some(first) = rows.first() {
@@ -1079,7 +997,7 @@ async fn select_result(
 }
 
 /// Column metadata (name + type) for a fetched row.
-fn columns_of(row: &PgRow) -> Vec<ColumnMeta> {
+fn columns_of(row: &MySqlRow) -> Vec<ColumnMeta> {
     row.columns()
         .iter()
         .map(|c| ColumnMeta {
@@ -1090,10 +1008,10 @@ fn columns_of(row: &PgRow) -> Vec<ColumnMeta> {
 }
 
 /// Split a SQL script into individual statements on top-level semicolons,
-/// ignoring `;` inside single-quoted strings, double-quoted identifiers,
-/// dollar-quoted bodies (`$tag$ … $tag$`), and line/block comments. Returns
-/// trimmed, non-empty statements. (Standard strings use `''` to escape a quote;
-/// backslash escapes in `E'…'` strings are not special-cased.)
+/// ignoring `;` inside single/double-quoted strings, backtick-quoted
+/// identifiers, and `--`/`#`/`/* */` comments. MySQL string literals escape an
+/// embedded quote either by doubling it or with a backslash; both are handled.
+/// MySQL block comments do not nest.
 fn split_statements(sql: &str) -> Vec<String> {
     let b = sql.as_bytes();
     let n = b.len();
@@ -1102,10 +1020,16 @@ fn split_statements(sql: &str) -> Vec<String> {
     let mut i = 0usize;
     while i < n {
         match b[i] {
-            b'\'' | b'"' => {
+            b'\'' | b'"' | b'`' => {
                 let q = b[i];
                 i += 1;
                 while i < n {
+                    if b[i] == b'\\' && q != b'`' {
+                        // Backslash escapes the next byte in string literals
+                        // (not in backtick identifiers).
+                        i += 2;
+                        continue;
+                    }
                     if b[i] == q {
                         // Doubled quote is an escaped quote, not a terminator.
                         if i + 1 < n && b[i + 1] == q {
@@ -1124,33 +1048,19 @@ fn split_statements(sql: &str) -> Vec<String> {
                     i += 1;
                 }
             }
-            b'/' if i + 1 < n && b[i + 1] == b'*' => {
-                i += 2;
-                let mut depth = 1; // Postgres block comments nest.
-                while i < n && depth > 0 {
-                    if b[i] == b'/' && i + 1 < n && b[i + 1] == b'*' {
-                        depth += 1;
-                        i += 2;
-                    } else if b[i] == b'*' && i + 1 < n && b[i + 1] == b'/' {
-                        depth -= 1;
-                        i += 2;
-                    } else {
-                        i += 1;
-                    }
+            b'#' => {
+                i += 1;
+                while i < n && b[i] != b'\n' {
+                    i += 1;
                 }
             }
-            b'$' => {
-                if let Some(tag_end) = dollar_tag_end(b, i) {
-                    let tag = &b[i..=tag_end];
-                    i = tag_end + 1;
-                    while i < n {
-                        if b[i] == b'$' && b[i..].starts_with(tag) {
-                            i += tag.len();
-                            break;
-                        }
-                        i += 1;
+            b'/' if i + 1 < n && b[i + 1] == b'*' => {
+                i += 2;
+                while i < n {
+                    if b[i] == b'*' && i + 1 < n && b[i + 1] == b'/' {
+                        i += 2;
+                        break;
                     }
-                } else {
                     i += 1;
                 }
             }
@@ -1172,40 +1082,19 @@ fn split_statements(sql: &str) -> Vec<String> {
     out
 }
 
-/// If a dollar-quote tag opens at `start` (`b[start] == b'$'`), return the index
-/// of its closing `$` (so `b[start..=end]` is the full `$tag$`). A tag is `$$`
-/// or `$ident$` where `ident` is `[A-Za-z_][A-Za-z0-9_]*` — this rules out `$1`
-/// style placeholders.
-fn dollar_tag_end(b: &[u8], start: usize) -> Option<usize> {
-    let mut j = start + 1;
-    while j < b.len() {
-        let c = b[j];
-        if c == b'$' {
-            return Some(j);
-        }
-        if c == b'_' || c.is_ascii_alphabetic() || (j > start + 1 && c.is_ascii_digit()) {
-            j += 1;
-        } else {
-            return None;
-        }
-    }
-    None
-}
-
-fn row_to_json(row: &PgRow) -> Vec<serde_json::Value> {
+fn row_to_json(row: &MySqlRow) -> Vec<serde_json::Value> {
     (0..row.len()).map(|i| value_to_json(row, i)).collect()
 }
 
-/// Convert one cell to JSON, decoding by the column's Postgres type so numbers
-/// stay numbers and dates/uuids/etc. render as readable text. sqlx is strict
-/// about Rust↔SQL type pairing (e.g. `int4` is `i32`, not `i64`), so we match on
-/// the type name and decode the right Rust type. Anything we don't recognise
-/// falls back to its text encoding, then a `<type>` placeholder, so a cell is
-/// never silently blank.
-fn value_to_json(row: &PgRow, i: usize) -> serde_json::Value {
+/// Convert one cell to JSON, decoding by the column's MySQL type so numbers stay
+/// numbers and dates/json/etc. render readably. sqlx is strict about Rust↔SQL
+/// type pairing, so we match on the type name and decode the right Rust type.
+/// Anything unrecognised falls back to its text/byte encoding so a cell is never
+/// silently blank.
+fn value_to_json(row: &MySqlRow, i: usize) -> serde_json::Value {
     use serde_json::Value;
     use sqlx::types::chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-    use sqlx::types::{BigDecimal, Uuid};
+    use sqlx::types::BigDecimal;
     use sqlx::ValueRef;
 
     let raw = match row.try_get_raw(i) {
@@ -1217,8 +1106,6 @@ fn value_to_json(row: &PgRow, i: usize) -> serde_json::Value {
     }
     let type_name = raw.type_info().name().to_string();
 
-    // Decode column `i` as `$t` and, on success, return `$conv(value)`. A decode
-    // error falls through to the next arm / the text fallback below.
     macro_rules! decode {
         ($t:ty, $conv:expr) => {
             if let Ok(v) = row.try_get::<$t, _>(i) {
@@ -1233,69 +1120,59 @@ fn value_to_json(row: &PgRow, i: usize) -> serde_json::Value {
     };
     let to_str = |v: String| Value::String(v);
 
-    match type_name.to_uppercase().as_str() {
-        "BOOL" => decode!(bool, Value::Bool),
-        "INT2" | "SMALLINT" | "SMALLSERIAL" => decode!(i16, |v: i16| Value::Number(v.into())),
-        "INT4" | "INT" | "INTEGER" | "SERIAL" => decode!(i32, |v: i32| Value::Number(v.into())),
-        "INT8" | "BIGINT" | "BIGSERIAL" => decode!(i64, |v: i64| Value::Number(v.into())),
-        "OID" => decode!(sqlx::postgres::types::Oid, |v: sqlx::postgres::types::Oid| {
-            Value::Number(v.0.into())
-        }),
-        "FLOAT4" | "REAL" => decode!(f32, |v: f32| num_f64(v as f64)),
-        "FLOAT8" | "DOUBLE PRECISION" => decode!(f64, num_f64),
-        "NUMERIC" | "DECIMAL" | "MONEY" => decode!(BigDecimal, |v: BigDecimal| {
-            Value::String(v.to_string())
-        }),
-        "TIMESTAMPTZ" => decode!(DateTime<Utc>, |v: DateTime<Utc>| {
-            Value::String(v.to_rfc3339())
-        }),
-        "TIMESTAMP" => decode!(NaiveDateTime, |v: NaiveDateTime| Value::String(v.to_string())),
+    // MySQL surfaces unsigned ints with " UNSIGNED" appended to the type name.
+    let upper = type_name.to_uppercase();
+    let unsigned = upper.contains("UNSIGNED");
+    let base = upper.split_whitespace().next().unwrap_or("");
+
+    match base {
+        "BOOLEAN" => decode!(bool, Value::Bool),
+        // TINYINT(1) is the conventional boolean, but treat all tinyints as ints.
+        "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "INTEGER" if unsigned => {
+            decode!(u64, |v: u64| Value::Number(v.into()))
+        }
+        "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "INTEGER" => {
+            decode!(i64, |v: i64| Value::Number(v.into()))
+        }
+        "BIGINT" if unsigned => decode!(u64, |v: u64| Value::Number(v.into())),
+        "BIGINT" => decode!(i64, |v: i64| Value::Number(v.into())),
+        "FLOAT" => decode!(f32, |v: f32| num_f64(v as f64)),
+        "DOUBLE" => decode!(f64, num_f64),
+        "DECIMAL" | "NUMERIC" => decode!(BigDecimal, |v: BigDecimal| Value::String(v.to_string())),
+        "TIMESTAMP" => decode!(DateTime<Utc>, |v: DateTime<Utc>| Value::String(v.to_rfc3339())),
+        "DATETIME" => decode!(NaiveDateTime, |v: NaiveDateTime| Value::String(v.to_string())),
         "DATE" => decode!(NaiveDate, |v: NaiveDate| Value::String(v.to_string())),
-        "TIME" | "TIMETZ" => decode!(NaiveTime, |v: NaiveTime| Value::String(v.to_string())),
-        "UUID" => decode!(Uuid, |v: Uuid| Value::String(v.to_string())),
-        "JSON" | "JSONB" => decode!(Value, |v| v),
-        "BYTEA" => decode!(Vec<u8>, |v: Vec<u8>| Value::String(bytea_hex(&v))),
-        // Array types are named `_int4`, `_text`, … (or `INT4[]`); decode the
-        // common element types into a JSON array.
-        "_BOOL" => decode!(Vec<bool>, |v: Vec<bool>| json_array(v, Value::Bool)),
-        "_INT2" => decode!(Vec<i16>, |v: Vec<i16>| json_array(v, |x: i16| Value::Number(x.into()))),
-        "_INT4" => decode!(Vec<i32>, |v: Vec<i32>| json_array(v, |x: i32| Value::Number(x.into()))),
-        "_INT8" => decode!(Vec<i64>, |v: Vec<i64>| json_array(v, |x: i64| Value::Number(x.into()))),
-        "_FLOAT8" => decode!(Vec<f64>, |v: Vec<f64>| json_array(v, num_f64)),
-        "_TEXT" | "_VARCHAR" => decode!(Vec<String>, |v: Vec<String>| json_array(v, to_str)),
+        "TIME" => decode!(NaiveTime, |v: NaiveTime| Value::String(v.to_string())),
+        "JSON" => decode!(Value, |v| v),
+        // BLOB/BINARY families: hex-encode for display.
+        "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => {
+            decode!(Vec<u8>, |v: Vec<u8>| Value::String(bytes_hex(&v)))
+        }
         _ => {}
     }
 
-    // Text-family types (text/varchar/bpchar/name/enum-as-text, etc.).
+    // Text-family types (char/varchar/text/enum/set, etc.).
     decode!(String, to_str);
 
-    // Last resort: many remaining types (enums, inet, etc.) send their value as
-    // UTF-8 text; surface that. If it isn't valid text, show the type name so
-    // the cell isn't blank.
-    if let Ok(bytes) = raw.as_bytes() {
-        if let Ok(s) = std::str::from_utf8(bytes) {
-            return Value::String(s.to_string());
-        }
+    // Last resort: decode as raw bytes (public decode path). Surface UTF-8 text
+    // if valid, else a hex literal, so the cell is never silently blank.
+    if let Ok(bytes) = row.try_get::<Vec<u8>, _>(i) {
+        return match std::str::from_utf8(&bytes) {
+            Ok(s) => Value::String(s.to_string()),
+            Err(_) => Value::String(bytes_hex(&bytes)),
+        };
     }
     Value::String(format!("<{type_name}>"))
 }
 
-/// Hex-encode bytes as a Postgres `\x…` bytea literal for display.
-fn bytea_hex(bytes: &[u8]) -> String {
+/// Hex-encode bytes as an `0x…` literal for display.
+fn bytes_hex(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(2 + bytes.len() * 2);
-    s.push_str("\\x");
+    s.push_str("0x");
     for b in bytes {
         s.push_str(&format!("{b:02x}"));
     }
     s
-}
-
-/// Map a decoded Postgres array into a JSON array via `conv`.
-fn json_array<T>(
-    items: Vec<T>,
-    conv: impl Fn(T) -> serde_json::Value,
-) -> serde_json::Value {
-    serde_json::Value::Array(items.into_iter().map(conv).collect())
 }
 
 fn urlencode(s: &str) -> String {
@@ -1309,4 +1186,24 @@ fn urlencode(s: &str) -> String {
         }
     }
     out
+}
+
+/// Decode percent-escapes in a URL path segment (enough to recover a database
+/// name from a connection string).
+fn urldecode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(byte) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }

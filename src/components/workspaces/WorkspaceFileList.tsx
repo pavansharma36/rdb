@@ -1,4 +1,4 @@
-import type { WorkspaceFile } from "../../store";
+import type { WorkspaceFile } from "../../api/store.ts";
 
 interface WorkspaceFileListProps {
   files: WorkspaceFile[];

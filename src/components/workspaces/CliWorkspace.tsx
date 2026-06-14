@@ -2,15 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { listen } from "@tauri-apps/api/event";
-import { ptySpawn, ptyWrite, ptyResize, ptySnapshot, ptyClose } from "../../api";
-import type { ConnectionId } from "../../api";
+import { ptySpawn, ptyWrite, ptyResize, ptySnapshot, ptyClose } from "../../api/api.ts";
+import type { ConnectionId } from "../../api/api.ts";
 import {
   genId,
   listWorkspaceFiles,
   saveWorkspaceFile,
   deleteWorkspaceFile,
   type WorkspaceFile,
-} from "../../store";
+} from "../../api/store.ts";
 import { WorkspaceFileList } from "./WorkspaceFileList";
 import { CodeEditor } from "../CodeEditor";
 import { ConfirmDialog } from "../Modal";

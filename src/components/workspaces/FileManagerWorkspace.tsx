@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { api, errString } from "../../api";
-import type { ConnectionId, FileEntry, TransferStats } from "../../api";
+import { api, errString } from "../../api/api.ts";
+import type { ConnectionId } from "../../api/api.ts";
 import { useResizable, TREE_MIN, TREE_MAX } from "../../useResizable";
 import { ConnScope, useConnectionState } from "../../connectionState";
 import { useLoader } from "../Loader";
+import {FileEntry, TransferStats} from "../../api/sftp.ts";
 
 interface Props {
   connectionId: ConnectionId;

@@ -1,4 +1,4 @@
-import type { Schema, Table } from "../../../api";
+import type { Schema, Table } from "../../../api/rdbms.ts";
 
 interface SchemaTreeProps {
   schemas: Schema[];

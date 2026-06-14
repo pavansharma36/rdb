@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { installUpdate, type UpdateInfo } from "../updater";
-import { errString } from "../api";
+import { installUpdate, type UpdateInfo } from "../api/updater.ts";
+import { errString } from "../api/api.ts";
 
 interface UpdateBannerProps {
   update: UpdateInfo;

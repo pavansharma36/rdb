@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { api, errString } from "../../../api";
-import type { ConnectionId, MqMessage, MqQueue } from "../../../api";
+import { api, errString } from "../../../api/api.ts";
+import type { ConnectionId } from "../../../api/api.ts";
 import { DataTable, Stat, type Col } from "../../DataTable";
 import { fmtBytes, fmtRate, vhostLabel } from "./format";
+import {MqMessage, MqQueue} from "../../../api/rabbitmq.ts";
 
 export function QueuesTab({
   connectionId,

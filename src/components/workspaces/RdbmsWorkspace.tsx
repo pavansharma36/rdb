@@ -1,25 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { api, errString } from "../../api";
+import { api, errString } from "../../api/api.ts";
 import type {
-  BrowseFilter,
-  BrowseSort,
-  BrowseSpec,
-  Column,
-  ColumnValue,
   ConnectionId,
-  Index,
-  RowChanges,
-  Schema,
-  Table,
-  QueryResult,
-} from "../../api";
-import type { WorkspaceFile } from "../../store";
+} from "../../api/api.ts";
+import type { WorkspaceFile } from "../../api/store.ts";
 import {
   listWorkspaceFiles,
   saveWorkspaceFile,
   deleteWorkspaceFile,
-} from "../../store";
+} from "../../api/store.ts";
 import { ConfirmDialog } from "../Modal";
 import { useResizable, TREE_MIN, TREE_MAX, EDITOR_MIN, EDITOR_MAX } from "../../useResizable";
 import { ConnScope, useConnectionState } from "../../connectionState";
@@ -43,6 +33,17 @@ import {
 import { SchemaTree } from "./rdbms/SchemaTree";
 import { WorkspaceFileList } from "./WorkspaceFileList";
 import { StructureTable } from "./rdbms/StructureTable";
+import {
+  BrowseFilter,
+  BrowseSort,
+  BrowseSpec,
+  Column,
+  ColumnValue, Index,
+  QueryResult,
+  RowChanges,
+  Schema,
+  Table
+} from "../../api/rdbms.ts";
 
 interface Props {
   connectionId: ConnectionId;
@@ -308,15 +309,6 @@ export function RdbmsWorkspace({
       .then(setDdlText)
       .catch((e) => setDdlText(`-- Failed to load DDL: ${errString(e)}`));
   }, [tableView, edit, ddlText, connectionId]);
-
-  // Lazily fetch the table's indexes when the structure view is opened.
-  useEffect(() => {
-    if (tableView !== "structure" || !edit || indexes !== null) return;
-    api
-      .rdbmsListIndexes(connectionId, edit.schema, edit.table)
-      .then(setIndexes)
-      .catch(() => setIndexes([]));
-  }, [tableView, edit, indexes, connectionId]);
 
   /** Save the current editor SQL under `name` (from the inline name input). */
   async function saveCurrentSql() {
@@ -615,8 +607,10 @@ export function RdbmsWorkspace({
     setOpenFilterCol(null);
     let columns: Column[] = [];
     try {
-      columns = await api.rdbmsDescribeTable(connectionId, schema, table);
+      const desc = await api.rdbmsDescribeTable(connectionId, schema, table, true);
+      columns = desc.columns;
       setEdit({ schema, table, columns });
+      setIndexes(desc.indexes);
       if (!columns.some((c) => c.primary_key)) {
         setNotice(
           "No primary key: edits match rows by all column values and may affect duplicates.",
@@ -683,7 +677,7 @@ export function RdbmsWorkspace({
     const ref = parseSingleTable(query);
     if (!ref) return null;
     try {
-      const columns = await api.rdbmsDescribeTable(
+      const { columns } = await api.rdbmsDescribeTable(
         connectionId,
         ref.schema,
         ref.table,

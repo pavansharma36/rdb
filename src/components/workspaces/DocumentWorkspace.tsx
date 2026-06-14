@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { api, errString } from "../../api";
-import type { ConnectionId, MongoCollection, FindResult } from "../../api";
+import { api, errString } from "../../api/api.ts";
+import type { ConnectionId } from "../../api/api.ts";
 import { useResizable, TREE_MIN, TREE_MAX } from "../../useResizable";
 import { ConnScope, useConnectionState } from "../../connectionState";
+import {FindResult, MongoCollection} from "../../api/document.ts";
 
 interface Props {
   connectionId: ConnectionId;

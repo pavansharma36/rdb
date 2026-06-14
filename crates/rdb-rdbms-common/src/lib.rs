@@ -138,6 +138,13 @@ pub struct Index {
     pub columns: Vec<String>,
 }
 
+/// Columns + indexes for a table, fetched in one call for the structure view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableDescription {
+    pub columns: Vec<Column>,
+    pub indexes: Vec<Index>,
+}
+
 /// A staged update to one row: identify it by `pk`, set the columns in `changes`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RowUpdate {
@@ -239,12 +246,17 @@ pub trait RdbmsPlugin: Send + Sync {
 
     async fn list_tables(&self, conn: Arc<dyn Connection>, schema: &str) -> Result<Vec<Table>>;
 
+    /// Describe a table's columns, and (when `include_indexes`) its indexes too.
+    /// The index list is only needed for the structure view, so column-only
+    /// callers pass `false` to skip the extra catalog query; a plugin with no
+    /// index metadata simply returns an empty `indexes` either way.
     async fn describe_table(
         &self,
         conn: Arc<dyn Connection>,
         schema: &str,
         table: &str,
-    ) -> Result<Vec<Column>>;
+        include_indexes: bool,
+    ) -> Result<TableDescription>;
 
     /// Return the full `CREATE TABLE` (and related `CREATE INDEX`, etc.) DDL for
     /// a table as backend-specific text. Plugins that can't produce DDL return
@@ -255,17 +267,6 @@ pub trait RdbmsPlugin: Send + Sync {
         _schema: &str,
         _table: &str,
     ) -> Result<String> {
-        Err(PluginError::Unsupported)
-    }
-
-    /// List the indexes on a table, for the structure view. Plugins that don't
-    /// expose index metadata return [`PluginError::Unsupported`].
-    async fn list_indexes(
-        &self,
-        _conn: Arc<dyn Connection>,
-        _schema: &str,
-        _table: &str,
-    ) -> Result<Vec<Index>> {
         Err(PluginError::Unsupported)
     }
 
@@ -469,6 +470,10 @@ struct ListTablesParams {
 struct DescribeTableParams {
     schema: String,
     table: String,
+    /// Whether to include the table's indexes (structure view); the column-only
+    /// callers (`ddl_statement`, edit context) omit it and take the default.
+    #[serde(default)]
+    include_indexes: bool,
 }
 
 #[derive(Deserialize)]
@@ -524,15 +529,15 @@ pub async fn dispatch_rdbms(
         }
         "rdbms.describe_table" => {
             let p: DescribeTableParams = parse(params)?;
-            to_value(plugin.describe_table(conn, &p.schema, &p.table).await?)
+            to_value(
+                plugin
+                    .describe_table(conn, &p.schema, &p.table, p.include_indexes)
+                    .await?,
+            )
         }
         "rdbms.ddl_statement" => {
             let p: DescribeTableParams = parse(params)?;
             to_value(plugin.ddl_statement(conn, &p.schema, &p.table).await?)
-        }
-        "rdbms.list_indexes" => {
-            let p: DescribeTableParams = parse(params)?;
-            to_value(plugin.list_indexes(conn, &p.schema, &p.table).await?)
         }
         "rdbms.browse_table" => {
             let p: BrowseTableParams = parse(params)?;
@@ -587,8 +592,12 @@ mod tests {
             _c: Arc<dyn Connection>,
             _s: &str,
             _t: &str,
-        ) -> Result<Vec<Column>> {
-            Ok(vec![])
+            _include_indexes: bool,
+        ) -> Result<TableDescription> {
+            Ok(TableDescription {
+                columns: vec![],
+                indexes: vec![],
+            })
         }
         async fn execute(&self, _c: Arc<dyn Connection>, _sql: &str) -> Result<Vec<QueryResult>> {
             Ok(vec![QueryResult {

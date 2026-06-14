@@ -1,4 +1,4 @@
-import type { MqChannel, MqConnection } from "../../../api";
+import type { MqChannel, MqConnection } from "../../../api/rabbitmq.ts";
 import { DataTable, type Col } from "../../DataTable";
 import { vhostLabel } from "./format";
 

@@ -1,4 +1,4 @@
-import type { Column } from "../../../api";
+import type { Column } from "../../../api/rdbms.ts";
 
 export function fmt(v: unknown): string {
   if (v === null || v === undefined) return "NULL";

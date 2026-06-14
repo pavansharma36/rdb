@@ -123,7 +123,7 @@ jobs:
         run: |
           set -euo pipefail
           info="{}"
-          for crate in rdb-plugin-postgres rdb-plugin-mongodb rdb-plugin-rabbitmq rdb-plugin-ssh rdb-plugin-sftp; do
+          for crate in rdb-plugin-postgres rdb-plugin-mongodb rdb-plugin-rabbitmq rdb-plugin-ssh rdb-plugin-sftp rdb-plugin-mysql rdb-plugin-mssql rdb-plugin-snowflake; do
             described=$("target/${{ matrix.target }}/release/${crate}" --describe)
             info=$(jq -n --argjson acc "$info" --argjson d "$described" \
               '$acc + { ($d.id): { name: $d.name, description: $d.description, version: $d.version } }')
