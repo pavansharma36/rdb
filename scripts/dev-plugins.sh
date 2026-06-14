@@ -26,8 +26,8 @@ if [ "$PROFILE" = "release" ]; then
 fi
 
 # plugin id -> crate name
-PLUGINS=(postgres mongodb rabbitmq ssh sftp)
-CRATES=(rdb-plugin-postgres rdb-plugin-mongodb rdb-plugin-rabbitmq rdb-plugin-ssh rdb-plugin-sftp)
+PLUGINS=(postgres mongodb rabbitmq ssh sftp snowflake mysql mssql)
+CRATES=(rdb-plugin-postgres rdb-plugin-mongodb rdb-plugin-rabbitmq rdb-plugin-ssh rdb-plugin-sftp rdb-plugin-snowflake rdb-plugin-mysql rdb-plugin-mssql)
 
 mkdir -p "$PLUGINS_DIR"
 

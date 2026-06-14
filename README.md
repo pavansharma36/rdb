@@ -10,6 +10,8 @@ Ships today with four plugins:
 | Plugin | Kind | What it talks to |
 | --- | --- | --- |
 | **PostgreSQL** | `rdbms` | PostgreSQL 12+ databases (via `sqlx`) |
+| **MySQL** | `rdbms` | MySQL 8.0+ and MariaDB databases (via `sqlx`) |
+| **SQL Server** | `rdbms` | Microsoft SQL Server 2012+ and Azure SQL (via `tiberius`) |
 | **MongoDB** | `document` | MongoDB and Atlas clusters |
 | **RabbitMQ** | `rabbitmq` | RabbitMQ brokers via the HTTP Management API (requires the `rabbitmq_management` plugin) |
 | **SSH** | `cli` | Remote hosts over SSH; opens a full PTY terminal + script runner |

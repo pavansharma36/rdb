@@ -9,6 +9,9 @@ members = [
     "crates/plugins/rabbitmq",
     "crates/plugins/ssh",
     "crates/plugins/sftp",
+    "crates/plugins/snowflake",
+    "crates/plugins/mysql",
+    "crates/plugins/mssql",
     "src-tauri",
 ]
 
@@ -35,3 +38,6 @@ rdb-rdbms-common = { path = "crates/rdb-rdbms-common" }
 rdb-plugin-postgres = { path = "crates/plugins/postgres" }
 rdb-plugin-mongodb = { path = "crates/plugins/mongodb" }
 rdb-plugin-rabbitmq = { path = "crates/plugins/rabbitmq" }
+rdb-plugin-snowflake = { path = "crates/plugins/snowflake" }
+rdb-plugin-mysql = { path = "crates/plugins/mysql" }
+rdb-plugin-mssql = { path = "crates/plugins/mssql" }

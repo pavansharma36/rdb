@@ -1,0 +1,21 @@
+[package]
+name = "rdb-plugin-snowflake"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rdb-plugin-snowflake"
+path = "src/main.rs"
+
+[dependencies]
+rdb-core.workspace = true
+rdb-rdbms-common.workspace = true
+rdb-plugin-runtime.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+snowflake-connector-rs = "0.9"
