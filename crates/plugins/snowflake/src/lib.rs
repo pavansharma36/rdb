@@ -140,7 +140,7 @@ impl Plugin for SnowflakePlugin {
                     field_type: ConfigFieldType::Text,
                     required: true,
                     default: None,
-                    placeholder: Some("xy12345.us-east-1".into()),
+                    placeholder: Some("xy12345.us-east-1.azure".into()),
                     show_if: None,
                 },
                 ConfigField {
