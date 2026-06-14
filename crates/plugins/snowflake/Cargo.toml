@@ -19,3 +19,4 @@ tokio.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
 snowflake-connector-rs = "0.9"
+regex = "1.12.4"

@@ -7,6 +7,7 @@ use rdb_rdbms_common::{
     downcast_conn, ApplyResult, BrowseFilter, BrowseSpec, Column, ColumnMeta, ColumnValue,
     CsvWriter, QueryResult, RdbmsPlugin, RowChanges, Schema, Table, TableDescription, TableKind,
 };
+use regex::Regex;
 use snowflake_connector_rs::{
     SnowflakeAuthMethod, SnowflakeClient, SnowflakeClientConfig, SnowflakeRow, SnowflakeSession,
 };
@@ -72,9 +73,8 @@ fn build_auth(cfg: &ConnectionConfig) -> Result<SnowflakeAuthMethod> {
     match mode.as_str() {
         "keypair" => {
             let path = cfg_str(cfg, "private_key")?;
-            let pem = std::fs::read_to_string(&path).map_err(|e| {
-                PluginError::Config(format!("cannot read private key {path}: {e}"))
-            })?;
+            let pem = std::fs::read_to_string(&path)
+                .map_err(|e| PluginError::Config(format!("cannot read private key {path}: {e}")))?;
             match cfg_secret(cfg, "private_key_passphrase")?.filter(|p| !p.is_empty()) {
                 Some(pass) => Ok(SnowflakeAuthMethod::KeyPair {
                     encrypted_pem: pem,
@@ -345,58 +345,44 @@ impl RdbmsPlugin for SnowflakePlugin {
         _include_indexes: bool,
     ) -> Result<TableDescription> {
         let conn = downcast_conn::<SnowflakeConnection>(&conn)?;
-        let sql = format!(
-            "SELECT
-               column_name,
-               data_type,
-               is_nullable,
-               character_maximum_length,
-               numeric_precision,
-               numeric_scale,
-               (SELECT 'YES' FROM information_schema.table_constraints tc
-                JOIN information_schema.key_column_usage kcu USING (constraint_name)
-                WHERE tc.constraint_type = 'PRIMARY KEY'
-                  AND tc.table_schema = c.table_schema
-                  AND tc.table_name = c.table_name
-                  AND kcu.column_name = c.column_name LIMIT 1),
-               column_default,
-               (SELECT 'YES' FROM information_schema.table_constraints tc
-                JOIN information_schema.key_column_usage kcu USING (constraint_name)
-                WHERE tc.constraint_type = 'UNIQUE'
-                  AND tc.table_schema = c.table_schema
-                  AND tc.table_name = c.table_name
-                  AND kcu.column_name = c.column_name LIMIT 1)
-             FROM information_schema.columns c
-            WHERE c.table_schema = {} AND c.table_name = {}
-            ORDER BY c.ordinal_position",
-            quote_literal(schema),
-            quote_literal(table),
-        );
+        let sql = format!("DESCRIBE TABLE {}.{}", schema, table,);
         let (_, rows) = run_query(&conn.session(), &sql).await?;
 
         let columns = rows
             .into_iter()
             .filter_map(|r| {
                 let name = r.first().map(json_to_string)?;
-                let dtype = r.get(1).map(json_to_string).unwrap_or_default();
-                let nullable = r.get(2).map(json_to_string).unwrap_or_default();
-                let char_len = r.get(3).and_then(json_to_i32);
-                let precision = r.get(4).and_then(json_to_i32);
-                let scale = r.get(5).and_then(json_to_i32);
-                let pk = r.get(6).filter(|v| !v.is_null());
-                let default_value = r.get(7).filter(|v| !v.is_null()).map(json_to_string);
-                let unique_flag = r.get(8).filter(|v| !v.is_null());
+
+                let dtype_temp = r.get(1).map(json_to_string).unwrap_or_default();
+                // Parse VARCHAR(255), NUMBER(38,0), etc. from dtype.
+                let (dtype, char_len, precision, scale) = parse_column_type_metadata(&dtype_temp);
+
+                let nullable = r.get(3).map(json_to_string).unwrap_or_default();
+
+                let default_value = match r.get(4) {
+                  Some(v) => match v {
+                      serde_json::Value::String(s) => Some(s.into()),
+                      _ => None,
+                  },
+                  _ => None
+                };
+
+                let primary_key = r.get(5).map(json_to_string).unwrap_or_default();
+
+                let unique = r.get(6).map(json_to_string).unwrap_or_default();
 
                 let u = dtype.to_ascii_lowercase();
                 let json = u.contains("variant") || u.contains("json") || u.contains("object");
+
                 let large = json || u.contains("text") || u.contains("array");
+
                 Some(Column {
                     name,
-                    data_type: dtype,
+                    data_type: dtype.into(),
                     udt_name: None,
-                    nullable: nullable.eq_ignore_ascii_case("YES"),
-                    primary_key: pk.is_some(),
-                    unique: unique_flag.is_some(),
+                    nullable: nullable.eq_ignore_ascii_case("Y"),
+                    primary_key: primary_key.eq_ignore_ascii_case("Y"),
+                    unique: unique.eq_ignore_ascii_case("Y"),
                     default_value,
                     foreign_key: None,
                     char_max_length: char_len,
@@ -489,9 +475,11 @@ impl RdbmsPlugin for SnowflakePlugin {
         for stmt in split_statements(sql) {
             let start = Instant::now();
             if is_select(&stmt) {
-                let (columns, mut rows) = run_query(&session, &stmt).await.inspect_err(|e| {
-                    tracing::warn!("snowflake select failed: {e}");
-                })?;
+                let (columns, mut rows) = run_query(&session, add_limit_in_select(&stmt).as_str())
+                    .await
+                    .inspect_err(|e| {
+                        tracing::warn!("snowflake select failed: {e}");
+                    })?;
                 let result_truncated = rows.len() > DEFAULT_MAX_ROW_COUNT;
                 rows.truncate(DEFAULT_MAX_ROW_COUNT);
                 let elapsed_ms = start.elapsed().as_millis();
@@ -593,6 +581,35 @@ impl RdbmsPlugin for SnowflakePlugin {
     }
 }
 
+fn parse_column_type_metadata(dtype: &str) -> (&str, Option<i32>, Option<i32>, Option<i32>) {
+    let upper = dtype.to_ascii_uppercase();
+
+    if let Some(args) = upper
+        .strip_prefix("VARCHAR(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        return ("VARCHAR", args.parse().ok(), None, None);
+    }
+
+    if let Some(args) = upper
+        .strip_prefix("NUMBER(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let mut parts = args.split(',');
+        let p = parts.next().and_then(|v| v.trim().parse().ok());
+        let s = parts.next().and_then(|v| v.trim().parse().ok());
+        return ("NUMBER", None, p, s);
+    }
+
+    let re = Regex::new(r"^([A-Z]+)\(").unwrap();
+    let c = re
+        .captures(dtype)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str());
+
+    (c.unwrap_or(dtype), None, None, None)
+}
+
 /// Run a query and return its column metadata plus rows as JSON cell matrices.
 /// Column metadata is read from the first returned row (the connector carries
 /// metadata per row); an empty result therefore yields no columns.
@@ -664,9 +681,7 @@ fn cell_to_json(row: &SnowflakeRow, i: usize, ty: Option<&str>) -> serde_json::V
             "false" | "FALSE" | "0" => Value::Bool(false),
             _ => Value::String(s),
         },
-        "variant" | "object" | "array" => {
-            serde_json::from_str(&s).unwrap_or(Value::String(s))
-        }
+        "variant" | "object" | "array" => serde_json::from_str(&s).unwrap_or(Value::String(s)),
         _ => Value::String(s),
     }
 }
@@ -676,14 +691,6 @@ fn json_to_string(v: &serde_json::Value) -> String {
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Null => String::new(),
         other => other.to_string(),
-    }
-}
-
-fn json_to_i32(v: &serde_json::Value) -> Option<i32> {
-    match v {
-        serde_json::Value::Number(n) => n.as_i64().map(|n| n as i32),
-        serde_json::Value::String(s) => s.parse().ok(),
-        _ => None,
     }
 }
 
@@ -757,7 +764,11 @@ fn build_browse(schema: &str, table: &str, spec: &BrowseSpec) -> Result<String> 
         conds.push(format!("({w})"));
     }
 
-    let mut sql = format!("SELECT * FROM {}.{}", quote_ident(schema), quote_ident(table));
+    let mut sql = format!(
+        "SELECT * FROM {}.{}",
+        quote_ident(schema),
+        quote_ident(table)
+    );
     if !conds.is_empty() {
         sql.push_str(&format!(" WHERE {}", conds.join(" AND ")));
     }
@@ -794,7 +805,11 @@ fn filter_expr(f: &BrowseFilter) -> Result<String> {
                 "gte" => ">=",
                 "like" => "LIKE",
                 "ilike" => "ILIKE",
-                _ => return Err(PluginError::Config(format!("invalid filter operator: {op}"))),
+                _ => {
+                    return Err(PluginError::Config(format!(
+                        "invalid filter operator: {op}"
+                    )))
+                }
             };
             let cv = ColumnValue {
                 column: f.column.clone(),
@@ -876,7 +891,19 @@ fn is_select(sql: &str) -> bool {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
-    matches!(head.as_str(), "select" | "with" | "show" | "explain")
+    matches!(head.as_str(), "select" | "with" | "show" | "explain" | "desc" | "describe")
+}
+
+fn add_limit_in_select(sql: &str) -> String {
+    let upper = sql.to_ascii_uppercase();
+    if upper.starts_with("SELECT") || upper.starts_with("WITH") {
+        return format!(
+            "SELECT * FROM ({}) q LIMIT {};",
+            sql,
+            DEFAULT_MAX_ROW_COUNT + 1
+        )
+    }
+    sql.into()
 }
 
 fn split_statements(sql: &str) -> Vec<String> {
@@ -970,4 +997,53 @@ fn dollar_tag_end(b: &[u8], start: usize) -> Option<usize> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rdb_core::test_utils::{find_connection_config};
+    use std::path::Path;
+
+    /// Live integration test against a real Snowflake account.
+    ///
+    /// It is `#[ignore]`d because it needs network access and real
+    /// credentials; it never runs as part of `cargo test` unless asked for
+    /// explicitly. Run it with:
+    ///
+    /// ```sh
+    /// RDB_SNOWFLAKE_APP_DIR=/path/to/app-data-dir \
+    /// RDB_SNOWFLAKE_CONNECTION_ID=<saved-connection-uuid> \
+    ///   cargo test -p rdb-plugin-snowflake -- --ignored --nocapture execute_query_against_live_snowflake
+    /// ```
+    ///
+    /// `RDB_SNOWFLAKE_APP_DIR` points at the host's app-data directory. The test
+    /// scans every `connections/*/connections.json` under it and picks the saved
+    /// connection whose `id` equals `RDB_SNOWFLAKE_CONNECTION_ID`, then uses that
+    /// profile's `config` to connect. The query can be overridden with
+    /// `RDB_SNOWFLAKE_QUERY`.
+    #[tokio::test]
+    #[ignore = "requires a live Snowflake account; provide RDB_SNOWFLAKE_APP_DIR and RDB_SNOWFLAKE_CONNECTION_ID"]
+    async fn execute_query_against_live_snowflake() {
+        let app_dir: &str = "/home/pavan/.local/share/dev.rdb.app";
+        let connection_id: &str = "9777e771-4ee1-4a60-bfa9-06f430896b24";
+
+        // Find the saved connection across all connections.json files and use
+        // its config (a map of field-name -> JSON value, exactly what the host
+        // hands the plugin's `connect`).
+        let cfg = find_connection_config(Path::new(&app_dir), &connection_id);
+
+        let plugin = SnowflakePlugin::new();
+        let conn = plugin
+            .connect(cfg)
+            .await
+            .expect("failed to open snowflake connection");
+
+        let results = plugin
+            .describe_table(conn, "TEST_SCHEMA", "CALL_CENTER", false)
+            .await
+            .expect("failed to describe table");
+
+        println!("{:#?}", results);
+    }
 }

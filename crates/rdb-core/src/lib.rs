@@ -219,8 +219,63 @@ pub trait Plugin: Send + Sync {
     }
 }
 
+
+pub mod test_utils {
+    use std::path::Path;
+    use serde::Deserialize;
+    use crate::ConnectionConfig;
+
+    /// A saved connection profile as persisted by the host at
+    /// `<app_dir>/connections/<plugin_id>/connections.json`. Mirrors the host's
+    /// `SavedConnection` (camelCase on the wire); only the fields this test
+    /// needs are declared.
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct SavedConnection {
+        id: String,
+        #[allow(dead_code)]
+        name: String,
+        plugin_id: String,
+        config: ConnectionConfig,
+    }
+
+    /// Scan `<app_dir>/connections/*/connections.json` and return the config of
+    /// the saved connection whose id matches `connection_id`.
+    pub fn find_connection_config(app_dir: &Path, connection_id: &str) -> ConnectionConfig {
+        let connections_dir = app_dir.join("connections");
+        let entries = std::fs::read_dir(&connections_dir).unwrap_or_else(|e| {
+            panic!(
+                "cannot read connections dir {}: {e}",
+                connections_dir.display()
+            )
+        });
+
+        for entry in entries.flatten() {
+            let file = entry.path().join("connections.json");
+            let bytes = match std::fs::read(&file) {
+                Ok(bytes) => bytes,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => panic!("cannot read {}: {e}", file.display()),
+            };
+            let conns: Vec<SavedConnection> = serde_json::from_slice(&bytes)
+                .unwrap_or_else(|e| panic!("invalid connections file {}: {e}", file.display()));
+            if let Some(conn) = conns.into_iter().find(|c| c.id == connection_id) {
+                eprintln!(
+                    "found connection '{}' (plugin '{}') in {}",
+                    connection_id,
+                    conn.plugin_id,
+                    file.display()
+                );
+                return conn.config;
+            }
+        }
+
+        panic!("no saved connection with id '{connection_id}' under {}", connections_dir.display());
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use serde_json::json;
 
