@@ -6,7 +6,8 @@ use rdb_core::{
 };
 use rdb_rdbms_common::{
     downcast_conn, ApplyResult, BrowseFilter, BrowseSpec, Column, ColumnMeta, ColumnValue,
-    CsvWriter, ForeignKey, Index, QueryResult, RdbmsPlugin, RowChanges, Schema, Table, TableKind,
+    CsvWriter, ForeignKey, Index, QueryResult, RdbmsPlugin, RowChanges, Schema, Table,
+    TableDescription, TableKind,
 };
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
 use sqlx::{Column as _, Executor, Row, TypeInfo};
@@ -19,6 +20,49 @@ pub struct MysqlPlugin;
 impl MysqlPlugin {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Index metadata for the structure view. Helper for
+    /// [`describe_table`](RdbmsPlugin::describe_table) when `include_indexes` is set.
+    async fn list_indexes(
+        &self,
+        conn: &MysqlConnection,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<Index>> {
+        // statistics has one row per index column; aggregate into one Index per
+        // index name with columns ordered by seq_in_index.
+        let rows: Vec<(String, String, i64, String)> = sqlx::query_as(
+            // non_unique is unsigned on some servers, signed on others; CAST to
+            // SIGNED for a deterministic decode. seq_in_index is only needed for
+            // ordering, so it stays in ORDER BY and out of the projection.
+            "select index_name, column_name, cast(non_unique as signed), index_type \
+             from information_schema.statistics \
+             where table_schema = ? and table_name = ? \
+             order by (index_name = 'PRIMARY') desc, index_name, seq_in_index",
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&conn.pool())
+        .await
+        .map_err(|e| PluginError::Backend(e.to_string()))?;
+
+        // Group consecutive rows by index_name (the query orders by name).
+        let mut out: Vec<Index> = Vec::new();
+        for (name, column, non_unique, method) in rows {
+            if let Some(last) = out.last_mut().filter(|ix| ix.name == name) {
+                last.columns.push(column);
+            } else {
+                out.push(Index {
+                    primary: name == "PRIMARY",
+                    unique: non_unique == 0,
+                    method,
+                    columns: vec![column],
+                    name,
+                });
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -355,7 +399,8 @@ impl RdbmsPlugin for MysqlPlugin {
         conn: Arc<dyn Connection>,
         schema: &str,
         table: &str,
-    ) -> Result<Vec<Column>> {
+        include_indexes: bool,
+    ) -> Result<TableDescription> {
         let conn = downcast_conn::<MysqlConnection>(&conn)?;
         let rows: Vec<(
             String,         // column_name
@@ -400,7 +445,7 @@ impl RdbmsPlugin for MysqlPlugin {
         .await
         .map_err(|e| PluginError::Backend(e.to_string()))?;
 
-        Ok(rows
+        let columns = rows
             .into_iter()
             .map(
                 |(name, dtype, col_type, nullable, char_len, precision, scale,
@@ -433,7 +478,14 @@ impl RdbmsPlugin for MysqlPlugin {
                     }
                 },
             )
-            .collect())
+            .collect();
+
+        let indexes = if include_indexes {
+            self.list_indexes(conn, schema, table).await?
+        } else {
+            Vec::new()
+        };
+        Ok(TableDescription { columns, indexes })
     }
 
     async fn ddl_statement(
@@ -461,48 +513,6 @@ impl RdbmsPlugin for MysqlPlugin {
             "-- Generated DDL statements -- \n\n\n\
             -- Table: {schema}.{table} Definition -- \n\n{ddl};"
         ))
-    }
-
-    async fn list_indexes(
-        &self,
-        conn: Arc<dyn Connection>,
-        schema: &str,
-        table: &str,
-    ) -> Result<Vec<Index>> {
-        let conn = downcast_conn::<MysqlConnection>(&conn)?;
-        // statistics has one row per index column; aggregate into one Index per
-        // index name with columns ordered by seq_in_index.
-        let rows: Vec<(String, String, i64, String)> = sqlx::query_as(
-            // non_unique is unsigned on some servers, signed on others; CAST to
-            // SIGNED for a deterministic decode. seq_in_index is only needed for
-            // ordering, so it stays in ORDER BY and out of the projection.
-            "select index_name, column_name, cast(non_unique as signed), index_type \
-             from information_schema.statistics \
-             where table_schema = ? and table_name = ? \
-             order by (index_name = 'PRIMARY') desc, index_name, seq_in_index",
-        )
-        .bind(schema)
-        .bind(table)
-        .fetch_all(&conn.pool())
-        .await
-        .map_err(|e| PluginError::Backend(e.to_string()))?;
-
-        // Group consecutive rows by index_name (the query orders by name).
-        let mut out: Vec<Index> = Vec::new();
-        for (name, column, non_unique, method) in rows {
-            if let Some(last) = out.last_mut().filter(|ix| ix.name == name) {
-                last.columns.push(column);
-            } else {
-                out.push(Index {
-                    primary: name == "PRIMARY",
-                    unique: non_unique == 0,
-                    method,
-                    columns: vec![column],
-                    name,
-                });
-            }
-        }
-        Ok(out)
     }
 
     async fn browse_table(

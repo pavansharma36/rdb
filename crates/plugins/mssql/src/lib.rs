@@ -7,7 +7,8 @@ use rdb_core::{
 };
 use rdb_rdbms_common::{
     downcast_conn, ApplyResult, BrowseFilter, BrowseSpec, Column, ColumnMeta, ColumnValue,
-    CsvWriter, ForeignKey, Index, QueryResult, RdbmsPlugin, RowChanges, Schema, Table, TableKind,
+    CsvWriter, ForeignKey, Index, QueryResult, RdbmsPlugin, RowChanges, Schema, Table,
+    TableDescription, TableKind,
 };
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -20,6 +21,62 @@ pub struct MssqlPlugin;
 impl MssqlPlugin {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Index metadata for the structure view. Helper for
+    /// [`describe_table`](RdbmsPlugin::describe_table) when `include_indexes` is set.
+    async fn list_indexes(
+        &self,
+        conn: &MssqlConnection,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<Index>> {
+        // One row per index column; the query orders by index then key ordinal,
+        // so we aggregate consecutive rows into one Index.
+        let sql = format!(
+            "SELECT i.name AS index_name, col.name AS column_name, \
+                    i.is_unique, i.is_primary_key, i.type_desc \
+             FROM sys.indexes i \
+             JOIN sys.objects o ON o.object_id = i.object_id \
+             JOIN sys.schemas s ON s.schema_id = o.schema_id \
+             JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id \
+             JOIN sys.columns col ON col.object_id = ic.object_id AND col.column_id = ic.column_id \
+             WHERE s.name = {sch} AND o.name = {tab} AND i.name IS NOT NULL \
+             ORDER BY i.is_primary_key DESC, i.name, ic.key_ordinal",
+            sch = quote_literal(schema),
+            tab = quote_literal(table),
+        );
+        let rows = simple_rows(&conn.pool(), &sql).await?;
+
+        let mut out: Vec<Index> = Vec::new();
+        for r in &rows {
+            let Some(name) = r.try_get::<&str, _>(0).ok().flatten() else {
+                continue;
+            };
+            let Some(column) = r.try_get::<&str, _>(1).ok().flatten() else {
+                continue;
+            };
+            let unique = r.try_get::<bool, _>(2).ok().flatten().unwrap_or(false);
+            let primary = r.try_get::<bool, _>(3).ok().flatten().unwrap_or(false);
+            let method = r
+                .try_get::<&str, _>(4)
+                .ok()
+                .flatten()
+                .unwrap_or("")
+                .to_string();
+            if let Some(last) = out.last_mut().filter(|ix| ix.name == name) {
+                last.columns.push(column.to_string());
+            } else {
+                out.push(Index {
+                    name: name.to_string(),
+                    method,
+                    unique,
+                    primary,
+                    columns: vec![column.to_string()],
+                });
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -335,7 +392,8 @@ impl RdbmsPlugin for MssqlPlugin {
         conn: Arc<dyn Connection>,
         schema: &str,
         table: &str,
-    ) -> Result<Vec<Column>> {
+        include_indexes: bool,
+    ) -> Result<TableDescription> {
         let conn = downcast_conn::<MssqlConnection>(&conn)?;
         // sys.* catalog gives exact types, nullability, defaults; join in
         // PK/unique (from key constraints) and FK targets.
@@ -381,7 +439,7 @@ impl RdbmsPlugin for MssqlPlugin {
         );
         let rows = simple_rows(&conn.pool(), &sql).await?;
 
-        Ok(rows
+        let columns: Vec<Column> = rows
             .iter()
             .filter_map(|r| {
                 let name = r.try_get::<&str, _>(0).ok().flatten()?.to_string();
@@ -427,7 +485,14 @@ impl RdbmsPlugin for MssqlPlugin {
                     large,
                 })
             })
-            .collect())
+            .collect();
+
+        let indexes = if include_indexes {
+            self.list_indexes(conn, schema, table).await?
+        } else {
+            Vec::new()
+        };
+        Ok(TableDescription { columns, indexes })
     }
 
     async fn ddl_statement(
@@ -438,7 +503,10 @@ impl RdbmsPlugin for MssqlPlugin {
     ) -> Result<String> {
         // SQL Server has no SHOW CREATE TABLE; reconstruct from describe_table
         // (column types, nullability, primary key).
-        let columns = self.describe_table(conn.clone(), schema, table).await?;
+        let columns = self
+            .describe_table(conn.clone(), schema, table, false)
+            .await?
+            .columns;
         if columns.is_empty() {
             return Err(PluginError::Backend(format!(
                 "table {schema}.{table} not found or has no columns"
@@ -470,61 +538,6 @@ impl RdbmsPlugin for MssqlPlugin {
             quote_ident(table),
             lines.join(",\n")
         ))
-    }
-
-    async fn list_indexes(
-        &self,
-        conn: Arc<dyn Connection>,
-        schema: &str,
-        table: &str,
-    ) -> Result<Vec<Index>> {
-        let conn = downcast_conn::<MssqlConnection>(&conn)?;
-        // One row per index column; the query orders by index then key ordinal,
-        // so we aggregate consecutive rows into one Index.
-        let sql = format!(
-            "SELECT i.name AS index_name, col.name AS column_name, \
-                    i.is_unique, i.is_primary_key, i.type_desc \
-             FROM sys.indexes i \
-             JOIN sys.objects o ON o.object_id = i.object_id \
-             JOIN sys.schemas s ON s.schema_id = o.schema_id \
-             JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id \
-             JOIN sys.columns col ON col.object_id = ic.object_id AND col.column_id = ic.column_id \
-             WHERE s.name = {sch} AND o.name = {tab} AND i.name IS NOT NULL \
-             ORDER BY i.is_primary_key DESC, i.name, ic.key_ordinal",
-            sch = quote_literal(schema),
-            tab = quote_literal(table),
-        );
-        let rows = simple_rows(&conn.pool(), &sql).await?;
-
-        let mut out: Vec<Index> = Vec::new();
-        for r in &rows {
-            let Some(name) = r.try_get::<&str, _>(0).ok().flatten() else {
-                continue;
-            };
-            let Some(column) = r.try_get::<&str, _>(1).ok().flatten() else {
-                continue;
-            };
-            let unique = r.try_get::<bool, _>(2).ok().flatten().unwrap_or(false);
-            let primary = r.try_get::<bool, _>(3).ok().flatten().unwrap_or(false);
-            let method = r
-                .try_get::<&str, _>(4)
-                .ok()
-                .flatten()
-                .unwrap_or("")
-                .to_string();
-            if let Some(last) = out.last_mut().filter(|ix| ix.name == name) {
-                last.columns.push(column.to_string());
-            } else {
-                out.push(Index {
-                    name: name.to_string(),
-                    method,
-                    unique,
-                    primary,
-                    columns: vec![column.to_string()],
-                });
-            }
-        }
-        Ok(out)
     }
 
     async fn browse_table(

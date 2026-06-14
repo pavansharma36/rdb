@@ -5,7 +5,7 @@ use rdb_core::{
 };
 use rdb_rdbms_common::{
     downcast_conn, ApplyResult, BrowseFilter, BrowseSpec, Column, ColumnMeta, ColumnValue,
-    CsvWriter, Index, QueryResult, RdbmsPlugin, RowChanges, Schema, Table, TableKind,
+    CsvWriter, QueryResult, RdbmsPlugin, RowChanges, Schema, Table, TableDescription, TableKind,
 };
 use snowflake_connector_rs::{
     SnowflakeAuthMethod, SnowflakeClient, SnowflakeClientConfig, SnowflakeRow, SnowflakeSession,
@@ -342,7 +342,8 @@ impl RdbmsPlugin for SnowflakePlugin {
         conn: Arc<dyn Connection>,
         schema: &str,
         table: &str,
-    ) -> Result<Vec<Column>> {
+        _include_indexes: bool,
+    ) -> Result<TableDescription> {
         let conn = downcast_conn::<SnowflakeConnection>(&conn)?;
         let sql = format!(
             "SELECT
@@ -373,7 +374,7 @@ impl RdbmsPlugin for SnowflakePlugin {
         );
         let (_, rows) = run_query(&conn.session(), &sql).await?;
 
-        Ok(rows
+        let columns = rows
             .into_iter()
             .filter_map(|r| {
                 let name = r.first().map(json_to_string)?;
@@ -405,7 +406,13 @@ impl RdbmsPlugin for SnowflakePlugin {
                     large,
                 })
             })
-            .collect())
+            .collect();
+
+        // Snowflake has no traditional indexes, so indexes are always empty.
+        Ok(TableDescription {
+            columns,
+            indexes: Vec::new(),
+        })
     }
 
     async fn ddl_statement(
@@ -414,7 +421,10 @@ impl RdbmsPlugin for SnowflakePlugin {
         schema: &str,
         table: &str,
     ) -> Result<String> {
-        let columns = self.describe_table(conn.clone(), schema, table).await?;
+        let columns = self
+            .describe_table(conn.clone(), schema, table, false)
+            .await?
+            .columns;
         if columns.is_empty() {
             return Err(PluginError::Backend(format!(
                 "table {schema}.{table} not found or has no columns"
@@ -447,16 +457,6 @@ impl RdbmsPlugin for SnowflakePlugin {
         );
 
         Ok(ddl)
-    }
-
-    async fn list_indexes(
-        &self,
-        _conn: Arc<dyn Connection>,
-        _schema: &str,
-        _table: &str,
-    ) -> Result<Vec<Index>> {
-        // Snowflake doesn't support traditional indexes.
-        Ok(Vec::new())
     }
 
     async fn browse_table(
