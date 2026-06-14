@@ -1,13 +1,13 @@
 import { useMemo, useState } from "react";
-import { api, errString, plainSecret } from "../api";
+import { api, errString, plainSecret } from "../api/api.ts";
 import type {
   PluginInfo,
   ConfigField,
   ConnectionConfig,
   SecretField,
-} from "../api";
-import type { SavedConnection } from "../store";
-import { genId } from "../store";
+} from "../api/api.ts";
+import type { SavedConnection } from "../api/store.ts";
+import { genId } from "../api/store.ts";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 
 interface ConnectionFormProps {

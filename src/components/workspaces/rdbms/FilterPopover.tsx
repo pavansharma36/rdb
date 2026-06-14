@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { BrowseOp } from "../../../api";
+import type { BrowseOp } from "../../../api/rdbms.ts";
 
 /** A staged per-column filter (the column is the key in the workspace's filter
  * map). `value` is the raw input text, turned into a `BrowseFilter` at query

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, errString, ptyCloseConnection } from "./api";
-import type { PluginInfo, ConnectionId, PluginKind } from "./api";
+import { api, errString, ptyCloseConnection } from "./api/api.ts";
+import type { PluginInfo, ConnectionId, PluginKind } from "./api/api.ts";
 import { Sidebar } from "./components/Sidebar";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { InstallPluginDialog } from "./components/InstallPluginDialog";
@@ -9,16 +9,16 @@ import { PluginUpdateBanner } from "./components/PluginUpdateBanner";
 import { ConfirmDialog } from "./components/Modal";
 import { useLoader, WorkspaceLoaderSlot } from "./components/Loader";
 import { clearConnectionState } from "./connectionState";
-import { checkForUpdate, type UpdateInfo } from "./updater";
+import { checkForUpdate, type UpdateInfo } from "./api/updater.ts";
 import { RdbmsWorkspace } from "./components/workspaces/RdbmsWorkspace";
 import { DocumentWorkspace } from "./components/workspaces/DocumentWorkspace";
 import { RabbitMqWorkspace } from "./components/workspaces/RabbitMqWorkspace";
 import { CliWorkspace } from "./components/workspaces/CliWorkspace";
 import { FileManagerWorkspace } from "./components/workspaces/FileManagerWorkspace";
-import type { SavedConnection } from "./store";
-import { loadConnections, saveConnections, upsert, remove, genId } from "./store";
-import { loadConfig, saveConfig, deleteWorkspaceDir } from "./store";
-import type { AppConfig } from "./store";
+import type { SavedConnection } from "./api/store.ts";
+import { loadConnections, saveConnections, upsert, remove, genId } from "./api/store.ts";
+import { loadConfig, saveConfig, deleteWorkspaceDir } from "./api/store.ts";
+import type { AppConfig } from "./api/store.ts";
 import { applyTheme, resolveTheme } from "./theme";
 
 /** Min/max sidebar width (px) enforced while dragging the resize handle. */

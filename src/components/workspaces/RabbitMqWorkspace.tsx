@@ -1,18 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, errString } from "../../api";
+import { api, errString } from "../../api/api.ts";
 import type {
-  ConnectionId,
-  MqChannel,
-  MqConnection,
-  MqExchange,
-  MqOverview,
-  MqQueue,
-} from "../../api";
+  ConnectionId
+} from "../../api/api.ts";
 import { OverviewTab } from "./rabbitmq/OverviewTab";
 import { QueuesTab } from "./rabbitmq/QueuesTab";
 import { ExchangesTab } from "./rabbitmq/ExchangesTab";
 import { ConnectionsTab } from "./rabbitmq/ConnectionsTab";
 import { ConnScope, useConnectionState } from "../../connectionState";
+import {MqChannel, MqConnection, MqExchange, MqOverview, MqQueue} from "../../api/rabbitmq.ts";
 
 interface Props {
   connectionId: ConnectionId;

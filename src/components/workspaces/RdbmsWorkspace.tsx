@@ -1,25 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { api, errString } from "../../api";
+import { api, errString } from "../../api/api.ts";
 import type {
-  BrowseFilter,
-  BrowseSort,
-  BrowseSpec,
-  Column,
-  ColumnValue,
   ConnectionId,
-  Index,
-  RowChanges,
-  Schema,
-  Table,
-  QueryResult,
-} from "../../api";
-import type { WorkspaceFile } from "../../store";
+} from "../../api/api.ts";
+import type { WorkspaceFile } from "../../api/store.ts";
 import {
   listWorkspaceFiles,
   saveWorkspaceFile,
   deleteWorkspaceFile,
-} from "../../store";
+} from "../../api/store.ts";
 import { ConfirmDialog } from "../Modal";
 import { useResizable, TREE_MIN, TREE_MAX, EDITOR_MIN, EDITOR_MAX } from "../../useResizable";
 import { ConnScope, useConnectionState } from "../../connectionState";
@@ -43,6 +33,17 @@ import {
 import { SchemaTree } from "./rdbms/SchemaTree";
 import { WorkspaceFileList } from "./WorkspaceFileList";
 import { StructureTable } from "./rdbms/StructureTable";
+import {
+  BrowseFilter,
+  BrowseSort,
+  BrowseSpec,
+  Column,
+  ColumnValue, Index,
+  QueryResult,
+  RowChanges,
+  Schema,
+  Table
+} from "../../api/rdbms.ts";
 
 interface Props {
   connectionId: ConnectionId;

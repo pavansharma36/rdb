@@ -9,7 +9,7 @@
 // NOTE: configs are stored as-is, including any password field, in plaintext.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { ConnectionConfig } from "./api";
+import type { ConnectionConfig } from "./api.ts";
 
 /** A reusable connection the user has saved. `id` is stable across edits so
  * the sidebar selection and open-connection mapping survive updates. */

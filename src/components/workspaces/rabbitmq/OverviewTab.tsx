@@ -1,4 +1,4 @@
-import type { MqOverview } from "../../../api";
+import type { MqOverview } from "../../../api/rabbitmq.ts";
 import { Stat } from "../../DataTable";
 import { fmtRate } from "./format";
 

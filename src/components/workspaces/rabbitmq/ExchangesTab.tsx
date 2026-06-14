@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { api, errString } from "../../../api";
-import type { ConnectionId, MqExchange } from "../../../api";
+import { api, errString } from "../../../api/api.ts";
+import type { ConnectionId } from "../../../api/api.ts";
 import { DataTable, type Col } from "../../DataTable";
 import { vhostLabel } from "./format";
+import {MqExchange} from "../../../api/rabbitmq.ts";
 
 export function ExchangesTab({
   connectionId,

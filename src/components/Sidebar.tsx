@@ -1,7 +1,7 @@
 import {useEffect, useRef, useState, type CSSProperties} from "react";
 import type { OpenConnection } from "../App";
-import type { PluginInfo, ConnectionId } from "../api";
-import type { SavedConnection } from "../store";
+import type { PluginInfo, ConnectionId } from "../api/api.ts";
+import type { SavedConnection } from "../api/store.ts";
 import { pluginLogo } from "../pluginLogos";
 import { THEMES } from "../theme";
 import { Modal } from "./Modal";

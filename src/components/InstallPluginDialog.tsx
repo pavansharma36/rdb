@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, errString } from "../api";
-import type { AvailablePlugin, GithubPreview, PluginInfo, PluginStatus } from "../api";
-import { loadConfig } from "../store";
+import { api, errString } from "../api/api.ts";
+import type { AvailablePlugin, GithubPreview, PluginInfo, PluginStatus } from "../api/api.ts";
+import { loadConfig } from "../api/store.ts";
 import { Modal } from "./Modal";
 
 interface InstallPluginDialogProps {
