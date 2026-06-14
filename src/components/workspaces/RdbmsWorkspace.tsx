@@ -309,15 +309,6 @@ export function RdbmsWorkspace({
       .catch((e) => setDdlText(`-- Failed to load DDL: ${errString(e)}`));
   }, [tableView, edit, ddlText, connectionId]);
 
-  // Lazily fetch the table's indexes when the structure view is opened.
-  useEffect(() => {
-    if (tableView !== "structure" || !edit || indexes !== null) return;
-    api
-      .rdbmsListIndexes(connectionId, edit.schema, edit.table)
-      .then(setIndexes)
-      .catch(() => setIndexes([]));
-  }, [tableView, edit, indexes, connectionId]);
-
   /** Save the current editor SQL under `name` (from the inline name input). */
   async function saveCurrentSql() {
     const name = newSqlName?.trim();
@@ -615,8 +606,10 @@ export function RdbmsWorkspace({
     setOpenFilterCol(null);
     let columns: Column[] = [];
     try {
-      columns = await api.rdbmsDescribeTable(connectionId, schema, table);
+      const desc = await api.rdbmsDescribeTable(connectionId, schema, table, true);
+      columns = desc.columns;
       setEdit({ schema, table, columns });
+      setIndexes(desc.indexes);
       if (!columns.some((c) => c.primary_key)) {
         setNotice(
           "No primary key: edits match rows by all column values and may affect duplicates.",
@@ -683,7 +676,7 @@ export function RdbmsWorkspace({
     const ref = parseSingleTable(query);
     if (!ref) return null;
     try {
-      const columns = await api.rdbmsDescribeTable(
+      const { columns } = await api.rdbmsDescribeTable(
         connectionId,
         ref.schema,
         ref.table,

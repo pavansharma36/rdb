@@ -6,7 +6,8 @@ use rdb_core::{
 };
 use rdb_rdbms_common::{
     downcast_conn, ApplyResult, BrowseFilter, BrowseSpec, Column, ColumnMeta, ColumnValue,
-    CsvWriter, ForeignKey, Index, QueryResult, RdbmsPlugin, RowChanges, Schema, Table, TableKind,
+    CsvWriter, ForeignKey, Index, QueryResult, RdbmsPlugin, RowChanges, Schema, Table,
+    TableDescription, TableKind,
 };
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column as _, Executor, Row, TypeInfo};
@@ -19,6 +20,49 @@ pub struct PostgresPlugin;
 impl PostgresPlugin {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Index metadata for the structure view. Helper for
+    /// [`describe_table`](RdbmsPlugin::describe_table) when `include_indexes` is set.
+    async fn list_indexes(
+        &self,
+        conn: &PostgresConnection,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<Index>> {
+        // Each index's columns come back as a text[] of column expressions in
+        // key order. `indkey` is a 0-based int2vector, but pg_get_indexdef's
+        // column number is 1-based (and 0 means "the whole index" → it would
+        // return the full CREATE INDEX statement), so offset the subscript by 1.
+        let rows: Vec<(String, String, bool, bool, Vec<String>)> = sqlx::query_as(
+            "select i.relname, am.amname, ix.indisunique, ix.indisprimary, \
+                    array(select pg_get_indexdef(ix.indexrelid, k.n + 1, true) \
+                          from generate_subscripts(ix.indkey, 1) as k(n) \
+                          order by k.n) \
+             from pg_index ix \
+             join pg_class i on i.oid = ix.indexrelid \
+             join pg_class t on t.oid = ix.indrelid \
+             join pg_namespace n on n.oid = t.relnamespace \
+             join pg_am am on am.oid = i.relam \
+             where n.nspname = $1 and t.relname = $2 \
+             order by ix.indisprimary desc, i.relname",
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&conn.pool())
+        .await
+        .map_err(|e| PluginError::Backend(e.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(name, method, unique, primary, columns)| Index {
+                name,
+                method,
+                unique,
+                primary,
+                columns,
+            })
+            .collect())
     }
 }
 
@@ -350,7 +394,8 @@ impl RdbmsPlugin for PostgresPlugin {
         conn: Arc<dyn Connection>,
         schema: &str,
         table: &str,
-    ) -> Result<Vec<Column>> {
+        include_indexes: bool,
+    ) -> Result<TableDescription> {
         let conn = downcast_conn::<PostgresConnection>(&conn)?;
         let rows: Vec<(
             String,         // column_name
@@ -437,7 +482,7 @@ impl RdbmsPlugin for PostgresPlugin {
         .await
         .map_err(|e| PluginError::Backend(e.to_string()))?;
 
-        Ok(rows
+        let columns = rows
             .into_iter()
             .map(
                 |(name, dtype, udt, nullable, char_len, precision, scale,
@@ -463,7 +508,14 @@ impl RdbmsPlugin for PostgresPlugin {
                     }
                 },
             )
-            .collect())
+            .collect();
+
+        let indexes = if include_indexes {
+            self.list_indexes(conn, schema, table).await?
+        } else {
+            Vec::new()
+        };
+        Ok(TableDescription { columns, indexes })
     }
 
     async fn ddl_statement(
@@ -472,7 +524,10 @@ impl RdbmsPlugin for PostgresPlugin {
         schema: &str,
         table: &str,
     ) -> Result<String> {
-        let columns = self.describe_table(conn.clone(), schema, table).await?;
+        let columns = self
+            .describe_table(conn.clone(), schema, table, false)
+            .await?
+            .columns;
         if columns.is_empty() {
             return Err(PluginError::Backend(format!(
                 "table {schema}.{table} not found or has no columns"
@@ -529,48 +584,6 @@ impl RdbmsPlugin for PostgresPlugin {
             ddl.push(';');
         }
         Ok(ddl)
-    }
-
-    async fn list_indexes(
-        &self,
-        conn: Arc<dyn Connection>,
-        schema: &str,
-        table: &str,
-    ) -> Result<Vec<Index>> {
-        let conn = downcast_conn::<PostgresConnection>(&conn)?;
-        // Each index's columns come back as a text[] of column expressions in
-        // key order. `indkey` is a 0-based int2vector, but pg_get_indexdef's
-        // column number is 1-based (and 0 means "the whole index" → it would
-        // return the full CREATE INDEX statement), so offset the subscript by 1.
-        let rows: Vec<(String, String, bool, bool, Vec<String>)> = sqlx::query_as(
-            "select i.relname, am.amname, ix.indisunique, ix.indisprimary, \
-                    array(select pg_get_indexdef(ix.indexrelid, k.n + 1, true) \
-                          from generate_subscripts(ix.indkey, 1) as k(n) \
-                          order by k.n) \
-             from pg_index ix \
-             join pg_class i on i.oid = ix.indexrelid \
-             join pg_class t on t.oid = ix.indrelid \
-             join pg_namespace n on n.oid = t.relnamespace \
-             join pg_am am on am.oid = i.relam \
-             where n.nspname = $1 and t.relname = $2 \
-             order by ix.indisprimary desc, i.relname",
-        )
-        .bind(schema)
-        .bind(table)
-        .fetch_all(&conn.pool())
-        .await
-        .map_err(|e| PluginError::Backend(e.to_string()))?;
-
-        Ok(rows
-            .into_iter()
-            .map(|(name, method, unique, primary, columns)| Index {
-                name,
-                method,
-                unique,
-                primary,
-                columns,
-            })
-            .collect())
     }
 
     async fn browse_table(

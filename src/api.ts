@@ -199,6 +199,12 @@ export interface Index {
   columns: string[];
 }
 
+/** A table's columns and indexes, fetched in one call for the structure view. */
+export interface TableDescription {
+  columns: Column[];
+  indexes: Index[];
+}
+
 export interface QueryResult {
   columns: ColumnMeta[];
   rows: unknown[][];
@@ -463,16 +469,23 @@ export const api = {
   rdbmsListTables: (connectionId: ConnectionId, schema: string) =>
     pluginCall<Table[]>(connectionId, "rdbms.list_tables", { schema }),
 
-  rdbmsDescribeTable: (connectionId: ConnectionId, schema: string, table: string) =>
-    pluginCall<Column[]>(connectionId, "rdbms.describe_table", { schema, table }),
+  /** A table's columns, plus its indexes when `includeIndexes` is set (the
+   * structure view); column-only callers omit it to skip the extra query. */
+  rdbmsDescribeTable: (
+    connectionId: ConnectionId,
+    schema: string,
+    table: string,
+    includeIndexes = false,
+  ) =>
+    pluginCall<TableDescription>(connectionId, "rdbms.describe_table", {
+      schema,
+      table,
+      include_indexes: includeIndexes,
+    }),
 
   /** Full backend-specific DDL (CREATE TABLE + indexes) for a table. */
   rdbmsDdlStatement: (connectionId: ConnectionId, schema: string, table: string) =>
     pluginCall<string>(connectionId, "rdbms.ddl_statement", { schema, table }),
-
-  /** Indexes on a table, for the structure view. */
-  rdbmsListIndexes: (connectionId: ConnectionId, schema: string, table: string) =>
-    pluginCall<Index[]>(connectionId, "rdbms.list_indexes", { schema, table }),
 
   /** Run a SQL script; returns one result per statement, in order. */
   rdbmsExecute: (connectionId: ConnectionId, sql: string) =>
