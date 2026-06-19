@@ -99,7 +99,8 @@ jobs:
             -p rdb-plugin-sftp \
             -p rdb-plugin-mysql \
             -p rdb-plugin-mssql \
-            -p rdb-plugin-snowflake
+            -p rdb-plugin-snowflake \
+            -p rdb-plugin-s3
 
       - name: Stage assets (rename with target triple)
         shell: bash
@@ -109,7 +110,7 @@ jobs:
           ext=""
           [[ "${{ matrix.target }}" == *windows* ]] && ext=".exe"
           for crate in rdb-plugin-postgres rdb-plugin-mongodb rdb-plugin-rabbitmq rdb-plugin-ssh rdb-plugin-sftp \
-          rdb-plugin-mysql rdb-plugin-mssql rdb-plugin-snowflake; do
+          rdb-plugin-mysql rdb-plugin-mssql rdb-plugin-snowflake rdb-plugin-s3; do
             src="target/${{ matrix.target }}/release/${crate}${ext}"
             dest="dist/${crate}-${{ matrix.target }}${ext}"
             cp "$src" "$dest"
@@ -128,7 +129,7 @@ jobs:
           set -euo pipefail
           info="{}"
           for crate in rdb-plugin-postgres rdb-plugin-mongodb rdb-plugin-rabbitmq rdb-plugin-ssh rdb-plugin-sftp \
-          rdb-plugin-mysql rdb-plugin-mssql rdb-plugin-snowflake; do
+          rdb-plugin-mysql rdb-plugin-mssql rdb-plugin-snowflake rdb-plugin-s3; do
             described=$("target/${{ matrix.target }}/release/${crate}" --describe)
             info=$(jq -n --argjson acc "$info" --argjson d "$described" \
               '$acc + { ($d.id): { name: $d.name, description: $d.description, version: $d.version } }')
