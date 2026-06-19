@@ -62,7 +62,7 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
     total: number;
   } | null>(null);
 
-  const previewRef: RefObject<Element | null> = useRef(null);
+  const previewRef: RefObject<HTMLDivElement | null> = useRef(null);
 
   // The list narrowed by the search box (case-insensitive over name/id/desc).
   // "Update all" still acts on the full list, not just what's shown.
