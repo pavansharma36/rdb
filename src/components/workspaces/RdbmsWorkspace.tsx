@@ -44,6 +44,7 @@ import {
   Schema,
   Table
 } from "../../api/rdbms.ts";
+import {useLoader} from "../Loader.tsx";
 
 interface Props {
   connectionId: ConnectionId;
@@ -119,10 +120,10 @@ export function RdbmsWorkspace({
   // this component, so these fields live in a store (keyed by the stable saved
   // profile id) and rehydrate on switch-back. See connectionState.ts.
   const scope = ConnScope(savedId, "rdbms");
-  const [schemas, setSchemas] = useState<Schema[]>([]);
+  const [schemas, setSchemas] = useConnectionState<Schema[]>(scope, "schemas", []);
   // Databases on the server (empty when the backend doesn't support listing,
   // which hides the picker) and the one currently selected.
-  const [databases, setDatabases] = useState<string[]>([]);
+  const [databases, setDatabases] = useConnectionState<string[]>(scope, "databases", []);
   const [currentDatabase, setCurrentDatabase] = useConnectionState<
     string | null
   >(scope, "currentDatabase", database ?? null);
@@ -237,7 +238,8 @@ export function RdbmsWorkspace({
     "newRows",
     [],
   );
-  const [busy, setBusy] = useState(false);
+  const loader = useLoader()
+  const [busy, setbusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -260,7 +262,7 @@ export function RdbmsWorkspace({
       .rdbmsListSchemas(connectionId)
       .then((list) => {
         setSchemas(list);
-        autoOpenSingle(list);
+        autoOpenSingle(list, false);
       })
       .catch((e) => setError(errString(e)));
   }, [connectionId]);
@@ -348,7 +350,7 @@ export function RdbmsWorkspace({
    * the schema tree. Disabled while edits are staged, so nothing is lost. */
   async function switchDatabase(db: string) {
     if (db === currentDatabase) return;
-    setBusy(true);
+    loader.show({scope: "app"})
     setError(null);
     setNotice(null);
     try {
@@ -363,22 +365,29 @@ export function RdbmsWorkspace({
       clearStaged();
       const s = await api.rdbmsListSchemas(connectionId);
       setSchemas(s);
-      autoOpenSingle(s);
+      autoOpenSingle(s, true);
     } catch (e) {
       setError(errString(e));
     } finally {
-      setBusy(false);
+      loader.hide();
     }
   }
 
   /** Expand a schema and load its tables (only fetching when not cached). */
-  function expandSchema(name: string) {
+  function expandSchema(name: string, force_fetch_table: boolean) {
     setOpenSchema(name);
-    if (tables[name]) return;
-    api
-      .rdbmsListTables(connectionId, name)
-      .then((t) => setTables((m) => ({ ...m, [name]: t })))
-      .catch((e) => setError(errString(e)));
+    if (!force_fetch_table && tables[name]) {
+      return;
+    }
+    loader.show({scope: "app"})
+    try {
+      api
+          .rdbmsListTables(connectionId, name)
+          .then((t) => setTables((m) => ({ ...m, [name]: t })))
+          .catch((e) => setError(errString(e)));
+    } finally {
+      loader.hide();
+    }
   }
 
   /** Pick the schema to expand by default and load its tables, so the user
@@ -387,18 +396,18 @@ export function RdbmsWorkspace({
    * schema when there's exactly one. Skipped when tree state was restored from
    * the store on this mount, so a connection switch-back doesn't clobber what
    * the user had open. */
-  function autoOpenSingle(list: Schema[]) {
+  function autoOpenSingle(list: Schema[], force_fetch_tables: boolean) {
     if (restoredOnMount.current) return;
     const configured =
       defaultSchema && list.some((s) => s.name === defaultSchema)
         ? defaultSchema
         : null;
     if (configured) {
-      expandSchema(configured);
+      expandSchema(configured, force_fetch_tables);
       return;
     }
     if (list.length !== 1) return;
-    expandSchema(list[0].name);
+    expandSchema(list[0].name, force_fetch_tables);
   }
 
   async function toggleSchema(name: string) {
@@ -406,15 +415,17 @@ export function RdbmsWorkspace({
       setOpenSchema(null);
       return;
     }
-    expandSchema(name);
+    expandSchema(name, false);
   }
 
   /** Re-fetch the schema list and the open schema's tables from the server,
    * picking up tables/schemas created since the tree was last loaded. */
   async function refreshTree() {
-    setBusy(true);
+    setbusy(true);
     setError(null);
     try {
+      const databases = await api.rdbmsListDatabases(connectionId);
+      setDatabases(databases);
       const list = await api.rdbmsListSchemas(connectionId);
       setSchemas(list);
       const open =
@@ -425,12 +436,12 @@ export function RdbmsWorkspace({
       } else {
         setTables({});
         setOpenSchema(null);
-        autoOpenSingle(list);
+        autoOpenSingle(list, true);
       }
     } catch (e) {
       setError(errString(e));
     } finally {
-      setBusy(false);
+      setbusy(false);
     }
   }
 
@@ -452,7 +463,7 @@ export function RdbmsWorkspace({
   /** Run a query and show its result, without touching the edit context.
    * Returns true if the query succeeded. */
   async function executeQuery(query: string): Promise<boolean> {
-    setBusy(true);
+    setbusy(true);
     setError(null);
     clearStaged();
     try {
@@ -465,7 +476,7 @@ export function RdbmsWorkspace({
       setResults([]);
       return false;
     } finally {
-      setBusy(false);
+      setbusy(false);
     }
   }
 
@@ -500,6 +511,7 @@ export function RdbmsWorkspace({
     table: string,
     over: Partial<BrowseSpec> & { cols?: Column[] } = {},
   ): Promise<boolean> {
+    setbusy(true);
     const cols = over.cols ?? edit?.columns ?? [];
     const spec: BrowseSpec = {
       filters: over.filters ?? buildFilters(browseFilters, cols),
@@ -508,7 +520,6 @@ export function RdbmsWorkspace({
       offset: over.offset ?? browseOffset,
       where_sql: over.where_sql !== undefined ? over.where_sql : browseWhere,
     };
-    setBusy(true);
     setError(null);
     clearStaged();
     try {
@@ -521,7 +532,7 @@ export function RdbmsWorkspace({
       setResults([]);
       return false;
     } finally {
-      setBusy(false);
+      setbusy(false);
     }
   }
 
