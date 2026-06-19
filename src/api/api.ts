@@ -11,8 +11,9 @@ import {rdbms_api} from "./rdbms.ts";
 import {document_api} from "./document.ts";
 import {rabbitmq_api} from "./rabbitmq.ts";
 import {sftp_api} from "./sftp.ts";
+import {curlui_api} from "./curlui.ts";
 
-export type PluginKind = "rdbms" | "document" | "rabbitmq" | "cli" | "filemanager" | "other";
+export type PluginKind = "rdbms" | "document" | "rabbitmq" | "cli" | "filemanager" | "http" | "other";
 
 export type ConfigFieldType =
   | { kind: "text" }
@@ -20,7 +21,8 @@ export type ConfigFieldType =
   | { kind: "number" }
   | { kind: "boolean" }
   | { kind: "select"; options: string[] }
-  | { kind: "filepath" };
+  | { kind: "filepath" }
+  | { kind: "keyvalue" };
 
 export interface ShowIf {
   field: string;
@@ -168,6 +170,7 @@ export const api = {
   ...document_api,
   ...rabbitmq_api,
   ...sftp_api,
+  ...curlui_api,
 
 };
 

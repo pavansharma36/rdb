@@ -34,6 +34,7 @@ function defaultValues(fields: ConfigField[]): ConnectionConfig {
     // Password fields carry a `SecretField` ({ type, value }) rather than a
     // bare string, so the value is self-describing about how it's stored.
     else if (f.type.kind === "password") out[f.key] = plainSecret("");
+    else if (f.type.kind === "keyvalue") out[f.key] = {};
     else out[f.key] = "";
   }
   return out;
@@ -291,6 +292,11 @@ function Field({
             Browse…
           </button>
         </div>
+      ) : t.kind === "keyvalue" ? (
+        <KeyValueEditor
+          value={(value as Record<string, string> | undefined) ?? {}}
+          onChange={onChange}
+        />
       ) : (
         <input
           type={
@@ -312,5 +318,70 @@ function Field({
         />
       )}
     </label>
+  );
+}
+
+function KeyValueEditor({
+  value,
+  onChange,
+}: {
+  value: Record<string, string>;
+  onChange: (v: Record<string, string>) => void;
+}) {
+  const entries = Object.entries(value);
+  return (
+    <div className="keyvalue-editor">
+      {entries.length === 0 && (
+        <p className="muted keyvalue-empty">No variables yet.</p>
+      )}
+      {entries.map(([key, val]) => (
+        <div key={key} className="keyvalue-row">
+          <input
+            type="text"
+            className="keyvalue-key"
+            value={key}
+            placeholder="NAME"
+            onChange={(e) => {
+              const nextKey = e.target.value;
+              const { [key]: removed, ...rest } = value;
+              onChange({ ...rest, [nextKey]: removed ?? val });
+            }}
+          />
+          <input
+            type="text"
+            className="keyvalue-val"
+            value={val}
+            placeholder="value"
+            onChange={(e) => onChange({ ...value, [key]: e.target.value })}
+          />
+          <button
+            type="button"
+            className="keyvalue-remove"
+            title="Remove"
+            onClick={() => {
+              const { [key]: _removed, ...rest } = value;
+              onChange(rest);
+            }}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="keyvalue-add"
+        onClick={() => {
+          let n = 1;
+          let key = "VAR";
+          while (key in value) {
+            n += 1;
+            key = `VAR${n}`;
+          }
+          onChange({ ...value, [key]: "" });
+        }}
+      >
+        + Add variable
+      </button>
+    </div>
   );
 }

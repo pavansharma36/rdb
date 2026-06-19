@@ -14,6 +14,7 @@ members = [
     "crates/plugins/mysql",
     "crates/plugins/mssql",
     "crates/plugins/s3",
+    "crates/plugins/curlui",
     "src-tauri",
 ]
 
@@ -45,3 +46,5 @@ rdb-plugin-snowflake = { path = "crates/plugins/snowflake" }
 rdb-plugin-mysql = { path = "crates/plugins/mysql" }
 rdb-plugin-mssql = { path = "crates/plugins/mssql" }
 rdb-plugin-s3 = { path = "crates/plugins/s3" }
+rdb-plugin-curlui = { path = "crates/plugins/curlui" }
+curl-parser = "0.6"

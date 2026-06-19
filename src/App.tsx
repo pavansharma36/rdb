@@ -15,6 +15,7 @@ import { DocumentWorkspace } from "./components/workspaces/DocumentWorkspace";
 import { RabbitMqWorkspace } from "./components/workspaces/RabbitMqWorkspace";
 import { CliWorkspace } from "./components/workspaces/CliWorkspace";
 import { FileManagerWorkspace } from "./components/workspaces/FileManagerWorkspace";
+import { CurlUiWorkspace } from "./components/workspaces/CurlUiWorkspace";
 import type { SavedConnection } from "./api/store.ts";
 import { loadConnections, saveConnections, upsert, remove, genId } from "./api/store.ts";
 import { loadConfig, saveConfig, deleteWorkspaceDir } from "./api/store.ts";
@@ -364,6 +365,34 @@ export function App() {
             onTreeWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
           />
         );
+      case "curlui": {
+        const cfg = saved.find((s) => s.id === conn.savedId)?.config;
+        const envRaw = cfg?.env;
+        const env: Record<string, string> = {};
+        if (envRaw && typeof envRaw === "object" && !Array.isArray(envRaw)) {
+          for (const [k, v] of Object.entries(envRaw as Record<string, unknown>)) {
+            if (typeof v === "string") env[k] = v;
+            else if (
+              v &&
+              typeof v === "object" &&
+              "value" in v &&
+              typeof (v as { value: unknown }).value === "string"
+            ) {
+              env[k] = (v as { value: string }).value;
+            }
+          }
+        }
+        return (
+          <CurlUiWorkspace
+            key={conn.id}
+            connectionId={conn.id}
+            savedId={conn.savedId}
+            env={env}
+            treeWidth={treeWidthFor(conn.savedId, TREE_DEFAULT)}
+            onTreeWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
+          />
+        );
+      }
       default:
         return (
           <div className="placeholder">No workspace available for “{mod}”.</div>

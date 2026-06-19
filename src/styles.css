@@ -3009,3 +3009,257 @@ table.grid tr.new-row td {
   pointer-events: none;
   z-index: 5;
 }
+
+/* KeyValue connection form field ------------------------------------------- */
+
+.keyvalue-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.keyvalue-empty {
+  margin: 0;
+  font-size: 12px;
+}
+
+.keyvalue-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.keyvalue-key {
+  flex: 0 1 140px;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.keyvalue-val {
+  flex: 1;
+}
+
+.keyvalue-remove {
+  min-width: 28px;
+  padding: 0 6px;
+}
+
+.keyvalue-add {
+  align-self: flex-start;
+  font-size: 12px;
+}
+
+/* HTTP Client (curlui) workspace ------------------------------------------- */
+
+.curlui-workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.curlui-env-summary {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.curlui-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.curlui-tree {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-2);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.curlui-tree-toolbar {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.curlui-tree-node {
+  font-size: 13px;
+}
+
+.curlui-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+}
+
+.curlui-tree-toggle {
+  background: transparent;
+  border: none;
+  padding: 0 2px;
+  color: var(--muted);
+  min-width: 16px;
+}
+
+.curlui-tree-label {
+  flex: 1;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curlui-tree-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0.7;
+}
+
+.curlui-tree-actions button {
+  background: transparent;
+  border: none;
+  padding: 0 4px;
+  font-size: 11px;
+}
+
+.curlui-tree-request {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.curlui-tree-request:hover {
+  background: var(--panel);
+}
+
+.curlui-tree-request.active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.curlui-req-method {
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 36px;
+}
+
+.curlui-req-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curlui-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 12px;
+  gap: 10px;
+}
+
+.curlui-request-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.curlui-req-name-input {
+  flex: 0 1 160px;
+  min-width: 100px;
+}
+
+.curlui-url-input {
+  flex: 1;
+  min-width: 200px;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.curlui-env-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.curlui-env-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.curlui-env-chip {
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+}
+
+.curlui-editors {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.curlui-headers,
+.curlui-body-input,
+.curlui-import-text {
+  width: 100%;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.curlui-response {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.curlui-response-meta {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.curlui-status.ok {
+  color: var(--ok, #2a9d4b);
+  font-weight: 600;
+}
+
+.curlui-status.error {
+  color: var(--err);
+  font-weight: 600;
+}
+
+.curlui-response-headers,
+.curlui-response-body,
+.curlui-curl {
+  margin: 0;
+  padding: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+}
+
