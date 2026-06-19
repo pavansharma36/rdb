@@ -149,6 +149,13 @@ const scope = ConnScope(savedId, "filemanager");
     "entries",
     [],
   );
+  // True when the current directory held more entries than the backend cap
+  // (10,000) and the listing was truncated; drives a status-bar warning.
+  const [truncated, setTruncated] = useConnectionState<boolean>(
+    scope,
+    "truncated",
+    false,
+  );
   // Directory listing uses the app's global workspace-scoped loader (covers the
   // workspace area, leaves the sidebar interactive) instead of a local spinner.
   const loader = useLoader();
@@ -205,7 +212,8 @@ const scope = ConnScope(savedId, "filemanager");
       setError(null);
       try {
         const list = await api.sftpListDir(connectionId, path);
-        setEntries(list);
+        setEntries(list.entries);
+        setTruncated(list.truncated);
         setCurrentPath(path);
         setSelected(new Set());
       } catch (e) {
@@ -478,6 +486,30 @@ const scope = ConnScope(savedId, "filemanager");
     }
   }
 
+  /** Download one or more selected entries (files and/or folders) into a single
+   *  chosen destination folder. A single item delegates to the existing
+   *  single-item flows (their titles read better); multiple items start one
+   *  transfer carrying every entry. */
+  async function downloadEntries(targets: FileEntry[]) {
+    if (targets.length === 0) return;
+    if (targets.length === 1) {
+      const only = targets[0];
+      return only.is_dir ? downloadFolder(only) : downloadFile(only);
+    }
+    const dest = await openDialog({ directory: true, multiple: false });
+    if (!dest || Array.isArray(dest)) return;
+    const items = targets.map((entry) => ({
+      remote_path: entry.path,
+      local_path: localJoin(dest, entry.name),
+    }));
+    try {
+      await api.sftpStartTransfer(connectionId, "download", items);
+      beginPolling(`Downloading ${targets.length} items`, dest);
+    } catch (e) {
+      setError(errString(e));
+    }
+  }
+
   function cancelFolderDownload() {
     setCancelling(true);
     // Cooperative: the plugin's task observes the flag between files and
@@ -519,10 +551,10 @@ const scope = ConnScope(savedId, "filemanager");
 
   async function doDelete(targets: FileEntry[]) {
     setConfirmDelete(null);
+    if (targets.length === 0) return;
     try {
-      for (const t of targets) {
-        await api.sftpDelete(connectionId, t.path);
-      }
+      // One call deletes all targets in the plugin (recursively, in order).
+      await api.sftpDeletePaths(connectionId, targets.map((t) => t.path));
       fetchDir(currentPath);
       reloadTreePath(currentPath);
     } catch (e) {
@@ -641,7 +673,7 @@ const scope = ConnScope(savedId, "filemanager");
   async function loadChildren(path: string) {
     try {
       const list = await api.sftpListDir(connectionId, path);
-      const dirs = list.filter((e) => e.is_dir);
+      const dirs = list.entries.filter((e) => e.is_dir);
       setTree((t) =>
         updateNode(t, path, (n) => {
           // Preserve expansion/loaded state of children that still exist, so a
@@ -988,6 +1020,11 @@ const scope = ConnScope(savedId, "filemanager");
           ) : (
             `${entries.length} item${entries.length === 1 ? "" : "s"}`
           )}
+          {truncated && !downloadNote && (
+            <span className="fm-statusbar-warning" title="This directory has too many files to list in full">
+              ⚠ Showing first {entries.length.toLocaleString()} entries — directory truncated
+            </span>
+          )}
         </div>
       </div>
 
@@ -1034,43 +1071,56 @@ const scope = ConnScope(savedId, "filemanager");
           onClick={(e) => e.stopPropagation()}
         >
           {menu.entry ? (
-            <>
-              <button onClick={() => { open(menu.entry!); setMenu(null); }}>
-                Open
-              </button>
-              <button
-                onClick={() => {
-                  const e = menu.entry!;
-                  if (e.is_dir) downloadFolder(e);
-                  else downloadFile(e);
-                  setMenu(null);
-                }}
-              >
-                {menu.entry.is_dir ? "Download folder…" : "Download…"}
-              </button>
-              <button
-                onClick={() => {
-                  startRename(menu.entry!);
-                  setMenu(null);
-                }}
-              >
-                Rename…
-              </button>
-              <div className="fm-context-sep" />
-              <button
-                className="fm-context-danger"
-                onClick={() => {
-                  const targets =
-                    selectedEntries.length > 1
-                      ? selectedEntries
-                      : [menu.entry!];
-                  setConfirmDelete(targets);
-                  setMenu(null);
-                }}
-              >
-                Delete
-              </button>
-            </>
+            (() => {
+              // When several items are selected (and the right-clicked entry is
+              // one of them), the menu acts on the whole selection: only the
+              // operations that make sense in bulk — Download and Delete — are
+              // shown. Open and Rename are single-item only.
+              const multi =
+                selectedEntries.length > 1 && selected.has(menu.entry.path);
+              const targets = multi ? selectedEntries : [menu.entry];
+              return (
+                <>
+                  {!multi && (
+                    <button onClick={() => { open(menu.entry!); setMenu(null); }}>
+                      Open
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      downloadEntries(targets);
+                      setMenu(null);
+                    }}
+                  >
+                    {multi
+                      ? `Download ${targets.length} items…`
+                      : menu.entry!.is_dir
+                        ? "Download folder…"
+                        : "Download…"}
+                  </button>
+                  {!multi && (
+                    <button
+                      onClick={() => {
+                        startRename(menu.entry!);
+                        setMenu(null);
+                      }}
+                    >
+                      Rename…
+                    </button>
+                  )}
+                  <div className="fm-context-sep" />
+                  <button
+                    className="fm-context-danger"
+                    onClick={() => {
+                      setConfirmDelete(targets);
+                      setMenu(null);
+                    }}
+                  >
+                    {multi ? `Delete ${targets.length} items` : "Delete"}
+                  </button>
+                </>
+              );
+            })()
           ) : (
             <>
               <button

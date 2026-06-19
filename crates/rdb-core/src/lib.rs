@@ -138,6 +138,13 @@ impl SecretField {
     }
 }
 
+pub fn require_str<'a>(cfg: &'a ConnectionConfig, key: &str) -> Result<&'a str> {
+    cfg.get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| PluginError::Config(format!("{key} is required")))
+}
+
 /// Read a [`SecretField`] config value as plaintext. Returns `None` when the
 /// key is absent; errors if present but not a valid `SecretField`.
 pub fn cfg_secret(cfg: &ConnectionConfig, key: &str) -> Result<Option<String>> {

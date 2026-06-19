@@ -1,139 +1,17 @@
 use async_trait::async_trait;
-use rdb_core::{
-    cfg_secret, ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError,
-    PluginInfo, PluginKind, Result, ShowIf,
+use rdb_core::{cfg_secret, require_str, ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError, PluginInfo, PluginKind, Result, ShowIf};
+use rdb_filemanager_common::{
+    cap_entries, dispatch_filemanager, downcast_conn, stream_to_local_file, Cancelled, FileBackend,
+    FileEntry, JobState, ListDirResult, ScannedFile, Stat, TRANSFER_CHUNK,
 };
 use russh::client::{self, Handle};
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
 use russh_sftp::client::SftpSession;
-use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
-
-/// Per-file copies are streamed in chunks of this size so the cooperative
-/// `cancel` flag can be observed *mid-file* (not just between files) and so a
-/// large file isn't buffered whole in memory.
-const TRANSFER_CHUNK: usize = 64 * 1024;
-
-/// Returned by the per-file copy helpers when the cooperative cancel flag was
-/// observed mid-file. The caller stops the loop and leaves the phase at
-/// `Cancelled`; the partially-written destination has already been removed.
-struct Cancelled;
-
-// ── Types shared between plugin and frontend ─────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileEntry {
-    pub name: String,
-    pub path: String,
-    pub is_dir: bool,
-    pub size: u64,
-    pub modified: i64,
-    pub permissions: u32,
-}
-
-// ── Background transfer jobs ─────────────────────────────────────────────────
-//
-// Uploads and downloads run as background tasks *inside the plugin process*, so
-// they survive the frontend workspace unmounting on a connection switch (the
-// plugin process outlives the React component, like the host's PTY). The
-// frontend kicks a job off with `transfer_start`, polls `transfer_stats` for
-// progress, and can `transfer_cancel` it. State is in-memory only — it lives as
-// long as the connection (a full disconnect drops the connection and its jobs).
-
-/// Where a transfer job is in its lifecycle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum JobPhase {
-    /// Walking the remote tree to count files (download only); `total` not final.
-    Scanning,
-    Running,
-    Done,
-    Cancelled,
-    Error,
-}
-
-/// Live, shared state of one transfer job. Counters are atomics so the running
-/// task updates them while `transfer_stats` reads them without locking the SFTP
-/// session (which the transfer itself holds for the duration).
-struct JobState {
-    /// Files completed so far.
-    done: AtomicU64,
-    /// Total files to transfer; 0 while still scanning (download).
-    total: AtomicU64,
-    /// `JobPhase` encoded as a small int (atomic so reads never block).
-    phase: AtomicU64,
-    /// Cooperative cancel flag, checked between files.
-    cancel: AtomicBool,
-    /// The file currently being transferred (relative path), for display.
-    current: Mutex<String>,
-    /// Error message once `phase == Error`.
-    error: Mutex<Option<String>>,
-}
-
-impl JobState {
-    fn new() -> Self {
-        Self {
-            done: AtomicU64::new(0),
-            total: AtomicU64::new(0),
-            phase: AtomicU64::new(JobPhase::Scanning as u64),
-            cancel: AtomicBool::new(false),
-            current: Mutex::new(String::new()),
-            error: Mutex::new(None),
-        }
-    }
-
-    fn set_phase(&self, p: JobPhase) {
-        self.phase.store(p as u64, Ordering::SeqCst);
-    }
-
-    fn phase(&self) -> JobPhase {
-        match self.phase.load(Ordering::SeqCst) {
-            x if x == JobPhase::Scanning as u64 => JobPhase::Scanning,
-            x if x == JobPhase::Running as u64 => JobPhase::Running,
-            x if x == JobPhase::Done as u64 => JobPhase::Done,
-            x if x == JobPhase::Cancelled as u64 => JobPhase::Cancelled,
-            _ => JobPhase::Error,
-        }
-    }
-}
-
-/// The progress snapshot returned by `transfer_stats` (mirrored in `api.ts`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransferStats {
-    pub phase: JobPhase,
-    pub done: u64,
-    pub total: u64,
-    pub current: String,
-    pub error: Option<String>,
-}
-
-/// Direction of a background transfer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TransferKind {
-    Upload,
-    Download,
-}
-
-/// One file/directory to transfer. For an upload, `local_path` is the source and
-/// `remote_path` the destination; for a download it's the reverse. A directory
-/// is mirrored recursively.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransferItem {
-    pub local_path: String,
-    pub remote_path: String,
-}
-
-/// Params for `filemanager.start_transfer` (mirrored in `api.ts`).
-#[derive(Debug, Clone, Deserialize)]
-pub struct StartTransfer {
-    pub kind: TransferKind,
-    pub items: Vec<TransferItem>,
-}
 
 // ── russh client handler ─────────────────────────────────────────────────────
 
@@ -153,14 +31,22 @@ impl client::Handler for ClientHandler {
     }
 }
 
+// ── Backend handle ─────────────────────────────────────────────────────────
+
+/// A small cloneable handle implementing [`FileBackend`]. `Arc` (not `Mutex`):
+/// `SftpSession` methods take `&self` and the session multiplexes concurrent ops
+/// over its channel internally, so we can share it freely — including handing a
+/// clone to a background transfer task without blocking ordinary calls like
+/// `list_dir`.
+#[derive(Clone)]
+pub struct SftpBackend {
+    sftp: Arc<SftpSession>,
+}
+
 // ── Connection ───────────────────────────────────────────────────────────────
 
 pub struct SftpConnection {
-    // `Arc` (not `Mutex`): `SftpSession` methods take `&self` and the session
-    // multiplexes concurrent ops over its channel internally, so we can share it
-    // freely — including handing a clone to a background transfer task without
-    // blocking ordinary calls like `list_dir`.
-    sftp: Arc<SftpSession>,
+    backend: SftpBackend,
     // The single current/last transfer job for this connection, or `None` if no
     // transfer has run yet. Lives as long as the connection, so it survives the
     // frontend workspace unmounting on a connection switch; the frontend
@@ -403,7 +289,9 @@ impl Plugin for SftpPlugin {
         tracing::info!("sftp subsystem ready for {user}@{host}:{port}");
 
         Ok(Arc::new(SftpConnection {
-            sftp: Arc::new(sftp),
+            backend: SftpBackend {
+                sftp: Arc::new(sftp),
+            },
             job: Mutex::new(None),
             _handle: handle,
         }))
@@ -425,14 +313,6 @@ impl Plugin for SftpPlugin {
         }
     }
 }
-
-fn require_str<'a>(cfg: &'a ConnectionConfig, key: &str) -> Result<&'a str> {
-    cfg.get(key)
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| PluginError::Config(format!("{key} is required")))
-}
-
 // ── Dispatcher ───────────────────────────────────────────────────────────────
 
 pub struct SftpDispatcher;
@@ -445,220 +325,154 @@ impl rdb_plugin_runtime::Dispatcher for SftpDispatcher {
         params: serde_json::Value,
         conn: Arc<dyn Connection>,
     ) -> Result<serde_json::Value> {
-        let conn = conn
-            .as_any()
-            .downcast_ref::<SftpConnection>()
-            .ok_or_else(|| PluginError::Backend("connection type mismatch".into()))?;
-        let sftp = &conn.sftp;
-
-        match op {
-            "filemanager.home_dir" => {
-                // The session's working directory resolved to an absolute path —
-                // this is the user's home on most servers, and (unlike "/") a
-                // directory they can actually write to. Falls back to "/".
-                let home = sftp
-                    .canonicalize(".")
-                    .await
-                    .unwrap_or_else(|_| "/".to_owned());
-                Ok(serde_json::Value::String(home))
-            }
-            "filemanager.list_dir" => {
-                let path = params["path"].as_str().unwrap_or("/").to_owned();
-                let read_dir = sftp
-                    .read_dir(path)
-                    .await
-                    .map_err(|e| PluginError::Backend(format!("read_dir: {e}")))?;
-                let mut entries: Vec<FileEntry> = read_dir
-                    .map(|entry| {
-                        let meta = entry.metadata();
-                        FileEntry {
-                            name: entry.file_name(),
-                            path: entry.path(),
-                            is_dir: meta.is_dir(),
-                            size: meta.size.unwrap_or(0),
-                            modified: meta.mtime.unwrap_or(0) as i64,
-                            permissions: meta.permissions.unwrap_or(0),
-                        }
-                    })
-                    .collect();
-                entries.sort_by(|a, b| {
-                    b.is_dir
-                        .cmp(&a.is_dir)
-                        .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-                });
-                serde_json::to_value(entries).map_err(|e| PluginError::Backend(e.to_string()))
-            }
-            "filemanager.start_transfer" => {
-                // Kick off an upload or download as a background task *inside the
-                // plugin process*. Returns immediately; the frontend polls
-                // `last_transfer_stats` for progress and can `cancel_last_transfer`.
-                // The job lives on the connection, so it survives the frontend
-                // workspace unmounting on a connection switch.
-                let req: StartTransfer = serde_json::from_value(params)
-                    .map_err(|e| PluginError::Config(format!("invalid params: {e}")))?;
-                if req.items.is_empty() {
-                    return Err(PluginError::Config("no transfer items".into()));
-                }
-
-                let mut slot = conn.job.lock().await;
-                if let Some(existing) = slot.as_ref() {
-                    if matches!(existing.phase(), JobPhase::Scanning | JobPhase::Running) {
-                        return Err(PluginError::Backend(
-                            "a transfer is already running".into(),
-                        ));
-                    }
-                }
-                let job = Arc::new(JobState::new());
-                *slot = Some(job.clone());
-                drop(slot);
-
-                let sftp = conn.sftp.clone();
-                let kind = req.kind;
-                let items = req.items;
-                tracing::info!(
-                    "starting {:?} transfer of {} item(s)",
-                    kind,
-                    items.len()
-                );
-                tokio::spawn(async move {
-                    let result = run_transfer(&sftp, kind, &items, &job).await;
-                    match result {
-                        Ok(()) => {
-                            // A cooperative cancel leaves the phase at Cancelled;
-                            // don't overwrite it with Done.
-                            if job.phase() == JobPhase::Running {
-                                job.set_phase(JobPhase::Done);
-                                tracing::info!("{kind:?} transfer completed");
-                            } else {
-                                tracing::info!("{kind:?} transfer cancelled");
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("{kind:?} transfer failed: {e}");
-                            *job.error.lock().await = Some(e.to_string());
-                            job.set_phase(JobPhase::Error);
-                        }
-                    }
-                });
-                Ok(serde_json::Value::Null)
-            }
-            "filemanager.last_transfer_stats" => {
-                // Snapshot the current/last job's progress, or null if none ran.
-                let slot = conn.job.lock().await;
-                match slot.as_ref() {
-                    None => Ok(serde_json::Value::Null),
-                    Some(job) => {
-                        let stats = TransferStats {
-                            phase: job.phase(),
-                            done: job.done.load(Ordering::SeqCst),
-                            total: job.total.load(Ordering::SeqCst),
-                            current: job.current.lock().await.clone(),
-                            error: job.error.lock().await.clone(),
-                        };
-                        serde_json::to_value(stats)
-                            .map_err(|e| PluginError::Backend(e.to_string()))
-                    }
-                }
-            }
-            "filemanager.cancel_last_transfer" => {
-                // Set the cooperative cancel flag; the running task observes it
-                // between files and transitions to Cancelled.
-                let slot = conn.job.lock().await;
-                if let Some(job) = slot.as_ref() {
-                    tracing::info!("cancelling in-progress transfer");
-                    job.cancel.store(true, Ordering::SeqCst);
-                }
-                Ok(serde_json::Value::Null)
-            }
-            "filemanager.delete" => {
-                // Recursive: removes a file, or a directory and all its contents
-                // (plain SFTP rmdir only removes empty directories).
-                let path = require_path(&params, "path")?;
-                tracing::info!("deleting '{path}' (recursive)");
-                remove_recursive(sftp, &path).await?;
-                Ok(serde_json::Value::Null)
-            }
-            "filemanager.mkdir" => {
-                let path = require_path(&params, "path")?;
-                tracing::info!("creating directory '{path}'");
-                sftp.create_dir(path)
-                    .await
-                    .map_err(|e| PluginError::Backend(format!("create_dir: {e}")))?;
-                Ok(serde_json::Value::Null)
-            }
-            "filemanager.rename" => {
-                let from = params["from"]
-                    .as_str()
-                    .ok_or_else(|| PluginError::Config("from is required".into()))?
-                    .to_owned();
-                let to = params["to"]
-                    .as_str()
-                    .ok_or_else(|| PluginError::Config("to is required".into()))?
-                    .to_owned();
-                tracing::info!("renaming '{from}' -> '{to}'");
-                sftp.rename(from, to)
-                    .await
-                    .map_err(|e| PluginError::Backend(format!("rename: {e}")))?;
-                Ok(serde_json::Value::Null)
-            }
-            _ => Err(PluginError::Backend(format!("unknown op: {op}"))),
-        }
+        let conn = downcast_conn::<SftpConnection>(&conn)?;
+        dispatch_filemanager(op, params, conn.backend.clone(), &conn.job).await
     }
 }
 
-fn require_path(params: &serde_json::Value, key: &str) -> Result<String> {
-    params[key]
-        .as_str()
-        .map(|s| s.to_owned())
-        .ok_or_else(|| PluginError::Config(format!("{key} is required")))
-}
+// ── FileBackend impl ─────────────────────────────────────────────────────────
 
-/// Stream the local file at `src` to `remote_path`, creating the file if it
-/// doesn't exist and truncating it if it does. `SftpSession::write` opens with
-/// the WRITE flag only (no CREATE), so it fails with "No such file" on a new
-/// file — `create` opens with CREATE | TRUNCATE | WRITE, which is what an upload
-/// needs. Streamed in `TRANSFER_CHUNK` chunks, checking `job.cancel` between
-/// chunks so a large file can be aborted mid-copy; on cancel the
-/// partially-written remote file is removed and `Ok(Some(Cancelled))` returned.
-async fn write_remote(
-    sftp: &SftpSession,
-    src: &str,
-    remote_path: String,
-    job: &JobState,
-) -> Result<Option<Cancelled>> {
-    let mut input = tokio::fs::File::open(src)
-        .await
-        .map_err(|e| PluginError::Backend(format!("open {src}: {e}")))?;
-    let mut file = sftp
-        .create(remote_path.clone())
-        .await
-        .map_err(|e| PluginError::Backend(format!("create {remote_path}: {e}")))?;
-
-    let mut buf = vec![0u8; TRANSFER_CHUNK];
-    loop {
-        if job.cancel.load(Ordering::SeqCst) {
-            // Abandon the remote handle and unlink the truncated destination.
-            let _ = file.shutdown().await;
-            drop(file);
-            let _ = sftp.remove_file(remote_path.clone()).await;
-            return Ok(Some(Cancelled));
-        }
-        let n = input
-            .read(&mut buf)
+#[async_trait]
+impl FileBackend for SftpBackend {
+    async fn home_dir(&self) -> Result<String> {
+        // The session's working directory resolved to an absolute path — this is
+        // the user's home on most servers, and (unlike "/") a directory they can
+        // actually write to. Falls back to "/".
+        Ok(self
+            .sftp
+            .canonicalize(".")
             .await
-            .map_err(|e| PluginError::Backend(format!("read {src}: {e}")))?;
-        if n == 0 {
-            break;
-        }
-        file.write_all(&buf[..n])
-            .await
-            .map_err(|e| PluginError::Backend(format!("write {remote_path}: {e}")))?;
+            .unwrap_or_else(|_| "/".to_owned()))
     }
-    file.shutdown()
-        .await
-        .map_err(|e| PluginError::Backend(format!("flush {remote_path}: {e}")))?;
-    Ok(None)
+
+    async fn list_dir(&self, path: &str) -> Result<ListDirResult> {
+        let read_dir = self
+            .sftp
+            .read_dir(path.to_owned())
+            .await
+            .map_err(|e| PluginError::Backend(format!("read_dir: {e}")))?;
+        // russh-sftp's `read_dir` returns the whole listing in one call, so there
+        // is no early-stop to do here (unlike S3's paginated lister); we collect
+        // it and let `cap_entries` sort + truncate to LIST_DIR_CAP.
+        let entries: Vec<FileEntry> = read_dir
+            .map(|entry| {
+                let meta = entry.metadata();
+                FileEntry {
+                    name: entry.file_name(),
+                    path: entry.path(),
+                    is_dir: meta.is_dir(),
+                    size: meta.size.unwrap_or(0),
+                    modified: meta.mtime.unwrap_or(0) as i64,
+                    permissions: meta.permissions.unwrap_or(0),
+                }
+            })
+            .collect();
+        Ok(cap_entries(entries))
+    }
+
+    async fn stat(&self, path: &str) -> Result<Stat> {
+        match self.sftp.metadata(path.to_owned()).await {
+            Ok(meta) => Ok(Stat {
+                exists: true,
+                is_dir: meta.is_dir(),
+            }),
+            Err(_) => Ok(Stat {
+                exists: false,
+                is_dir: false,
+            }),
+        }
+    }
+
+    async fn mkdir(&self, path: &str) -> Result<()> {
+        self.sftp
+            .create_dir(path.to_owned())
+            .await
+            .map_err(|e| PluginError::Backend(format!("create_dir: {e}")))
+    }
+
+    async fn rename(&self, from: &str, to: &str) -> Result<()> {
+        self.sftp
+            .rename(from.to_owned(), to.to_owned())
+            .await
+            .map_err(|e| PluginError::Backend(format!("rename: {e}")))
+    }
+
+    async fn delete(&self, path: &str) -> Result<()> {
+        remove_recursive(&self.sftp, path).await
+    }
+
+    async fn walk(&self, root: &str) -> Result<Vec<ScannedFile>> {
+        walk_remote(&self.sftp, root).await
+    }
+
+    async fn ensure_dirs(&self, path: &str) -> Result<()> {
+        ensure_remote_dirs(&self.sftp, path).await
+    }
+
+    async fn download_file(
+        &self,
+        remote: &str,
+        local: &str,
+        job: &JobState,
+    ) -> Result<Option<Cancelled>> {
+        // Bytes never cross the JSON-RPC pipe (the plugin runs locally). The
+        // disk side — parent-dir creation, chunked write, cancel cleanup — is the
+        // shared `stream_to_local_file`.
+        let remote_file = self
+            .sftp
+            .open(remote.to_owned())
+            .await
+            .map_err(|e| PluginError::Backend(format!("open {remote}: {e}")))?;
+        stream_to_local_file(remote_file, local, job).await
+    }
+
+    async fn upload_file(
+        &self,
+        local: &str,
+        remote: &str,
+        job: &JobState,
+    ) -> Result<Option<Cancelled>> {
+        // `SftpSession::write` opens WRITE-only (no CREATE) so it fails on a new
+        // file — `create` opens CREATE | TRUNCATE | WRITE, which is what an upload
+        // needs. Streamed in `TRANSFER_CHUNK` chunks, checking `job.cancel` between
+        // chunks so a large file can be aborted mid-copy; on cancel the partial
+        // remote file is removed.
+        let mut input = tokio::fs::File::open(local)
+            .await
+            .map_err(|e| PluginError::Backend(format!("open {local}: {e}")))?;
+        let mut file = self
+            .sftp
+            .create(remote.to_owned())
+            .await
+            .map_err(|e| PluginError::Backend(format!("create {remote}: {e}")))?;
+
+        let mut buf = vec![0u8; TRANSFER_CHUNK];
+        loop {
+            if job.cancel.load(Ordering::SeqCst) {
+                let _ = file.shutdown().await;
+                drop(file);
+                let _ = self.sftp.remove_file(remote.to_owned()).await;
+                return Ok(Some(Cancelled));
+            }
+            let n = input
+                .read(&mut buf)
+                .await
+                .map_err(|e| PluginError::Backend(format!("read {local}: {e}")))?;
+            if n == 0 {
+                break;
+            }
+            file.write_all(&buf[..n])
+                .await
+                .map_err(|e| PluginError::Backend(format!("write {remote}: {e}")))?;
+        }
+        file.shutdown()
+            .await
+            .map_err(|e| PluginError::Backend(format!("flush {remote}: {e}")))?;
+        Ok(None)
+    }
 }
+
+// ── SFTP-internal helpers ──────────────────────────────────────────────────--
 
 /// Create a remote directory, tolerating "already exists". SFTP has no mkdir -p,
 /// so callers create each level in order.
@@ -675,65 +489,25 @@ async fn ensure_remote_dir(sftp: &SftpSession, path: &str) -> Result<()> {
     Ok(())
 }
 
-// ── Background transfer driver ───────────────────────────────────────────────
-
-/// Read one remote file and write it straight to `local_path` on disk, creating
-/// parent directories as needed. Bytes never cross the JSON-RPC pipe (the plugin
-/// runs locally). Streamed in `TRANSFER_CHUNK` chunks, checking `job.cancel`
-/// between chunks so a large file can be aborted mid-copy; on cancel the
-/// partially-written local file is removed and `Ok(Some(Cancelled))` is returned.
-async fn download_one(
-    sftp: &SftpSession,
-    remote_path: &str,
-    local_path: &str,
-    job: &JobState,
-) -> Result<Option<Cancelled>> {
-    let mut remote = sftp
-        .open(remote_path.to_owned())
-        .await
-        .map_err(|e| PluginError::Backend(format!("open {remote_path}: {e}")))?;
-    let local = std::path::Path::new(local_path);
-    if let Some(parent) = local.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| PluginError::Backend(format!("create local dir {parent:?}: {e}")))?;
-    }
-    let mut out = tokio::fs::File::create(local)
-        .await
-        .map_err(|e| PluginError::Backend(format!("create {local_path}: {e}")))?;
-
-    let mut buf = vec![0u8; TRANSFER_CHUNK];
-    loop {
-        if job.cancel.load(Ordering::SeqCst) {
-            // Drop the open handles and discard the truncated destination.
-            drop(out);
-            let _ = tokio::fs::remove_file(local).await;
-            return Ok(Some(Cancelled));
+/// Create every level of a remote directory path in order (SFTP has no mkdir -p),
+/// tolerating levels that already exist.
+async fn ensure_remote_dirs(sftp: &SftpSession, path: &str) -> Result<()> {
+    let mut acc = String::new();
+    for segment in path.split('/') {
+        if segment.is_empty() {
+            // Leading "/" (absolute path): keep building from root.
+            acc.push('/');
+            continue;
         }
-        let n = remote
-            .read(&mut buf)
-            .await
-            .map_err(|e| PluginError::Backend(format!("read {remote_path}: {e}")))?;
-        if n == 0 {
-            break;
+        if acc.is_empty() || acc == "/" {
+            acc.push_str(segment);
+        } else {
+            acc.push('/');
+            acc.push_str(segment);
         }
-        out.write_all(&buf[..n])
-            .await
-            .map_err(|e| PluginError::Backend(format!("write {local_path}: {e}")))?;
+        ensure_remote_dir(sftp, &acc).await?;
     }
-    out.flush()
-        .await
-        .map_err(|e| PluginError::Backend(format!("flush {local_path}: {e}")))?;
-    Ok(None)
-}
-
-/// One file discovered while scanning a transfer source: its source path and the
-/// path relative to the transfer root (used to mirror the tree at the destination).
-struct ScannedFile {
-    /// Absolute source path (remote for download, local for upload).
-    src: String,
-    /// Path relative to the item root, e.g. `sub/dir/file.txt`. Empty for a
-    /// single top-level file.
-    rel: String,
+    Ok(())
 }
 
 /// Walk a remote tree rooted at `root`, returning every file under it. Iterative
@@ -765,169 +539,6 @@ async fn walk_remote(sftp: &SftpSession, root: &str) -> Result<Vec<ScannedFile>>
         }
     }
     Ok(out)
-}
-
-/// Walk a local tree rooted at `root`, returning every file under it. Iterative
-/// (mirrors `upload_dir`).
-fn walk_local(root: &str) -> Result<Vec<ScannedFile>> {
-    let mut out = Vec::new();
-    let mut stack: Vec<(std::path::PathBuf, String)> =
-        vec![(std::path::PathBuf::from(root), String::new())];
-    while let Some((dir, prefix)) = stack.pop() {
-        let entries = std::fs::read_dir(&dir)
-            .map_err(|e| PluginError::Backend(format!("read_dir {dir:?}: {e}")))?;
-        for entry in entries {
-            let entry = entry.map_err(|e| PluginError::Backend(format!("dir entry: {e}")))?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let rel = if prefix.is_empty() {
-                name.clone()
-            } else {
-                format!("{prefix}/{name}")
-            };
-            let file_type = entry
-                .file_type()
-                .map_err(|e| PluginError::Backend(format!("file type {name}: {e}")))?;
-            if file_type.is_dir() {
-                stack.push((entry.path(), rel));
-            } else if file_type.is_file() {
-                out.push(ScannedFile {
-                    src: entry.path().to_string_lossy().into_owned(),
-                    rel,
-                });
-            }
-            // Symlinks / special files are skipped (matches `upload_dir`).
-        }
-    }
-    Ok(out)
-}
-
-/// Join a destination root with a relative path, using "/" (remote paths always
-/// use it; local paths on macOS/Linux accept it, and the `create_dir_all` /
-/// `write` calls normalize either way — same convention the frontend used).
-fn join_rel(root: &str, rel: &str) -> String {
-    if rel.is_empty() {
-        root.to_owned()
-    } else {
-        format!("{root}/{rel}")
-    }
-}
-
-/// Drive a whole transfer (every item) to completion, updating `job` as it goes.
-/// Runs in a spawned task so it outlives the frontend workspace. Phases:
-/// `Scanning` while building the file list, `Running` while copying, then the
-/// caller flips to `Done`. Honors the cooperative `cancel` flag between files.
-async fn run_transfer(
-    sftp: &SftpSession,
-    kind: TransferKind,
-    items: &[TransferItem],
-    job: &JobState,
-) -> Result<()> {
-    // Phase 1 — scan: build the flat (src, dest) work list across all items and
-    // learn the total file count up front, so the progress bar is accurate.
-    job.set_phase(JobPhase::Scanning);
-    // (src_path, dest_path, display_rel)
-    let mut work: Vec<(String, String, String)> = Vec::new();
-    for item in items {
-        if job.cancel.load(Ordering::SeqCst) {
-            job.set_phase(JobPhase::Cancelled);
-            return Ok(());
-        }
-        match kind {
-            TransferKind::Download => {
-                let meta = sftp
-                    .metadata(item.remote_path.clone())
-                    .await
-                    .map_err(|e| PluginError::Backend(format!("stat {}: {e}", item.remote_path)))?;
-                if meta.is_dir() {
-                    for f in walk_remote(sftp, &item.remote_path).await? {
-                        let dest = join_rel(&item.local_path, &f.rel);
-                        work.push((f.src, dest, f.rel));
-                    }
-                } else {
-                    let name = file_name_of(&item.remote_path);
-                    work.push((item.remote_path.clone(), item.local_path.clone(), name));
-                }
-            }
-            TransferKind::Upload => {
-                let meta = std::fs::metadata(&item.local_path).map_err(|e| {
-                    PluginError::Backend(format!("stat {}: {e}", item.local_path))
-                })?;
-                if meta.is_dir() {
-                    // Mirror the destination root so an uploaded folder exists
-                    // even when empty; nested dirs are created lazily as each
-                    // file's parent chain is ensured during copy.
-                    ensure_remote_dirs(sftp, &item.remote_path).await?;
-                    for f in walk_local(&item.local_path)? {
-                        let dest = join_rel(&item.remote_path, &f.rel);
-                        work.push((f.src, dest, f.rel));
-                    }
-                } else {
-                    let name = file_name_of(&item.local_path);
-                    work.push((item.local_path.clone(), item.remote_path.clone(), name));
-                }
-            }
-        }
-    }
-
-    job.total.store(work.len() as u64, Ordering::SeqCst);
-    job.set_phase(JobPhase::Running);
-
-    // Phase 2 — copy each file. Cancel is checked both between files (here) and
-    // mid-file (inside the copy helpers, between chunks), so a large in-progress
-    // file is aborted promptly rather than running to completion first.
-    for (src, dest, rel) in work {
-        if job.cancel.load(Ordering::SeqCst) {
-            job.set_phase(JobPhase::Cancelled);
-            return Ok(());
-        }
-        *job.current.lock().await = rel;
-        let cancelled = match kind {
-            TransferKind::Download => download_one(sftp, &src, &dest, job).await?,
-            TransferKind::Upload => {
-                // Mirror the parent directory chain on the remote before writing.
-                if let Some(parent) = dest.rsplit_once('/').map(|(p, _)| p) {
-                    if !parent.is_empty() {
-                        ensure_remote_dirs(sftp, parent).await?;
-                    }
-                }
-                write_remote(sftp, &src, dest.clone(), job).await?
-            }
-        };
-        if cancelled.is_some() {
-            // The current file was aborted mid-copy and its partial destination
-            // removed; stop here without counting it as done.
-            job.set_phase(JobPhase::Cancelled);
-            return Ok(());
-        }
-        job.done.fetch_add(1, Ordering::SeqCst);
-    }
-    Ok(())
-}
-
-/// The last path segment of a "/"-separated path (the file name).
-fn file_name_of(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_owned()
-}
-
-/// Create every level of a remote directory path in order (SFTP has no mkdir -p),
-/// tolerating levels that already exist.
-async fn ensure_remote_dirs(sftp: &SftpSession, path: &str) -> Result<()> {
-    let mut acc = String::new();
-    for segment in path.split('/') {
-        if segment.is_empty() {
-            // Leading "/" (absolute path): keep building from root.
-            acc.push('/');
-            continue;
-        }
-        if acc.is_empty() || acc == "/" {
-            acc.push_str(segment);
-        } else {
-            acc.push('/');
-            acc.push_str(segment);
-        }
-        ensure_remote_dir(sftp, &acc).await?;
-    }
-    Ok(())
 }
 
 /// Recursively delete a remote path. SFTP `rmdir` only removes *empty*

@@ -2871,6 +2871,15 @@ table.grid tr.new-row td {
   padding: 5px 14px;
   font-size: 12px;
   color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.fm-statusbar-warning {
+  margin-left: auto;
+  color: var(--warning, #d18616);
+  font-weight: 500;
 }
 
 /* Context menu */
