@@ -4,6 +4,7 @@ members = [
     "crates/rdb-core",
     "crates/rdb-plugin-runtime",
     "crates/rdb-rdbms-common",
+    "crates/rdb-filemanager-common",
     "crates/plugins/postgres",
     "crates/plugins/mongodb",
     "crates/plugins/rabbitmq",
@@ -12,6 +13,7 @@ members = [
     "crates/plugins/snowflake",
     "crates/plugins/mysql",
     "crates/plugins/mssql",
+    "crates/plugins/s3",
     "src-tauri",
 ]
 
@@ -35,9 +37,11 @@ uuid = { version = "1", features = ["v4", "serde"] }
 rdb-core = { path = "crates/rdb-core" }
 rdb-plugin-runtime = { path = "crates/rdb-plugin-runtime" }
 rdb-rdbms-common = { path = "crates/rdb-rdbms-common" }
+rdb-filemanager-common = { path = "crates/rdb-filemanager-common" }
 rdb-plugin-postgres = { path = "crates/plugins/postgres" }
 rdb-plugin-mongodb = { path = "crates/plugins/mongodb" }
 rdb-plugin-rabbitmq = { path = "crates/plugins/rabbitmq" }
 rdb-plugin-snowflake = { path = "crates/plugins/snowflake" }
 rdb-plugin-mysql = { path = "crates/plugins/mysql" }
 rdb-plugin-mssql = { path = "crates/plugins/mssql" }
+rdb-plugin-s3 = { path = "crates/plugins/s3" }
