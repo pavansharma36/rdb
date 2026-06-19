@@ -1,4 +1,4 @@
-import {useEffect, useMemo, useRef, useState} from "react";
+import {RefObject, useEffect, useMemo, useRef, useState} from "react";
 import { api, errString } from "../api/api.ts";
 import type { AvailablePlugin, GithubPreview, PluginInfo, PluginStatus } from "../api/api.ts";
 import { loadConfig } from "../api/store.ts";
@@ -62,7 +62,7 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
     total: number;
   } | null>(null);
 
-  const previewRef = useRef(null);
+  const previewRef: RefObject<Element | null> = useRef(null);
 
   // The list narrowed by the search box (case-insensitive over name/id/desc).
   // "Update all" still acts on the full list, not just what's shown.
