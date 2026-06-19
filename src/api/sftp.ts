@@ -15,6 +15,14 @@ export interface FileEntry {
     permissions: number;
 }
 
+/** Response of `filemanager.list_dir` (mirrors `ListDirResult` in the plugin).
+ *  `truncated` is true when the directory held more than the backend's cap
+ *  (10,000) and the extra entries were dropped. */
+export interface ListDirResult {
+    entries: FileEntry[];
+    truncated: boolean;
+}
+
 /** Direction of a background transfer. */
 export type TransferKind = "upload" | "download";
 
@@ -51,7 +59,7 @@ export const sftp_api = {
         pluginCall<string>(connectionId, "filemanager.home_dir", {}),
 
     sftpListDir: (connectionId: ConnectionId, path: string) =>
-        pluginCall<FileEntry[]>(connectionId, "filemanager.list_dir", { path }),
+        pluginCall<ListDirResult>(connectionId, "filemanager.list_dir", { path }),
 
     /** Start an upload or download as a background task *inside the plugin*. Runs
      *  independent of the workspace component, so it survives a connection switch;
@@ -81,8 +89,10 @@ export const sftp_api = {
     sftpCancelLastTransfer: (connectionId: ConnectionId) =>
         pluginCall<null>(connectionId, "filemanager.cancel_last_transfer", {}),
 
-    sftpDelete: (connectionId: ConnectionId, path: string) =>
-        pluginCall<null>(connectionId, "filemanager.delete", { path }),
+    /** Recursively delete one or more paths in one call. The plugin deletes
+     *  them in order, aborting on the first failure. */
+    sftpDeletePaths: (connectionId: ConnectionId, paths: string[]) =>
+        pluginCall<null>(connectionId, "filemanager.delete", { paths }),
 
     sftpMkdir: (connectionId: ConnectionId, path: string) =>
         pluginCall<null>(connectionId, "filemanager.mkdir", { path }),
