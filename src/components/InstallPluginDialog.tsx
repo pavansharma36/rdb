@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import {useEffect, useMemo, useRef, useState} from "react";
 import { api, errString } from "../api/api.ts";
 import type { AvailablePlugin, GithubPreview, PluginInfo, PluginStatus } from "../api/api.ts";
 import { loadConfig } from "../api/store.ts";
@@ -62,6 +62,8 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
     total: number;
   } | null>(null);
 
+  const previewRef = useRef(null);
+
   // The list narrowed by the search box (case-insensitive over name/id/desc).
   // "Update all" still acts on the full list, not just what's shown.
   const filtered = useMemo(() => {
@@ -74,6 +76,10 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
         .some((s) => s.toLowerCase().includes(q)),
     );
   }, [available, query]);
+
+  useEffect(() => {
+    previewRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [preview]);
 
   // Load the configured repo + app channel, then the available plugin list
   // (each entry already carries its install/update status from the host).
@@ -369,7 +375,7 @@ export function InstallPluginDialog({ onClose, onInstalled, onUninstalled }: Ins
         )}
 
         {selected && preview && (
-          <div className="preview">
+          <div className="preview" ref={previewRef}>
             <div className="preview-row">
               <span className="muted">Plugin</span>
               <span>{selected.name ?? selected.id}</span>
