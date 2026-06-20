@@ -1,26 +1,19 @@
-//! Per-connection workspace files (saved SQL snippets / shell scripts).
+//! Per-connection workspace files.
 //!
-//! Each saved profile gets its own folder of plain files at
-//! `<app_data_dir>/workspace/<connection_id>/<name>.<ext>`, where `connection_id`
-//! is the stable saved-profile id (not the per-session live connection id) and
-//! `ext` is the file extension (e.g. `sql` for the RDBMS workspace, `sh` for the
-//! SSH/CLI workspace). Files are human-readable and can be inspected or edited
-//! outside the app.
+//! Each saved profile gets its own folder at
+//! `<app_data_dir>/workspace/<connection_id>/`, where `connection_id` is the
+//! stable saved-profile id (not the per-session live connection id). A workspace
+//! stores an arbitrary directory tree there via the generic path primitives
+//! below; the host stays oblivious to what the files mean. Examples: the RDBMS
+//! workspace saves `<name>.sql` snippets at the root, the SSH/CLI workspace
+//! `<name>.sh` scripts, and the curl workspace a nested `curlui/` tree. Files are
+//! human-readable and can be inspected or edited outside the app.
 
 use std::fs;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
-
-/// A saved workspace file. Mirrors the frontend `WorkspaceFile` (camelCase).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceFile {
-    /// File name without the extension.
-    pub name: String,
-    pub content: String,
-}
 
 /// `<app_data_dir>/workspace/<connection_id>` — the folder of files for one profile.
 fn workspace_dir(app: &AppHandle, connection_id: &str) -> Result<PathBuf, String> {
@@ -32,8 +25,8 @@ fn workspace_dir(app: &AppHandle, connection_id: &str) -> Result<PathBuf, String
     Ok(dir.join("workspace").join(connection_id))
 }
 
-/// Reject ids/names that could escape the intended folder; they're used verbatim
-/// as path segments.
+/// Reject ids/segments that could escape the intended folder; they're used
+/// verbatim as path segments.
 fn validate_segment(value: &str, what: &str) -> Result<(), String> {
     if value.is_empty()
         || value == ".."
@@ -45,91 +38,115 @@ fn validate_segment(value: &str, what: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Validate a file extension: non-empty, alphanumeric only (so it can't be used
-/// to smuggle a path separator or dotfile trickery into the file name).
-fn validate_ext(ext: &str) -> Result<(), String> {
-    if ext.is_empty() || !ext.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return Err(format!("invalid extension: {ext:?}"));
-    }
-    Ok(())
+// --- Generic per-connection path operations --------------------------------
+//
+// Lower-level primitives that let a workspace store an arbitrary directory tree
+// under `workspace/<connection_id>/`. Unlike the flat name+ext helpers above,
+// these take a `/`-separated relative path so a workspace (e.g. the curl client)
+// can build nested layouts. Every path segment is validated to block traversal;
+// the host stays oblivious to what the files mean.
+
+/// One immediate child of a workspace directory. Mirrors the frontend `DirEntry`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirEntry {
+    pub name: String,
+    pub is_dir: bool,
 }
 
-/// List the saved workspace files with extension `ext` for `connection_id`,
-/// sorted by name. Returns an empty list when the profile has no workspace
-/// folder yet.
+/// Resolve `workspace/<connection_id>/<path>`, validating the connection id and
+/// every `/`-separated segment of `path`. An empty `path` resolves to the
+/// connection root. Rejects `.`/`..`/separators in any segment.
+fn resolve(app: &AppHandle, connection_id: &str, path: &str) -> Result<PathBuf, String> {
+    let mut dir = workspace_dir(app, connection_id)?;
+    for seg in path.split('/').filter(|s| !s.is_empty()) {
+        if seg == "." || seg == ".." {
+            return Err(format!("invalid path segment: {seg:?}"));
+        }
+        validate_segment(seg, "path segment")?;
+        dir.push(seg);
+    }
+    Ok(dir)
+}
+
+/// Read a single file at `path` under `connection_id`. Returns `None` when the
+/// file doesn't exist (so callers can distinguish missing from empty).
 #[tauri::command]
-pub fn list_workspace_files(
+pub fn read_workspace_file(
     app: AppHandle,
     connection_id: String,
-    ext: String,
-) -> Result<Vec<WorkspaceFile>, String> {
-    validate_ext(&ext)?;
-    let dir = workspace_dir(&app, &connection_id)?;
+    path: String,
+) -> Result<Option<String>, String> {
+    let file = resolve(&app, &connection_id, &path)?;
+    match fs::read_to_string(&file) {
+        Ok(content) => Ok(Some(content)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Write `content` to `path` under `connection_id`, creating parent dirs.
+#[tauri::command]
+pub fn write_workspace_file_at(
+    app: AppHandle,
+    connection_id: String,
+    path: String,
+    content: String,
+) -> Result<(), String> {
+    let file = resolve(&app, &connection_id, &path)?;
+    if let Some(parent) = file.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&file, content).map_err(|e| e.to_string())
+}
+
+/// List the immediate children of the directory at `path` under `connection_id`,
+/// sorted by name. The caller recurses into subdirs itself. Returns an empty
+/// list when the directory doesn't exist.
+#[tauri::command]
+pub fn list_workspace_dir(
+    app: AppHandle,
+    connection_id: String,
+    path: String,
+) -> Result<Vec<DirEntry>, String> {
+    let dir = resolve(&app, &connection_id, &path)?;
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e.to_string()),
     };
-    let mut files = Vec::new();
+    let mut out = Vec::new();
     for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some(ext.as_str()) {
-            continue;
-        }
-        let Some(name) = path.file_stem().and_then(|s| s.to_str()) else {
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        files.push(WorkspaceFile {
-            name: name.to_string(),
-            content,
-        });
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        out.push(DirEntry { name, is_dir });
     }
-    files.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(files)
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
 }
 
-/// Create or overwrite `<name>.<ext>` for `connection_id`.
+/// Delete the file or directory (recursively) at `path` under `connection_id`.
+/// A missing path is treated as success.
 #[tauri::command]
-pub fn save_workspace_file(
+pub fn delete_workspace_path(
     app: AppHandle,
     connection_id: String,
-    name: String,
-    content: String,
-    ext: String,
+    path: String,
 ) -> Result<(), String> {
-    validate_segment(&name, "workspace file name")?;
-    validate_ext(&ext)?;
-    let dir = workspace_dir(&app, &connection_id)?;
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    fs::write(dir.join(format!("{name}.{ext}")), content).map_err(|e| e.to_string())
-}
-
-/// Delete `<name>.<ext>` for `connection_id`. Missing files are treated as success.
-#[tauri::command]
-pub fn delete_workspace_file(
-    app: AppHandle,
-    connection_id: String,
-    name: String,
-    ext: String,
-) -> Result<(), String> {
-    validate_segment(&name, "workspace file name")?;
-    validate_ext(&ext)?;
-    let dir = workspace_dir(&app, &connection_id)?;
-    match fs::remove_file(dir.join(format!("{name}.{ext}"))) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-/// Delete the entire workspace folder for `connection_id` (all saved files,
-/// every extension). Used when a connection profile is deleted so no orphaned
-/// snippets/scripts linger. A missing folder is treated as success.
-#[tauri::command]
-pub fn delete_workspace_dir(app: AppHandle, connection_id: String) -> Result<(), String> {
-    let dir = workspace_dir(&app, &connection_id)?;
-    match fs::remove_dir_all(&dir) {
+    let target = resolve(&app, &connection_id, &path)?;
+    let meta = match fs::symlink_metadata(&target) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.to_string()),
+    };
+    let result = if meta.is_dir() {
+        fs::remove_dir_all(&target)
+    } else {
+        fs::remove_file(&target)
+    };
+    match result {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.to_string()),

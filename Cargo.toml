@@ -47,4 +47,3 @@ rdb-plugin-mysql = { path = "crates/plugins/mysql" }
 rdb-plugin-mssql = { path = "crates/plugins/mssql" }
 rdb-plugin-s3 = { path = "crates/plugins/s3" }
 rdb-plugin-curlui = { path = "crates/plugins/curlui" }
-curl-parser = "0.6"
