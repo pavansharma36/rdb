@@ -15,6 +15,7 @@ import { DocumentWorkspace } from "./components/workspaces/DocumentWorkspace";
 import { RabbitMqWorkspace } from "./components/workspaces/RabbitMqWorkspace";
 import { CliWorkspace } from "./components/workspaces/CliWorkspace";
 import { FileManagerWorkspace } from "./components/workspaces/FileManagerWorkspace";
+import { CurlUiWorkspace } from "./components/workspaces/CurlUiWorkspace";
 import type { SavedConnection } from "./api/store.ts";
 import { loadConnections, saveConnections, upsert, remove, genId } from "./api/store.ts";
 import { loadConfig, saveConfig, deleteWorkspaceDir } from "./api/store.ts";
@@ -283,14 +284,6 @@ export function App() {
     setEditingId((cur) => (cur === id ? null : cur));
     // The profile is gone; discard any preserved workspace state for it.
     clearConnectionState(id);
-    // Drop the profile's persisted UI settings from config.json.
-    setConfig((c) => {
-      if (!c?.connectionSettings?.[id]) return c;
-      const { [id]: _removed, ...rest } = c.connectionSettings;
-      const next = { ...c, connectionSettings: rest };
-      saveConfig(next).catch(() => {});
-      return next;
-    });
     // Remove its on-disk workspace folder (saved SQL/scripts). Best effort.
     deleteWorkspaceDir(id).catch(() => {});
   }
@@ -364,6 +357,34 @@ export function App() {
             onTreeWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
           />
         );
+      case "curlui": {
+        const cfg = saved.find((s) => s.id === conn.savedId)?.config;
+        const envRaw = cfg?.env;
+        const env: Record<string, string> = {};
+        if (envRaw && typeof envRaw === "object" && !Array.isArray(envRaw)) {
+          for (const [k, v] of Object.entries(envRaw as Record<string, unknown>)) {
+            if (typeof v === "string") env[k] = v;
+            else if (
+              v &&
+              typeof v === "object" &&
+              "value" in v &&
+              typeof (v as { value: unknown }).value === "string"
+            ) {
+              env[k] = (v as { value: string }).value;
+            }
+          }
+        }
+        return (
+          <CurlUiWorkspace
+            key={conn.id}
+            connectionId={conn.id}
+            savedId={conn.savedId}
+            env={env}
+            treeWidth={treeWidthFor(conn.savedId, TREE_DEFAULT)}
+            onTreeWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
+          />
+        );
+      }
       default:
         return (
           <div className="placeholder">No workspace available for “{mod}”.</div>
@@ -426,46 +447,39 @@ export function App() {
     });
   }
 
-  /** The saved workspace tree-panel width for a connection, or `dflt`. */
-  function treeWidthFor(savedId: string, dflt: number): number {
-    return config?.connectionSettings?.[savedId]?.treeWidth ?? dflt;
+  /** Merge `patch` into a saved profile's `settings` map and persist via the
+   * connections store (settings now travel with the connection record). */
+  function commitSetting(savedId: string, patch: Record<string, unknown>) {
+    const conn = saved.find((s) => s.id === savedId);
+    if (!conn) return;
+    const next = { ...conn, settings: { ...conn.settings, ...patch } };
+    persist(upsert(saved, next));
   }
 
-  /** Persist a connection's workspace tree-panel width (merges into config). */
+  /** Read a numeric per-connection setting, falling back to `dflt`. */
+  function numSetting(savedId: string, key: string, dflt: number): number {
+    const v = saved.find((s) => s.id === savedId)?.settings?.[key];
+    return typeof v === "number" ? v : dflt;
+  }
+
+  /** The saved workspace tree-panel width for a connection, or `dflt`. */
+  function treeWidthFor(savedId: string, dflt: number): number {
+    return numSetting(savedId, "treeWidth", dflt);
+  }
+
+  /** Persist a connection's workspace tree-panel width. */
   function commitTreeWidth(savedId: string, width: number) {
-    setConfig((c) => {
-      const prev = c?.connectionSettings ?? {};
-      const next = {
-        ...(c ?? ({} as AppConfig)),
-        connectionSettings: {
-          ...prev,
-          [savedId]: { ...prev[savedId], treeWidth: width },
-        },
-      };
-      saveConfig(next).catch(() => {});
-      return next;
-    });
+    commitSetting(savedId, { treeWidth: width });
   }
 
   /** The saved workspace editor-pane height for a connection, or `dflt`. */
   function editorHeightFor(savedId: string, dflt: number): number {
-    return config?.connectionSettings?.[savedId]?.editorHeight ?? dflt;
+    return numSetting(savedId, "editorHeight", dflt);
   }
 
-  /** Persist a connection's workspace editor-pane height (merges into config). */
+  /** Persist a connection's workspace editor-pane height. */
   function commitEditorHeight(savedId: string, height: number) {
-    setConfig((c) => {
-      const prev = c?.connectionSettings ?? {};
-      const next = {
-        ...(c ?? ({} as AppConfig)),
-        connectionSettings: {
-          ...prev,
-          [savedId]: { ...prev[savedId], editorHeight: height },
-        },
-      };
-      saveConfig(next).catch(() => {});
-      return next;
-    });
+    commitSetting(savedId, { editorHeight: height });
   }
 
   return (

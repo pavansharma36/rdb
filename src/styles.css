@@ -3009,3 +3009,640 @@ table.grid tr.new-row td {
   pointer-events: none;
   z-index: 5;
 }
+
+/* KeyValue connection form field ------------------------------------------- */
+
+.keyvalue-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.keyvalue-empty {
+  margin: 0;
+  font-size: 12px;
+}
+
+.keyvalue-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.keyvalue-key {
+  flex: 0 1 140px;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.keyvalue-val {
+  flex: 1;
+}
+
+.keyvalue-remove {
+  min-width: 28px;
+  padding: 0 6px;
+}
+
+.keyvalue-add {
+  align-self: flex-start;
+  font-size: 12px;
+}
+
+/* HTTP Client (curlui) workspace ------------------------------------------- */
+
+.curlui-workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.curlui-env-summary {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.curlui-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.curlui-tree {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-2);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.curlui-tree-fab {
+  position: sticky;
+  bottom: 12px;
+  align-self: flex-end;
+  margin: auto 12px 12px;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-muted, var(--text));
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.5;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.curlui-tree-fab:hover {
+  opacity: 1;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.curlui-tree-node {
+  font-size: 13px;
+}
+
+.curlui-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+}
+
+.curlui-tree-toggle {
+  background: transparent;
+  border: none;
+  padding: 0 2px;
+  color: var(--muted);
+  min-width: 16px;
+}
+
+.curlui-tree-folder-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.curlui-tree-label {
+  flex: 1;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Collection name doubles as a button that opens the collection editor. */
+.curlui-tree-col-label {
+  background: transparent;
+  border: none;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0;
+}
+
+.curlui-tree-col.active,
+.curlui-tree-row.active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.curlui-tree-col-label:hover {
+  text-decoration: underline;
+}
+
+.curlui-tree-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0.7;
+}
+
+.curlui-tree-actions button {
+  background: transparent;
+  border: none;
+  padding: 0 4px;
+  font-size: 11px;
+}
+
+.curlui-tree-request {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.curlui-tree-request:hover {
+  background: var(--panel);
+}
+
+.curlui-tree-request.active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.curlui-req-method {
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 36px;
+}
+
+/* Postman-style method colors, shared by the tree row and the method select. */
+.m-get {
+  color: var(--ok);
+}
+.m-post {
+  color: var(--warn);
+}
+.m-put {
+  color: var(--accent-2);
+}
+.m-patch {
+  color: var(--accent);
+}
+.m-delete {
+  color: var(--err);
+}
+.m-info,
+.m-other {
+  color: var(--muted);
+}
+select.curlui-method {
+  font-weight: 700;
+}
+
+.curlui-req-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curlui-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px;
+  gap: 10px;
+}
+
+/* Editor pane: fills the space under the tab strip; flex column so the
+   request editor + resizer + response lay out and the response can grow. */
+.curlui-editor-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 10px;
+}
+
+/* Open request tabs strip (Postman-style). */
+.curlui-req-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.curlui-req-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: -1px;
+}
+
+.curlui-req-tab:hover {
+  background: var(--panel);
+}
+
+.curlui-req-tab.active {
+  color: var(--text);
+  background: var(--bg-2);
+  border-color: var(--border);
+}
+
+.curlui-req-tab-method {
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.curlui-req-tab-icon {
+  font-size: 11px;
+}
+
+.curlui-req-tab-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.curlui-req-tab-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1;
+  border-radius: 4px;
+  opacity: 0.6;
+}
+
+.curlui-req-tab-close:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--err) 30%, transparent);
+}
+
+.curlui-request-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.curlui-req-name-input {
+  flex: 0 1 160px;
+  min-width: 100px;
+}
+
+.curlui-url-input {
+  flex: 1;
+  min-width: 200px;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.curlui-env-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.curlui-env-tab code {
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+.curlui-env-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.curlui-env-chip {
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+}
+
+.curlui-editors {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex-shrink: 0;
+}
+
+/* Tab strip shared by the request editor and the response panel. */
+.curlui-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.curlui-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: -1px;
+}
+
+.curlui-tab:hover {
+  color: var(--text);
+}
+
+.curlui-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.curlui-tab-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
+}
+
+.curlui-tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.curlui-tab-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-top: 8px;
+}
+
+/* Editable key/value table (params, headers). */
+.curlui-kv {
+  display: flex;
+  flex-direction: column;
+}
+
+.curlui-kv-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.curlui-kv-check {
+  flex-shrink: 0;
+}
+
+.curlui-kv-key,
+.curlui-kv-value {
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.curlui-kv-key {
+  flex: 0 1 240px;
+  min-width: 120px;
+}
+
+.curlui-kv-value {
+  flex: 1;
+  min-width: 120px;
+}
+
+.curlui-kv-del {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 0 6px;
+}
+
+.curlui-kv-del:hover {
+  color: var(--err);
+}
+
+.curlui-body-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+}
+
+/* Authorization tab. */
+.curlui-auth {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 520px;
+}
+
+/* Collection settings pane (variables / headers / auth). */
+.curlui-collection {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 10px;
+}
+
+.curlui-collection-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.curlui-collection-icon {
+  font-size: 18px;
+}
+
+.curlui-collection-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.curlui-collection-hint code {
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+.curlui-auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.curlui-auth-field > select {
+  align-self: flex-start;
+}
+
+.curlui-auth-input {
+  width: 100%;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* Request Headers tab: inherit toggle + read-only inherited list. */
+.curlui-headers-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.curlui-inherit-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.curlui-inherited-headers {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+
+.curlui-inherited-row {
+  display: flex;
+  gap: 8px;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.curlui-inherited-key {
+  flex: 0 0 200px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curlui-inherited-val {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curlui-body-kind {
+  align-self: flex-start;
+}
+
+.curlui-body-input,
+.curlui-import-text {
+  width: 100%;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.curlui-name-input {
+  width: 100%;
+}
+
+.curlui-body-input {
+  flex: 1;
+  min-height: 80px;
+  resize: none;
+}
+
+.curlui-response {
+  flex: 1;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.curlui-response-meta {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.curlui-status {
+  font-weight: 600;
+}
+
+.curlui-status.s-ok {
+  color: var(--ok);
+}
+
+.curlui-status.s-warn {
+  color: var(--warn);
+}
+
+.curlui-status.s-err {
+  color: var(--err);
+}
+
+.curlui-status.s-info {
+  color: var(--muted);
+}
+
+.curlui-response-headers,
+.curlui-response-body,
+.curlui-curl {
+  margin: 0;
+  padding: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+}
+

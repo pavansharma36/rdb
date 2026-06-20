@@ -18,6 +18,9 @@ export interface SavedConnection {
   name: string;
   pluginId: string;
   config: ConnectionConfig;
+  /** Per-connection UI preferences (e.g. `treeWidth`, `editorHeight`), stored
+   * alongside the connection. Free-form so future prefs need no schema change. */
+  settings?: Record<string, unknown>;
 }
 
 /** Generate a stable profile id (falls back when crypto.randomUUID is absent). */
@@ -57,16 +60,6 @@ export function remove(list: SavedConnection[], id: string): SavedConnection[] {
 // App-wide UI state (not tied to any plugin/connection), persisted by the Rust
 // backend at <app_data_dir>/config.json. See src-tauri/src/config.rs.
 
-/** Per-connection UI preferences. Mirrors the Rust `ConnectionSettings`
- * (camelCase). Keyed by stable saved-profile id in `AppConfig.connectionSettings`. */
-export interface ConnectionSettings {
-  /** Workspace tree-panel width in CSS pixels (set by dragging its resize handle). */
-  treeWidth?: number;
-  /** Workspace editor-pane height in CSS pixels (set by dragging the editor's
-   * vertical resize handle: the SQL editor in RDBMS, the script editor in CLI). */
-  editorHeight?: number;
-}
-
 /** App-wide configuration. Mirrors the Rust `AppConfig` (camelCase). */
 export interface AppConfig {
   /** Whether the first-run plugin install step has been shown to the user. */
@@ -77,8 +70,6 @@ export interface AppConfig {
   sidebarWidth: number;
   /** When true, the sidebar collapses to a narrow rail and expands on hover. */
   sidebarCollapsible: boolean;
-  /** Per-connection UI preferences, keyed by stable saved-profile id. */
-  connectionSettings: Record<string, ConnectionSettings>;
   /** Active UI theme id (see `THEMES` in `src/theme.ts`). */
   theme: string;
 }
@@ -102,42 +93,101 @@ export function saveConfig(config: AppConfig): Promise<void> {
 // connection id). `ext` is the file extension (default "sql"; the SSH/CLI
 // workspace uses "sh").
 
-/** A saved workspace file. Mirrors the Rust `WorkspaceFile` (camelCase). */
+/** A saved workspace file. `name` is the file name without its extension. */
 export interface WorkspaceFile {
   /** File name without the extension. */
   name: string;
   content: string;
 }
 
-/** List the saved workspace files for a connection profile, sorted by name. */
-export function listWorkspaceFiles(
+/** List the saved workspace files with extension `ext` for a connection profile,
+ * sorted by name. A thin wrapper over the generic dir/file primitives below:
+ * lists the profile root, keeps `*.<ext>` files, and reads each. */
+export async function listWorkspaceFiles(
   connectionId: string,
   ext = "sql",
 ): Promise<WorkspaceFile[]> {
-  return invoke<WorkspaceFile[]>("list_workspace_files", { connectionId, ext });
+  const suffix = `.${ext}`;
+  const entries = await listWorkspaceDir(connectionId, "");
+  const out: WorkspaceFile[] = [];
+  for (const e of entries) {
+    if (e.isDir || !e.name.endsWith(suffix)) continue;
+    const content = await readWorkspaceFile(connectionId, e.name);
+    if (content !== null) {
+      out.push({ name: e.name.slice(0, -suffix.length), content });
+    }
+  }
+  return out;
 }
 
-/** Create or overwrite a named workspace file for a connection profile. */
+/** Create or overwrite a named workspace file (`<name>.<ext>`) for a profile. */
 export function saveWorkspaceFile(
   connectionId: string,
   name: string,
   content: string,
   ext = "sql",
 ): Promise<void> {
-  return invoke<void>("save_workspace_file", { connectionId, name, content, ext });
+  return writeWorkspaceFileAt(connectionId, `${name}.${ext}`, content);
 }
 
-/** Delete a named workspace file from a connection profile. */
+/** Delete a named workspace file (`<name>.<ext>`) from a profile. */
 export function deleteWorkspaceFile(
   connectionId: string,
   name: string,
   ext = "sql",
 ): Promise<void> {
-  return invoke<void>("delete_workspace_file", { connectionId, name, ext });
+  return deleteWorkspacePath(connectionId, `${name}.${ext}`);
 }
 
 /** Delete a connection profile's entire workspace folder (all saved files of
  * every extension). Used when the profile itself is deleted. */
 export function deleteWorkspaceDir(connectionId: string): Promise<void> {
-  return invoke<void>("delete_workspace_dir", { connectionId });
+  return deleteWorkspacePath(connectionId, "");
+}
+
+// --- Generic per-connection path operations --------------------------------
+//
+// Lower-level primitives for storing an arbitrary directory tree under
+// <app_data_dir>/workspace/<connectionId>/. `path` is a `/`-separated relative
+// path; the backend validates every segment. See src-tauri/src/workspace_files.rs.
+// `connectionId` is the stable saved-profile id, so files persist across sessions.
+
+/** One immediate child of a workspace directory. Mirrors the Rust `DirEntry`. */
+export interface DirEntry {
+  name: string;
+  isDir: boolean;
+}
+
+/** Read a single workspace file. Resolves to `null` when it doesn't exist. */
+export function readWorkspaceFile(
+  connectionId: string,
+  path: string,
+): Promise<string | null> {
+  return invoke<string | null>("read_workspace_file", { connectionId, path });
+}
+
+/** Write a single workspace file at `path`, creating parent dirs. */
+export function writeWorkspaceFileAt(
+  connectionId: string,
+  path: string,
+  content: string,
+): Promise<void> {
+  return invoke<void>("write_workspace_file_at", { connectionId, path, content });
+}
+
+/** List the immediate children of a workspace directory (sorted by name). Empty
+ * when the directory doesn't exist. The caller recurses into subdirs itself. */
+export function listWorkspaceDir(
+  connectionId: string,
+  path: string,
+): Promise<DirEntry[]> {
+  return invoke<DirEntry[]>("list_workspace_dir", { connectionId, path });
+}
+
+/** Delete the file or directory (recursively) at `path`. Missing = success. */
+export function deleteWorkspacePath(
+  connectionId: string,
+  path: string,
+): Promise<void> {
+  return invoke<void>("delete_workspace_path", { connectionId, path });
 }

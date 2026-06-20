@@ -6,7 +6,7 @@
 //! a `SecretField` (`{"type":"PLAIN_TEXT","value":...}`); the `PLAIN_TEXT`
 //! variant holds the secret in plaintext.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -26,6 +26,11 @@ pub struct SavedConnection {
     pub name: String,
     pub plugin_id: String,
     pub config: ConnectionConfig,
+    /// Per-connection UI preferences (e.g. `treeWidth`, `editorHeight`), stored
+    /// alongside the connection so they travel with it and vanish when the
+    /// profile is deleted. A free-form map keeps it open to future prefs.
+    #[serde(default)]
+    pub settings: HashMap<String, serde_json::Value>,
 }
 
 /// `<app_data_dir>/connections` — the root holding one subdirectory per plugin.
