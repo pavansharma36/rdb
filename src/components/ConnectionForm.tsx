@@ -358,7 +358,8 @@ function KeyValueEditor({
             type="button"
             className="keyvalue-remove"
             title="Remove"
-            onClick={() => {
+            onClick={(event) => {
+              event.preventDefault();
               const { [key]: _removed, ...rest } = value;
               onChange(rest);
             }}
