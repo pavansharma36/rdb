@@ -103,6 +103,31 @@ export interface CollectionsFile {
   collections: HttpCollection[];
 }
 
+/** A named set of `{{VAR}}` values. The active environment supplies the base
+ *  variable map for every request; a collection's own `env` overrides it. */
+export interface HttpEnvironment {
+  id: string;
+  name: string;
+  variables: Record<string, string>;
+}
+
+/** All environments for a connection plus the id of the active one (`null` =
+ *  none selected). Persisted as a single `environments.json` at the workspace
+ *  root, a sibling of the collections tree. */
+export interface EnvironmentsFile {
+  version: 1;
+  environments: HttpEnvironment[];
+  activeId: string | null;
+}
+
+export function defaultEnvironmentsFile(): EnvironmentsFile {
+  return { version: 1, environments: [], activeId: null };
+}
+
+export function newEnvironment(name = "New environment"): HttpEnvironment {
+  return { id: genId(), name, variables: {} };
+}
+
 export const HTTP_METHODS = [
   "GET",
   "POST",
@@ -353,9 +378,11 @@ export async function saveCurlFiles(
     await writeWorkspaceFileAt(savedId, f.path, f.content);
   }
 
-  // Delete stale files no longer wanted.
+  // Delete stale files no longer wanted. `environments.json` lives at the root
+  // alongside the collections tree but is owned by saveEnvironments — never
+  // prune it here.
   for (const path of existing) {
-    if (!wanted.has(path)) {
+    if (path !== ENVIRONMENTS_FILE && !wanted.has(path)) {
       await deleteWorkspacePath(savedId, path);
     }
   }
@@ -374,6 +401,43 @@ export async function saveCurlFiles(
       await deleteWorkspacePath(savedId, e.name);
     }
   }
+}
+
+/** The single file holding all environments + the active selection. */
+export const ENVIRONMENTS_FILE = "environments.json";
+
+/** Load the environments file for a profile, falling back to an empty set when
+ *  absent or unparseable. */
+export async function loadEnvironments(
+  savedId: string,
+): Promise<EnvironmentsFile> {
+  const content = await readWorkspaceFile(savedId, ENVIRONMENTS_FILE);
+  if (content === null) return defaultEnvironmentsFile();
+  try {
+    const data = JSON.parse(content) as EnvironmentsFile;
+    if (data.version !== 1 || !Array.isArray(data.environments)) {
+      return defaultEnvironmentsFile();
+    }
+    return {
+      version: 1,
+      environments: data.environments,
+      activeId: data.activeId ?? null,
+    };
+  } catch {
+    return defaultEnvironmentsFile();
+  }
+}
+
+/** Persist the environments file for a profile. */
+export async function saveEnvironments(
+  savedId: string,
+  data: EnvironmentsFile,
+): Promise<void> {
+  await writeWorkspaceFileAt(
+    savedId,
+    ENVIRONMENTS_FILE,
+    JSON.stringify(data, null, 2),
+  );
 }
 
 /** Color class suffix for an HTTP method, Postman-style. */

@@ -7,7 +7,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 use rdb_core::{
     ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError, PluginInfo,
-    PluginKind, Result, SecretField,
+    PluginKind, Result,
 };
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method};
@@ -89,15 +89,6 @@ impl Plugin for CurlUiPlugin {
             protocol_version: rdb_core::PROTOCOL_VERSION,
             config_schema: vec![
                 ConfigField {
-                    key: "env".into(),
-                    label: "Environment variables".into(),
-                    field_type: ConfigFieldType::KeyValue,
-                    required: false,
-                    default: Some(serde_json::json!({})),
-                    placeholder: None,
-                    show_if: None,
-                },
-                ConfigField {
                     key: "verify_tls".into(),
                     label: "Verify TLS certificates".into(),
                     field_type: ConfigFieldType::Boolean,
@@ -149,9 +140,6 @@ struct SessionSettings {
 }
 
 fn session_settings(config: &ConnectionConfig) -> Result<SessionSettings> {
-    // Validate the env map even though interpolation now happens on the
-    // frontend — a malformed `env` should still fail fast at connect/test time.
-    parse_env_map(config)?;
     Ok(SessionSettings {
         verify_tls: cfg_bool(config, "verify_tls", true),
         follow_redirects: cfg_bool(config, "follow_redirects", true),
@@ -171,34 +159,6 @@ fn cfg_u64(config: &ConnectionConfig, key: &str, default: u64) -> u64 {
         .get(key)
         .and_then(|v| v.as_u64())
         .unwrap_or(default)
-}
-
-/// Read the `env` KeyValue field: each entry is a plain string or a
-/// [`SecretField`] wrapper.
-pub fn parse_env_map(config: &ConnectionConfig) -> Result<HashMap<String, String>> {
-    let Some(raw) = config.get("env") else {
-        return Ok(HashMap::new());
-    };
-    let obj = raw
-        .as_object()
-        .ok_or_else(|| PluginError::Config("env must be an object".into()))?;
-    let mut out = HashMap::new();
-    for (key, value) in obj {
-        if key.is_empty() {
-            continue;
-        }
-        let resolved = if let Some(s) = value.as_str() {
-            s.to_owned()
-        } else if let Ok(secret) = serde_json::from_value::<SecretField>(value.clone()) {
-            secret.reveal().to_owned()
-        } else {
-            return Err(PluginError::Config(format!(
-                "env.{key}: expected string or secret"
-            )));
-        };
-        out.insert(key.clone(), resolved);
-    }
-    Ok(out)
 }
 
 fn build_client(settings: &SessionSettings) -> Result<Client> {
@@ -762,20 +722,5 @@ mod tests {
             encode_query_url("https://x.com?q=100%"),
             "https://x.com?q=100%25"
         );
-    }
-
-    #[test]
-    fn parse_env_accepts_plain_and_secret_values() {
-        let mut config = ConnectionConfig::new();
-        config.insert(
-            "env".into(),
-            json!({
-                "HOST": "https://example.com",
-                "TOKEN": { "type": "PLAIN_TEXT", "value": "secret" }
-            }),
-        );
-        let env = parse_env_map(&config).unwrap();
-        assert_eq!(env.get("HOST").map(String::as_str), Some("https://example.com"));
-        assert_eq!(env.get("TOKEN").map(String::as_str), Some("secret"));
     }
 }

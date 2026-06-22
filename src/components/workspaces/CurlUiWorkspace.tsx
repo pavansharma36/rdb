@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import type {
+  ClipboardEvent as ReactClipboardEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { api, errString } from "../../api/api.ts";
 import type { ConnectionId } from "../../api/api.ts";
 import {
@@ -9,22 +12,28 @@ import {
   defaultAuth,
   defaultCollectionAuth,
   defaultCollectionsFile,
+  defaultEnvironmentsFile,
   filesToCollections,
   headersToRows,
   HTTP_METHODS,
   joinUrl,
   loadCurlFiles,
+  loadEnvironments,
   methodColor,
+  newEnvironment,
   newKvRow,
   newRequest,
   rowsToHeaders,
   saveCurlFiles,
+  saveEnvironments,
   splitUrl,
   type Auth,
   type AuthKind,
   type BodyKind,
   type CollectionsFile,
+  type EnvironmentsFile,
   type HttpCollection,
+  type HttpEnvironment,
   type HttpFolder,
   type HttpRequestItem,
   type HttpResponse,
@@ -33,6 +42,7 @@ import {
 import { genId } from "../../api/store.ts";
 import { ConfirmDialog, Modal } from "../Modal";
 import { KvEditor } from "../KvEditor";
+import { JsonEditor } from "../JsonEditor";
 import { useLoader } from "../Loader";
 import {
   useResizable,
@@ -201,14 +211,14 @@ function AuthEditor({
  *  opened from the tree: env overrides, inherited headers, and default auth. */
 function CollectionEditor({
   collection,
-  connectionEnv,
+  baseEnv,
   tab,
   onTabChange,
   onPatch,
   onDelete,
 }: {
   collection: HttpCollection;
-  connectionEnv: Record<string, string>;
+  baseEnv: Record<string, string>;
   tab: CollectionTab;
   onTabChange: (t: CollectionTab) => void;
   onPatch: (patch: Partial<HttpCollection>) => void;
@@ -263,10 +273,10 @@ function CollectionEditor({
         {tab === "env" && (
           <>
             <p className="muted curlui-collection-hint">
-              Overrides connection variables for requests in this collection.
+              Overrides the active environment for requests in this collection.
               Use as <code>{"{{NAME}}"}</code>.
-              {Object.keys(connectionEnv).length > 0 &&
-                ` Connection: ${Object.keys(connectionEnv).join(", ")}.`}
+              {Object.keys(baseEnv).length > 0 &&
+                ` Environment: ${Object.keys(baseEnv).join(", ")}.`}
             </p>
             <KvEditor
               rows={headersToRows(collection.env ?? {})}
@@ -296,7 +306,6 @@ function CollectionEditor({
 interface Props {
   connectionId: ConnectionId;
   savedId: string;
-  env: Record<string, string>;
   treeWidth: number;
   onTreeWidthChange: (width: number) => void;
 }
@@ -309,13 +318,15 @@ type TreeTarget =
  *  top-level collection; otherwise it's where the new folder is added. */
 type NamePrompt =
   | { kind: "collection" }
+  | { kind: "environment" }
   | { kind: "folder"; target: TreeTarget };
 
 /** A pending delete confirmation: what to remove (with its display name). */
 type DeleteTarget =
   | { kind: "request"; name: string }
   | { kind: "folder"; collectionId: string; folderId: string; name: string }
-  | { kind: "collection"; collectionId: string; name: string };
+  | { kind: "collection"; collectionId: string; name: string }
+  | { kind: "environment"; environmentId: string; name: string };
 
 interface SelectedRequest {
   collectionId: string;
@@ -349,6 +360,18 @@ const folderRefFromTab = (
   const [collectionId, folderId] = key.slice(FOL_TAB.length).split("␟");
   return collectionId && folderId ? { collectionId, folderId } : null;
 };
+
+const ENV_TAB = "env␟";
+const environmentTabKey = (id: string) => ENV_TAB + id;
+const environmentIdFromTab = (key: string): string | null =>
+  key.startsWith(ENV_TAB) ? key.slice(ENV_TAB.length) : null;
+
+// A temporary ("scratch") request lives only in memory until saved into a
+// collection. Its tab is keyed `tmp␟<reqId>`.
+const TMP_TAB = "tmp␟";
+const tmpTabKey = (id: string) => TMP_TAB + id;
+const tmpIdFromTab = (key: string): string | null =>
+  key.startsWith(TMP_TAB) ? key.slice(TMP_TAB.length) : null;
 
 function findRequest(
   data: CollectionsFile,
@@ -447,6 +470,20 @@ function findFolder(
   return walk(col.folders);
 }
 
+/** Flatten a collection's folder tree into a depth-indented option list for the
+ *  save-target folder picker. */
+function flattenFolders(col: HttpCollection): { id: string; label: string }[] {
+  const out: { id: string; label: string }[] = [];
+  const walk = (folders: HttpFolder[], depth: number) => {
+    for (const f of folders) {
+      out.push({ id: f.id, label: `${"  ".repeat(depth)}${f.name}` });
+      walk(f.folders, depth + 1);
+    }
+  };
+  walk(col.folders, 0);
+  return out;
+}
+
 /** Apply a patch to a folder by id, returning a new CollectionsFile. */
 function updateFolder(
   data: CollectionsFile,
@@ -485,7 +522,6 @@ function requestNameFromUrl(url: string): string {
 export function CurlUiWorkspace({
   connectionId,
   savedId,
-  env,
   treeWidth,
   onTreeWidthChange,
 }: Props) {
@@ -516,6 +552,15 @@ export function CurlUiWorkspace({
   const [collections, setCollections] = useState<CollectionsFile>(
     defaultCollectionsFile(),
   );
+  // All environments + the active selection (`environments.json`). The active
+  // environment's variables are the base `{{VAR}}` map for every request.
+  const [envFile, setEnvFile] = useState<EnvironmentsFile>(
+    defaultEnvironmentsFile(),
+  );
+  // Temporary ("scratch") requests created from the tab-strip `+`. In-memory
+  // only — they survive tab switches but are lost on reload until saved into a
+  // collection. Keyed in `openTabs` as `tmp␟<reqId>`.
+  const [scratch, setScratch] = useState<HttpRequestItem[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [headerRows, setHeaderRows] = useState<KvRow[]>([newKvRow()]);
   const [paramRows, setParamRows] = useState<KvRow[]>([newKvRow()]);
@@ -529,13 +574,27 @@ export function CurlUiWorkspace({
   const [importText, setImportText] = useState("");
   const [importTarget, setImportTarget] = useState<TreeTarget | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteTarget | null>(null);
+  // A pending confirmation to close an unsaved scratch tab (its key + name).
+  const [closeConfirm, setCloseConfirm] = useState<{
+    key: string;
+    name: string;
+  } | null>(null);
   const [namePrompt, setNamePrompt] = useState<NamePrompt | null>(null);
   const [nameDraft, setNameDraft] = useState("");
+  // Save-scratch-to-collection dialog: which scratch request, and the chosen
+  // target collection / folder / name.
+  const [saveDialog, setSaveDialog] = useState<{
+    reqId: string;
+    name: string;
+    collectionId: string;
+    folderId: string;
+  } | null>(null);
   const [copiedCurl, setCopiedCurl] = useState(false);
   const [panelWidth, setPanelWidth] = useState(treeWidth);
   const [editorHeight, setEditorHeight] = useState(220);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const envSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const treeResize = useResizable({
     width: panelWidth,
     min: TREE_MIN,
@@ -552,24 +611,45 @@ export function CurlUiWorkspace({
     axis: "y",
   });
 
+  // The active environment supplies the base `{{VAR}}` map for every request.
+  const activeEnv = useMemo(
+    () => envFile.environments.find((e) => e.id === envFile.activeId) ?? null,
+    [envFile],
+  );
+  const env = activeEnv?.variables ?? {};
+
   // Resolve the active tab (`selectedId`) to its live entity once. Everything
   // downstream branches on `activeTab.kind`; the request-specific aliases below
   // are derived from it so the existing handlers need no changes.
   type ActiveTab =
     | {
         kind: "request";
-        sel: SelectedRequest;
+        sel: SelectedRequest | null;
         request: HttpRequestItem;
         collection: HttpCollection | null;
+        scratch: boolean;
       }
     | { kind: "collection"; collection: HttpCollection }
-    | { kind: "folder"; collectionId: string; folderId: string; folder: HttpFolder };
+    | { kind: "folder"; collectionId: string; folderId: string; folder: HttpFolder }
+    | { kind: "environment"; environment: HttpEnvironment };
   const activeTab = useMemo((): ActiveTab | null => {
     if (!selectedId) return null;
     const colId = collectionIdFromTab(selectedId);
     if (colId) {
       const col = collections.collections.find((c) => c.id === colId);
       return col ? { kind: "collection", collection: col } : null;
+    }
+    const envId = environmentIdFromTab(selectedId);
+    if (envId) {
+      const e = envFile.environments.find((x) => x.id === envId);
+      return e ? { kind: "environment", environment: e } : null;
+    }
+    const tmpId = tmpIdFromTab(selectedId);
+    if (tmpId) {
+      const req = scratch.find((r) => r.id === tmpId);
+      return req
+        ? { kind: "request", sel: null, request: req, collection: null, scratch: true }
+        : null;
     }
     const folRef = folderRefFromTab(selectedId);
     if (folRef) {
@@ -583,24 +663,26 @@ export function CurlUiWorkspace({
     if (!sel || !req) return null;
     const collection =
       collections.collections.find((c) => c.id === sel.collectionId) ?? null;
-    return { kind: "request", sel, request: req, collection };
-  }, [collections, selectedId]);
+    return { kind: "request", sel, request: req, collection, scratch: false };
+  }, [collections, envFile, scratch, selectedId]);
 
   const selected = activeTab?.kind === "request" ? activeTab.sel : null;
   const activeRequest = activeTab?.kind === "request" ? activeTab.request : null;
+  const activeIsScratch = activeTab?.kind === "request" && activeTab.scratch;
   // The collection that owns the active request — used to inherit env/headers/
   // auth when sending or copying as curl.
   const activeRequestCollection =
     activeTab?.kind === "request" ? activeTab.collection : null;
 
-  // Effective env for the active request: connection env overridden by the
-  // owning collection's variables (read-only; shown in the request's Env tab).
+  // Effective env for the active request: active-environment variables
+  // overridden by the owning collection's variables (read-only; shown in the
+  // request's Env tab).
   const effectiveEnv = useMemo(
     () =>
       activeRequestCollection?.env
-        ? { ...env, ...activeRequestCollection.env }
-        : env,
-    [env, activeRequestCollection],
+        ? { ...(activeEnv?.variables ?? {}), ...activeRequestCollection.env }
+        : (activeEnv?.variables ?? {}),
+    [activeEnv, activeRequestCollection],
   );
 
   const response = selectedId ? (responses[selectedId] ?? null) : null;
@@ -609,15 +691,28 @@ export function CurlUiWorkspace({
   // target was deleted. Keeps the rendered strip in sync with the tree.
   const tabs = useMemo(() => {
     type Tab =
-      | { key: string; kind: "request"; name: string; method: string }
+      | { key: string; kind: "request"; name: string; method: string; scratch?: boolean }
       | { key: string; kind: "collection"; name: string }
-      | { key: string; kind: "folder"; name: string };
+      | { key: string; kind: "folder"; name: string }
+      | { key: string; kind: "environment"; name: string };
     return openTabs
       .map((key): Tab | null => {
         const colId = collectionIdFromTab(key);
         if (colId) {
           const col = collections.collections.find((c) => c.id === colId);
           return col ? { key, kind: "collection", name: col.name } : null;
+        }
+        const envId = environmentIdFromTab(key);
+        if (envId) {
+          const e = envFile.environments.find((x) => x.id === envId);
+          return e ? { key, kind: "environment", name: e.name } : null;
+        }
+        const tmpId = tmpIdFromTab(key);
+        if (tmpId) {
+          const req = scratch.find((r) => r.id === tmpId);
+          return req
+            ? { key, kind: "request", name: req.name, method: req.method, scratch: true }
+            : null;
         }
         const folRef = folderRefFromTab(key);
         if (folRef) {
@@ -631,7 +726,7 @@ export function CurlUiWorkspace({
           : null;
       })
       .filter((t): t is Tab => !!t);
-  }, [openTabs, collections]);
+  }, [openTabs, collections, envFile, scratch]);
 
   const persist = useCallback((data: CollectionsFile) => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -653,6 +748,27 @@ export function CurlUiWorkspace({
     [persist],
   );
 
+  const persistEnv = useCallback(
+    (data: EnvironmentsFile) => {
+      if (envSaveTimer.current) clearTimeout(envSaveTimer.current);
+      envSaveTimer.current = setTimeout(() => {
+        saveEnvironments(savedId, data).catch((e) => setError(errString(e)));
+      }, 400);
+    },
+    [savedId],
+  );
+
+  const setEnvAndSave = useCallback(
+    (updater: (prev: EnvironmentsFile) => EnvironmentsFile) => {
+      setEnvFile((prev) => {
+        const next = updater(prev);
+        persistEnv(next);
+        return next;
+      });
+    },
+    [persistEnv],
+  );
+
   useEffect(() => {
     loadCurlFiles(savedId)
       .then((files) => {
@@ -666,6 +782,12 @@ export function CurlUiWorkspace({
       })
       .catch((e) => setError(errString(e)))
       .finally(() => setLoaded(true));
+  }, [savedId]);
+
+  useEffect(() => {
+    loadEnvironments(savedId)
+      .then(setEnvFile)
+      .catch((e) => setError(errString(e)));
   }, [savedId]);
 
   useEffect(() => {
@@ -723,6 +845,48 @@ export function CurlUiWorkspace({
     );
   }
 
+  function selectEnvironment(environmentId: string) {
+    const key = environmentTabKey(environmentId);
+    setOpenTabs((tabs) => (tabs.includes(key) ? tabs : [...tabs, key]));
+    setSelectedId(key);
+    setError(null);
+  }
+
+  function patchEnvironment(
+    environmentId: string,
+    patch: Partial<HttpEnvironment>,
+  ) {
+    setEnvAndSave((data) => ({
+      ...data,
+      environments: data.environments.map((e) =>
+        e.id === environmentId ? { ...e, ...patch } : e,
+      ),
+    }));
+  }
+
+  function addEnvironment(name: string) {
+    const e = newEnvironment(name);
+    // First environment created becomes active automatically.
+    setEnvAndSave((data) => ({
+      ...data,
+      environments: [...data.environments, e],
+      activeId: data.activeId ?? e.id,
+    }));
+    selectEnvironment(e.id);
+  }
+
+  function setActiveEnvironment(environmentId: string | null) {
+    setEnvAndSave((data) => ({ ...data, activeId: environmentId }));
+  }
+
+  function deleteEnvironment(environmentId: string) {
+    setEnvAndSave((data) => ({
+      ...data,
+      environments: data.environments.filter((e) => e.id !== environmentId),
+      activeId: data.activeId === environmentId ? null : data.activeId,
+    }));
+  }
+
   function closeTab(key: string) {
     setOpenTabs((tabs) => {
       const idx = tabs.indexOf(key);
@@ -741,9 +905,34 @@ export function CurlUiWorkspace({
       delete next[key];
       return next;
     });
+    // A scratch request only lives in memory — drop it when its tab closes.
+    const tmpId = tmpIdFromTab(key);
+    if (tmpId) {
+      setScratch((list) => list.filter((r) => r.id !== tmpId));
+    }
+  }
+
+  /** User-initiated close (✕ / middle-click): confirm first for an unsaved
+   *  scratch tab, since closing it discards the request. Other tabs close
+   *  immediately. */
+  function requestCloseTab(key: string) {
+    const tmpId = tmpIdFromTab(key);
+    const req = tmpId ? scratch.find((r) => r.id === tmpId) : null;
+    if (req) {
+      setCloseConfirm({ key, name: req.name });
+    } else {
+      closeTab(key);
+    }
   }
 
   function patchActive(patch: Partial<HttpRequestItem>) {
+    const tmpId = selectedId ? tmpIdFromTab(selectedId) : null;
+    if (tmpId) {
+      setScratch((list) =>
+        list.map((r) => (r.id === tmpId ? { ...r, ...patch } : r)),
+      );
+      return;
+    }
     if (!selected) return;
     setCollectionsAndSave((data) => updateRequest(data, selected, patch));
   }
@@ -767,7 +956,13 @@ export function CurlUiWorkspace({
   }
 
   function openNamePrompt(prompt: NamePrompt) {
-    setNameDraft(prompt.kind === "collection" ? "New collection" : "New folder");
+    setNameDraft(
+      prompt.kind === "collection"
+        ? "New collection"
+        : prompt.kind === "environment"
+          ? "New environment"
+          : "New folder",
+    );
     setNamePrompt(prompt);
   }
 
@@ -776,6 +971,8 @@ export function CurlUiWorkspace({
     if (!namePrompt || !name) return;
     if (namePrompt.kind === "collection") {
       addCollection(name);
+    } else if (namePrompt.kind === "environment") {
+      addEnvironment(name);
     } else {
       addFolder(namePrompt.target, name);
     }
@@ -835,6 +1032,65 @@ export function CurlUiWorkspace({
     selectRequest(target.collectionId, folderId, req.id);
   }
 
+  /** Open a new in-memory scratch request as a tab (not in any collection). */
+  function addScratchRequest() {
+    const req = newRequest("Untitled");
+    const key = tmpTabKey(req.id);
+    setScratch((list) => [...list, req]);
+    setOpenTabs((tabs) => [...tabs, key]);
+    setSelectedId(key);
+    setError(null);
+  }
+
+  /** Open the "save scratch request to a collection" dialog, defaulting the
+   *  target to the first collection and the name to the request's own. */
+  function openSaveDialog(req: HttpRequestItem) {
+    setSaveDialog({
+      reqId: req.id,
+      name: req.name === "Untitled" ? "" : req.name,
+      collectionId: collections.collections[0]?.id ?? "",
+      folderId: "",
+    });
+  }
+
+  /** Move the scratch request into the chosen collection/folder, re-keying its
+   *  open tab from `tmp␟<id>` to the real request key (response preserved). */
+  function confirmSave() {
+    if (!saveDialog) return;
+    const { reqId, collectionId, folderId } = saveDialog;
+    const name = saveDialog.name.trim();
+    if (!collectionId || !name) return;
+    const req = scratch.find((r) => r.id === reqId);
+    if (!req) return;
+
+    const saved = { ...req, name };
+    const target: TreeTarget = folderId
+      ? { kind: "folder", collectionId, folderId }
+      : { kind: "collection", collectionId };
+    setCollectionsAndSave((data) => insertRequest(data, target, saved));
+
+    const oldKey = tmpTabKey(reqId);
+    const newKey = `${collectionId}:${folderId}:${reqId}`;
+    setOpenTabs((tabs) => tabs.map((k) => (k === oldKey ? newKey : k)));
+    setResponses((r) => {
+      if (!(oldKey in r)) return r;
+      const next = { ...r };
+      next[newKey] = next[oldKey];
+      delete next[oldKey];
+      return next;
+    });
+    setSelectedId(newKey);
+    setScratch((list) => list.filter((r) => r.id !== reqId));
+
+    // Reveal the saved request in the tree.
+    setExpanded((e) => ({
+      ...e,
+      [`col:${collectionId}`]: true,
+      ...(folderId ? { [`folder:${folderId}`]: true } : {}),
+    }));
+    setSaveDialog(null);
+  }
+
   async function onSend() {
     if (!activeRequest || !selectedId) return;
     const key = selectedId;
@@ -874,6 +1130,33 @@ export function CurlUiWorkspace({
       setTimeout(() => setCopiedCurl(false), 1500);
     } catch (e) {
       setError(errString(e));
+    }
+  }
+
+  /** When a curl command is pasted into the URL bar, parse it and fill the
+   *  whole request (method/url/headers/body) instead of dropping the raw text
+   *  into the URL field. Plain URLs paste normally (handler returns early). */
+  async function onUrlPaste(e: ReactClipboardEvent<HTMLInputElement>) {
+    const text = e.clipboardData.getData("text");
+    if (!/^\s*curl\b/i.test(text)) return; // not a curl command — paste as-is
+    e.preventDefault();
+    setError(null);
+    loader.show({ scope: "workspace", message: "Parsing curl…" });
+    try {
+      const parsed = await api.httpParseCurl(connectionId, text.trim());
+      patchActive({
+        method: parsed.method,
+        url: parsed.url,
+        headers: parsed.headers,
+        body: parsed.body ?? "",
+        body_kind: (parsed.body_kind as BodyKind) || "none",
+      });
+      setHeaderRows(headersToRows(parsed.headers));
+      setParamRows(splitUrl(parsed.url).params);
+    } catch (err) {
+      setError(errString(err));
+    } finally {
+      loader.hide();
     }
   }
 
@@ -920,6 +1203,9 @@ export function CurlUiWorkspace({
     } else if (target.kind === "folder") {
       deleteFolder(target.collectionId, target.folderId);
       closeTabsReferencing(target.folderId);
+    } else if (target.kind === "environment") {
+      deleteEnvironment(target.environmentId);
+      closeTabsReferencing(target.environmentId);
     } else {
       deleteCollection(target.collectionId);
       closeTabsReferencing(target.collectionId);
@@ -1094,6 +1380,43 @@ export function CurlUiWorkspace({
 
       <div className="curlui-body">
         <aside className="curlui-tree" style={{ width: panelWidth }}>
+          <div className="curlui-env-bar">
+            <span className="curlui-env-bar-icon" title="Environment">
+              🌱
+            </span>
+            <select
+              className="curlui-env-select"
+              value={envFile.activeId ?? ""}
+              onChange={(e) => setActiveEnvironment(e.target.value || null)}
+              title="Active environment"
+            >
+              <option value="">No environment</option>
+              {envFile.environments.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name}
+                </option>
+              ))}
+            </select>
+            {envFile.activeId && (
+              <button
+                type="button"
+                className="curlui-env-edit"
+                title="Edit active environment"
+                onClick={() => selectEnvironment(envFile.activeId!)}
+              >
+                ✎
+              </button>
+            )}
+            <button
+              type="button"
+              className="curlui-env-add"
+              title="New environment"
+              aria-label="New environment"
+              onClick={() => openNamePrompt({ kind: "environment" })}
+            >
+              +
+            </button>
+          </div>
           {!loaded ? (
             <p className="muted">Loading…</p>
           ) : (
@@ -1192,57 +1515,73 @@ export function CurlUiWorkspace({
         <main className="curlui-main">
           {error && <div className="msg error">{error}</div>}
 
-          {tabs.length > 0 && (
-            <div className="curlui-req-tabs" role="tablist">
-              {tabs.map((t) => (
-                <div
-                  key={t.key}
-                  role="tab"
-                  aria-selected={t.key === selectedId}
-                  className={
-                    "curlui-req-tab" + (t.key === selectedId ? " active" : "")
+          <div className="curlui-req-tabs" role="tablist">
+            {tabs.map((t) => (
+              <div
+                key={t.key}
+                role="tab"
+                aria-selected={t.key === selectedId}
+                className={
+                  "curlui-req-tab" + (t.key === selectedId ? " active" : "")
+                }
+                onClick={() => setSelectedId(t.key)}
+                onMouseDown={(e) => {
+                  // Middle-click closes, like a browser tab.
+                  if (e.button === 1) {
+                    e.preventDefault();
+                    requestCloseTab(t.key);
                   }
-                  onClick={() => setSelectedId(t.key)}
-                  onMouseDown={(e) => {
-                    // Middle-click closes, like a browser tab.
-                    if (e.button === 1) {
-                      e.preventDefault();
-                      closeTab(t.key);
-                    }
+                }}
+                title={t.name}
+              >
+                {t.kind === "collection" ? (
+                  <span className="curlui-req-tab-icon">🗂</span>
+                ) : t.kind === "folder" ? (
+                  <span className="curlui-req-tab-icon">📁</span>
+                ) : t.kind === "environment" ? (
+                  <span className="curlui-req-tab-icon">🌱</span>
+                ) : (
+                  <span className={"curlui-req-tab-method m-" + methodColor(t.method)}>
+                    {t.method}
+                  </span>
+                )}
+                <span className="curlui-req-tab-name">{t.name}</span>
+                {t.kind === "request" && t.scratch && (
+                  <span
+                    className="curlui-req-tab-unsaved"
+                    title="Unsaved — Save to add it to a collection"
+                  />
+                )}
+                <button
+                  type="button"
+                  className="curlui-req-tab-close"
+                  title="Close tab"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    requestCloseTab(t.key);
                   }}
-                  title={t.name}
                 >
-                  {t.kind === "collection" ? (
-                    <span className="curlui-req-tab-icon">🗂</span>
-                  ) : t.kind === "folder" ? (
-                    <span className="curlui-req-tab-icon">📁</span>
-                  ) : (
-                    <span className={"curlui-req-tab-method m-" + methodColor(t.method)}>
-                      {t.method}
-                    </span>
-                  )}
-                  <span className="curlui-req-tab-name">{t.name}</span>
-                  <button
-                    type="button"
-                    className="curlui-req-tab-close"
-                    title="Close tab"
-                    tabIndex={-1}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      closeTab(t.key);
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              className="curlui-req-tab-new"
+              title="New request"
+              aria-label="New request"
+              onClick={addScratchRequest}
+            >
+              +
+            </button>
+          </div>
+
 
           {activeTab?.kind === "collection" ? (
             <CollectionEditor
               collection={activeTab.collection}
-              connectionEnv={env}
+              baseEnv={env}
               tab={collectionTab}
               onTabChange={setCollectionTab}
               onPatch={(patch) => patchCollection(activeTab.collection.id, patch)}
@@ -1254,6 +1593,64 @@ export function CurlUiWorkspace({
                 })
               }
             />
+          ) : activeTab?.kind === "environment" ? (
+            <div className="curlui-collection">
+              <div className="curlui-collection-head">
+                <span className="curlui-collection-icon">🌱</span>
+                <input
+                  type="text"
+                  className="curlui-req-name-input"
+                  value={activeTab.environment.name}
+                  onChange={(e) =>
+                    patchEnvironment(activeTab.environment.id, {
+                      name: e.target.value,
+                    })
+                  }
+                />
+                {envFile.activeId === activeTab.environment.id ? (
+                  <span className="curlui-env-active-badge">Active</span>
+                ) : (
+                  <button
+                    type="button"
+                    title="Set as active environment"
+                    onClick={() =>
+                      setActiveEnvironment(activeTab.environment.id)
+                    }
+                  >
+                    Set active
+                  </button>
+                )}
+                <button
+                  type="button"
+                  title="Delete environment"
+                  onClick={() =>
+                    setDeleteConfirm({
+                      kind: "environment",
+                      environmentId: activeTab.environment.id,
+                      name: activeTab.environment.name,
+                    })
+                  }
+                >
+                  Delete
+                </button>
+              </div>
+              <div className="curlui-tab-panel">
+                <p className="muted curlui-collection-hint">
+                  Variables in this environment. Use them as{" "}
+                  <code>{"{{NAME}}"}</code> in any request when this environment
+                  is active.
+                </p>
+                <KvEditor
+                  rows={headersToRows(activeTab.environment.variables)}
+                  onChange={(rows) =>
+                    patchEnvironment(activeTab.environment.id, {
+                      variables: rowsToHeaders(rows),
+                    })
+                  }
+                  keyPlaceholder="Variable"
+                />
+              </div>
+            </div>
           ) : activeTab?.kind === "folder" ? (
             <div className="curlui-collection">
               <div className="curlui-collection-head">
@@ -1307,28 +1704,39 @@ export function CurlUiWorkspace({
                 <input
                   type="text"
                   className="curlui-url-input"
-                  placeholder="https://api.example.com/path or {{HOST}}/path"
+                  placeholder="https://api.example.com/path or {{HOST}}/path or paste curl"
                   value={activeRequest.url}
                   onChange={(e) => {
                     patchActive({ url: e.target.value });
                     setParamRows(splitUrl(e.target.value).params);
                   }}
+                  onPaste={onUrlPaste}
                 />
                 <button type="button" className="primary" onClick={onSend}>
                   Send
                 </button>
-                <button
-                  type="button"
-                  title="Delete request"
-                  onClick={() =>
-                    setDeleteConfirm({
-                      kind: "request",
-                      name: activeRequest.name,
-                    })
-                  }
-                >
-                  Delete
-                </button>
+                {activeIsScratch ? (
+                  <button
+                    type="button"
+                    title="Save to a collection"
+                    onClick={() => openSaveDialog(activeRequest)}
+                  >
+                    Save
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    title="Delete request"
+                    onClick={() =>
+                      setDeleteConfirm({
+                        kind: "request",
+                        name: activeRequest.name,
+                      })
+                    }
+                  >
+                    Delete
+                  </button>
+                )}
                 <button
                   type="button"
                   title="Copy as curl command"
@@ -1406,8 +1814,9 @@ export function CurlUiWorkspace({
                     <div className="curlui-env-tab">
                       {Object.keys(effectiveEnv).length === 0 ? (
                         <p className="muted">
-                          No environment variables. Define them on the connection
-                          or in a collection’s Variables tab, then use them as{" "}
+                          No environment variables. Select or create an
+                          environment, or define variables in a collection’s
+                          Variables tab, then use them as{" "}
                           <code>{"{{NAME}}"}</code>.
                         </p>
                       ) : (
@@ -1482,19 +1891,22 @@ export function CurlUiWorkspace({
                         <option value="text">Text</option>
                         <option value="form">Form</option>
                       </select>
-                      {activeRequest.body_kind !== "none" && (
-                        <textarea
-                          className="curlui-body-input"
-                          value={activeRequest.body ?? ""}
-                          onChange={(e) => patchActive({ body: e.target.value })}
-                          spellCheck={false}
-                          placeholder={
-                            activeRequest.body_kind === "json"
-                              ? '{\n  "key": "value"\n}'
-                              : ""
-                          }
-                        />
-                      )}
+                      {activeRequest.body_kind !== "none" &&
+                        (activeRequest.body_kind === "json" ? (
+                          <JsonEditor
+                            className="curlui-body-input"
+                            value={activeRequest.body ?? ""}
+                            onChange={(body) => patchActive({ body })}
+                            placeholder={'{\n  "key": "value"\n}'}
+                          />
+                        ) : (
+                          <textarea
+                            className="curlui-body-input"
+                            value={activeRequest.body ?? ""}
+                            onChange={(e) => patchActive({ body: e.target.value })}
+                            spellCheck={false}
+                          />
+                        ))}
                     </div>
                   )}
                 </div>
@@ -1564,7 +1976,8 @@ export function CurlUiWorkspace({
             </div>
           ) : (
             <div className="placeholder">
-              Select or create a request from the collections tree.
+              Select a request from the collections tree, or click{" "}
+              <strong>+</strong> above to start a new one.
             </div>
           )}
         </main>
@@ -1607,7 +2020,8 @@ export function CurlUiWorkspace({
         <ConfirmDialog
           title={`Delete ${deleteConfirm.kind}`}
           message={
-            deleteConfirm.kind === "request"
+            deleteConfirm.kind === "request" ||
+            deleteConfirm.kind === "environment"
               ? `Delete “${deleteConfirm.name}”?`
               : `Delete ${deleteConfirm.kind} “${deleteConfirm.name}” and everything inside it?`
           }
@@ -1617,9 +2031,28 @@ export function CurlUiWorkspace({
         />
       )}
 
+      {closeConfirm && (
+        <ConfirmDialog
+          title="Close unsaved request"
+          message={`“${closeConfirm.name || "Untitled"}” hasn’t been saved to a collection. Close and discard it?`}
+          confirmLabel="Discard"
+          onConfirm={() => {
+            closeTab(closeConfirm.key);
+            setCloseConfirm(null);
+          }}
+          onCancel={() => setCloseConfirm(null)}
+        />
+      )}
+
       {namePrompt && (
         <Modal
-          title={namePrompt.kind === "collection" ? "New collection" : "New folder"}
+          title={
+            namePrompt.kind === "collection"
+              ? "New collection"
+              : namePrompt.kind === "environment"
+                ? "New environment"
+                : "New folder"
+          }
           onClose={() => setNamePrompt(null)}
         >
           <input
@@ -1631,7 +2064,11 @@ export function CurlUiWorkspace({
               if (e.key === "Enter") confirmName();
             }}
             placeholder={
-              namePrompt.kind === "collection" ? "Collection name" : "Folder name"
+              namePrompt.kind === "collection"
+                ? "Collection name"
+                : namePrompt.kind === "environment"
+                  ? "Environment name"
+                  : "Folder name"
             }
             autoFocus
           />
@@ -1650,6 +2087,88 @@ export function CurlUiWorkspace({
           </div>
         </Modal>
       )}
+
+      {saveDialog &&
+        (() => {
+          const col = collections.collections.find(
+            (c) => c.id === saveDialog.collectionId,
+          );
+          const folders = col ? flattenFolders(col) : [];
+          return (
+            <Modal
+              title="Save request to collection"
+              onClose={() => setSaveDialog(null)}
+            >
+              <label className="curlui-save-field">
+                <span className="field-label">Name</span>
+                <input
+                  type="text"
+                  className="curlui-name-input"
+                  value={saveDialog.name}
+                  onChange={(e) =>
+                    setSaveDialog((d) => d && { ...d, name: e.target.value })
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") confirmSave();
+                  }}
+                  placeholder="Request name"
+                  autoFocus
+                />
+              </label>
+              <label className="curlui-save-field">
+                <span className="field-label">Collection</span>
+                <select
+                  value={saveDialog.collectionId}
+                  onChange={(e) =>
+                    setSaveDialog(
+                      (d) =>
+                        d && { ...d, collectionId: e.target.value, folderId: "" },
+                    )
+                  }
+                >
+                  {collections.collections.length === 0 && (
+                    <option value="">No collections</option>
+                  )}
+                  {collections.collections.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="curlui-save-field">
+                <span className="field-label">Folder</span>
+                <select
+                  value={saveDialog.folderId}
+                  onChange={(e) =>
+                    setSaveDialog((d) => d && { ...d, folderId: e.target.value })
+                  }
+                  disabled={folders.length === 0}
+                >
+                  <option value="">(collection root)</option>
+                  {folders.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="form-actions">
+                <button type="button" onClick={() => setSaveDialog(null)}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={!saveDialog.collectionId || !saveDialog.name.trim()}
+                  onClick={confirmSave}
+                >
+                  Save
+                </button>
+              </div>
+            </Modal>
+          );
+        })()}
     </div>
   );
 }

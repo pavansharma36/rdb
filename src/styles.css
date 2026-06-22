@@ -639,7 +639,7 @@ select option:hover {
 
 .cell-editor {
   width: 100%;
-  min-height: 320px;
+  min-height: 460px;
   resize: vertical;
   font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   font-size: 13px;
@@ -3078,6 +3078,58 @@ table.grid tr.new-row td {
   min-height: 0;
 }
 
+/* Active-environment switcher pinned to the top of the collections tree. */
+.curlui-env-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.curlui-env-bar-icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.curlui-env-select {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.curlui-env-edit,
+.curlui-env-add {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-2);
+  color: var(--text-muted, var(--text));
+  cursor: pointer;
+  line-height: 1;
+}
+
+.curlui-env-edit:hover,
+.curlui-env-add:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.curlui-env-active-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg, #fff);
+}
+
 .curlui-tree-fab {
   position: sticky;
   bottom: 12px;
@@ -3316,6 +3368,51 @@ select.curlui-method {
 .curlui-req-tab-close:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--err) 30%, transparent);
+}
+
+/* Unsaved marker on a scratch (temporary) request tab. */
+.curlui-req-tab-unsaved {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+/* "+" button at the end of the tab strip that opens a new scratch request. */
+.curlui-req-tab-new {
+  flex-shrink: 0;
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  margin: 0 4px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.curlui-req-tab-new:hover {
+  color: var(--accent);
+  border-color: var(--border);
+  background: var(--panel);
+}
+
+/* Save-to-collection dialog fields. */
+.curlui-save-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.curlui-save-field > select,
+.curlui-save-field > input {
+  width: 100%;
 }
 
 .curlui-request-bar {
@@ -3593,6 +3690,99 @@ select.curlui-method {
   flex: 1;
   min-height: 80px;
   resize: none;
+}
+
+/* JSON editor: the shared CodeEditor (syntax-highlighted overlay) fills the
+   pane, with the Format / Validate actions overlaying its bottom-left so they
+   read as part of the editor surface rather than a separate toolbar. Used for
+   curl request bodies and the rdbms cell editor (the `.cell-editor` class on
+   the inner CodeEditor sets the modal sizing). */
+.curlui-json-editor {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.curlui-json-editor > .code-editor {
+  flex: 1;
+  min-height: 80px;
+  white-space: pre;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* In the rdbms cell-editor modal the wrapper sits in normal block flow (no flex
+   parent to size it), so give it an explicit height. `.cell-editor`'s
+   min-height alone isn't a definite height, so the textarea's height:100%
+   couldn't resolve against it and collapsed to one line. */
+.curlui-json-editor:has(> .cell-editor) {
+  height: 460px;
+}
+
+.curlui-json-editor > .code-editor.cell-editor {
+  height: 100%;
+}
+
+/* Pad the bottom of both overlay layers equally so the last line never hides
+   under the overlaid actions and the highlight stays aligned with the text. */
+.curlui-json-editor > .code-editor .code-editor-highlight,
+.curlui-json-editor > .code-editor .code-editor-input {
+  padding: 8px 10px 30px;
+  overflow: auto;
+}
+
+.curlui-json-toolbar {
+  position: absolute;
+  bottom: 6px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* Let clicks through the gap fall to the editor; children re-enable. */
+  pointer-events: none;
+}
+
+.curlui-json-toolbar > * {
+  pointer-events: auto;
+}
+
+.curlui-json-toolbar button {
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.curlui-json-toolbar button:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.curlui-json-status {
+  font-size: 11px;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  max-width: 380px;
+  max-height: 4.5em;
+  overflow-y: auto;
+  white-space: normal;
+  word-break: break-word;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+}
+
+.curlui-json-status.is-ok {
+  color: var(--ok);
+}
+
+.curlui-json-status.is-err {
+  color: var(--err);
 }
 
 .curlui-response {

@@ -1,4 +1,10 @@
+import { useRef } from "react";
 import { type KvRow, newKvRow } from "../api/curlui.ts";
+
+// Monotonic counter for per-row React keys (see `keysRef` below). Only needs to
+// be unique within a mounted editor and stable across its renders.
+let keyCounter = 0;
+const genKey = () => "kv" + keyCounter++;
 
 /** Editable key/value table shared by params, headers, and form body.
  *  Keeps a trailing blank row so typing into it appends a new one. */
@@ -13,6 +19,18 @@ export function KvEditor({
   keyPlaceholder?: string;
   valuePlaceholder?: string;
 }) {
+  // Stable, generated React key per row *position*. The rows handed in may
+  // carry freshly-generated `r.id`s on every render (some callers rebuild them
+  // from a map via headersToRows), which would remount each <input> and steal
+  // focus mid-edit. Keying by a position-stable generated id instead keeps the
+  // inputs mounted across renders. Extend on growth, trim on shrink.
+  const keysRef = useRef<string[]>([]);
+  while (keysRef.current.length < rows.length) keysRef.current.push(genKey());
+  if (keysRef.current.length > rows.length) {
+    keysRef.current = keysRef.current.slice(0, rows.length);
+  }
+  const keys = keysRef.current;
+
   function patch(id: string, field: "key" | "value" | "enabled", value: unknown) {
     let next = rows.map((r) => (r.id === id ? { ...r, [field]: value } : r));
     const last = next[next.length - 1];
@@ -30,7 +48,7 @@ export function KvEditor({
       {rows.map((r, i) => {
         const isLast = i === rows.length - 1;
         return (
-          <div key={r.id} className="curlui-kv-row">
+          <div key={keys[i]} className="curlui-kv-row">
             <input
               type="checkbox"
               className="curlui-kv-check"
