@@ -42,6 +42,7 @@ pub enum PluginKind {
     Rabbitmq,
     Cli,
     FileManager,
+    Http,
     Other,
 }
 
@@ -84,6 +85,8 @@ pub enum ConfigFieldType {
     /// A file-path field: the UI shows a text input + "Browse…" button that
     /// opens a native file picker. The stored value is the absolute path string.
     FilePath,
+    /// A string-to-string map editor (e.g. HTTP environment variables).
+    KeyValue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

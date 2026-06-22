@@ -2,13 +2,15 @@ import { useMemo } from "react";
 import hljs from "highlight.js/lib/core";
 import sql from "highlight.js/lib/languages/sql";
 import bash from "highlight.js/lib/languages/bash";
+import json from "highlight.js/lib/languages/json";
 
 // Only register the languages the workspace editors actually use, so the bundle
 // stays small (the full highlight.js ships ~190 grammars).
 hljs.registerLanguage("sql", sql);
 hljs.registerLanguage("bash", bash);
+hljs.registerLanguage("json", json);
 
-export type CodeLanguage = "sql" | "bash";
+export type CodeLanguage = "sql" | "bash" | "json";
 
 interface CodeEditorProps {
   value: string;
@@ -21,6 +23,7 @@ interface CodeEditorProps {
   /** Forwarded to the inner <textarea> (CliWorkspace reads its selection). */
   textareaRef?: React.Ref<HTMLTextAreaElement>;
   onKeyDown?: React.KeyboardEventHandler<HTMLTextAreaElement>;
+  autoFocus?: boolean;
 }
 
 /**
@@ -41,6 +44,7 @@ export function CodeEditor({
   spellCheck = false,
   textareaRef,
   onKeyDown,
+  autoFocus,
 }: CodeEditorProps) {
   const html = useMemo(() => {
     // highlight.js escapes its input, so the result is safe to inject. Append a
@@ -73,6 +77,7 @@ export function CodeEditor({
         value={value}
         placeholder={placeholder}
         spellCheck={spellCheck}
+        autoFocus={autoFocus}
         onChange={(e) => onChange(e.target.value)}
         onScroll={syncScroll}
         onKeyDown={onKeyDown}

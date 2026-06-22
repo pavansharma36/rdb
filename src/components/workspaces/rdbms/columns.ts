@@ -31,6 +31,23 @@ export function fmtEditable(v: unknown): string {
   return String(v);
 }
 
+/** Like {@link fmtEditable}, but pretty-prints JSON with 2-space indentation
+ * for the modal editor so it doesn't open as one long line. Accepts an
+ * already-parsed object or a compact JSON string; anything that doesn't parse
+ * as JSON falls back to its plain editable form unchanged. */
+export function fmtEditableJson(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "object") return JSON.stringify(v, null, 2);
+  if (typeof v === "string") {
+    try {
+      return JSON.stringify(JSON.parse(v), null, 2);
+    } catch {
+      return v;
+    }
+  }
+  return String(v);
+}
+
 /** SQL type to CAST a bound value to. Enums report `USER-DEFINED` for
  * `data_type`; their real type name lives in `udt_name`. */
 export function castType(c: Column): string {

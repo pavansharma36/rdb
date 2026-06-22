@@ -4,28 +4,12 @@
 //! any plugin or connection (e.g. whether the first-run plugin install step has
 //! been shown). Mirrors the frontend `AppConfig` (camelCase on the wire).
 
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
-
-/// Per-connection UI preferences, keyed by saved-profile id in
-/// `AppConfig::connection_settings`. Optional fields so older configs and
-/// partially-set entries load cleanly.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct ConnectionSettings {
-    /// Workspace tree-panel width in CSS pixels, set by dragging the tree
-    /// resize handle. `None` until the user resizes (falls back to a default).
-    pub tree_width: Option<u32>,
-    /// Workspace editor-pane height in CSS pixels, set by dragging the editor's
-    /// vertical resize handle (the SQL editor in the RDBMS workspace, the
-    /// script editor in the CLI/SSH workspace). `None` until the user resizes.
-    pub editor_height: Option<u32>,
-}
 
 /// App-wide UI configuration. `#[serde(default)]` means a config written by an
 /// older version (missing newer fields) still loads, falling back to defaults.
@@ -42,8 +26,6 @@ pub struct AppConfig {
     pub sidebar_width: u32,
     /// When true, the sidebar collapses to a narrow rail and expands on hover.
     pub sidebar_collapsible: bool,
-    /// Per-connection UI preferences, keyed by the stable saved-profile id.
-    pub connection_settings: HashMap<String, ConnectionSettings>,
     /// Active UI theme id (matches a `[data-theme]` block in `styles.css` and an
     /// entry in the frontend `THEMES` list). Defaults to the built-in dark theme.
     pub theme: String,
@@ -56,7 +38,6 @@ impl Default for AppConfig {
             plugin_repo: "pavansharma36/rdb".to_string(),
             sidebar_width: 240,
             sidebar_collapsible: false,
-            connection_settings: HashMap::new(),
             theme: "mocha".to_string(),
         }
     }

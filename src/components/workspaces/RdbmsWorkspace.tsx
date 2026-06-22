@@ -19,6 +19,7 @@ import {
   displayType,
   fmt,
   fmtEditable,
+  fmtEditableJson,
   isJsonType,
   isLargeType,
 } from "./rdbms/columns";
@@ -774,8 +775,11 @@ export function RdbmsWorkspace({
     const v = cellValue(ri, ci);
     // Long values get a roomier modal editor (with JSON helpers when relevant).
     if (isLargeType(meta)) {
-      setPopup({ row: ri, col: ci, json: isJsonType(meta) });
-      setPopupDraft(v === null ? "" : fmtEditable(v));
+      const isJson = isJsonType(meta);
+      setPopup({ row: ri, col: ci, json: isJson });
+      setPopupDraft(
+        v === null ? "" : isJson ? fmtEditableJson(v) : fmtEditable(v),
+      );
       setPopupMsg(null);
       return;
     }
@@ -791,30 +795,6 @@ export function RdbmsWorkspace({
     const v = value !== null && popup.json ? normalizeQuotes(value) : value;
     setEdits((prev) => withEdit(prev, popup.row, popup.col, v));
     setPopup(null);
-  }
-
-  /** Check the modal draft parses as JSON, reporting the result inline. */
-  function validateJson() {
-    const fixed = normalizeQuotes(popupDraft);
-    if (fixed !== popupDraft) setPopupDraft(fixed);
-    try {
-      JSON.parse(fixed);
-      setPopupMsg({ kind: "ok", text: "Valid JSON." });
-    } catch (e) {
-      setPopupMsg({ kind: "error", text: errString(e) });
-    }
-  }
-
-  /** Pretty-print the modal draft as JSON (no-op with an error if invalid). */
-  function formatJson() {
-    try {
-      setPopupDraft(
-        JSON.stringify(JSON.parse(normalizeQuotes(popupDraft)), null, 2),
-      );
-      setPopupMsg({ kind: "ok", text: "Formatted." });
-    } catch (e) {
-      setPopupMsg({ kind: "error", text: errString(e) });
-    }
   }
 
   /** Stage the open editor's value and close it. */
@@ -1530,8 +1510,6 @@ export function RdbmsWorkspace({
             setPopupDraft(v);
             setPopupMsg(null);
           }}
-          onValidate={validateJson}
-          onFormat={formatJson}
           onApply={() => savePopup(popupDraft)}
           onSetNull={() => savePopup(null)}
           onCancel={() => setPopup(null)}
