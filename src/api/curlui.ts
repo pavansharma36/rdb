@@ -641,11 +641,16 @@ export function buildSendable(
       break;
   }
 
+  // A body of kind "none" carries no content regardless of any text left in the
+  // editor from a previous kind, so don't send it.
+  const body =
+    req.body_kind === "none" ? "" : interpolate(req.body ?? "", effEnv);
+
   return {
     method: req.method,
     url,
     headers,
-    body: interpolate(req.body ?? "", effEnv),
+    body,
     body_kind: req.body_kind,
   };
 }

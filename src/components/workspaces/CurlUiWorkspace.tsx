@@ -42,7 +42,7 @@ import {
 import { genId } from "../../api/store.ts";
 import { ConfirmDialog, Modal } from "../Modal";
 import { KvEditor } from "../KvEditor";
-import { JsonEditor } from "../JsonEditor";
+import { ContentEditor } from "../ContentEditor";
 import { useLoader } from "../Loader";
 import {
   useResizable,
@@ -57,16 +57,17 @@ type RequestTab = "env" | "params" | "auth" | "headers" | "body";
 type ResponseTab = "body" | "headers" | "curl";
 type CollectionTab = "env" | "headers" | "auth";
 
-/** Pretty-print JSON bodies; leave anything else untouched. */
-function prettyBody(body: string, encoding: string): string {
-  if (encoding === "binary") return body;
-  const trimmed = body.trim();
-  if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) return body;
-  try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2);
-  } catch {
-    return body;
+/** Case-insensitive header lookup (HTTP header names aren't case-sensitive,
+ *  and servers vary the casing they return). */
+function headerValue(
+  headers: Record<string, string>,
+  name: string,
+): string | undefined {
+  const lower = name.toLowerCase();
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === lower) return v;
   }
+  return undefined;
 }
 
 /** Human-readable byte size of a UTF-8 string. */
@@ -557,18 +558,26 @@ export function CurlUiWorkspace({
   const [envFile, setEnvFile] = useState<EnvironmentsFile>(
     defaultEnvironmentsFile(),
   );
-  // Temporary ("scratch") requests created from the tab-strip `+`. In-memory
-  // only — they survive tab switches but are lost on reload until saved into a
-  // collection. Keyed in `openTabs` as `tmp␟<reqId>`.
-  const [scratch, setScratch] = useState<HttpRequestItem[]>([]);
+  // Temporary ("scratch") requests created from the tab-strip `+`. App-state-
+  // backed so they survive connection switches / remounts (session only — lost
+  // on reload until saved into a collection). Keyed in `openTabs` as
+  // `tmp␟<reqId>`.
+  const [scratch, setScratch] = useConnectionState<HttpRequestItem[]>(
+    scope,
+    "scratch",
+    [],
+  );
   const [loaded, setLoaded] = useState(false);
   const [headerRows, setHeaderRows] = useState<KvRow[]>([newKvRow()]);
   const [paramRows, setParamRows] = useState<KvRow[]>([newKvRow()]);
   const [reqTab, setReqTab] = useState<RequestTab>("params");
   const [resTab, setResTab] = useState<ResponseTab>("body");
   // Last response per open tab, keyed by the tab's request key, so switching
-  // tabs keeps each request's result on screen.
-  const [responses, setResponses] = useState<Record<string, HttpResponse>>({});
+  // tabs keeps each request's result on screen. App-state-backed so responses
+  // survive connection switches / remounts.
+  const [responses, setResponses] = useConnectionState<
+    Record<string, HttpResponse>
+  >(scope, "responses", {});
   const [error, setError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
@@ -1893,8 +1902,9 @@ export function CurlUiWorkspace({
                       </select>
                       {activeRequest.body_kind !== "none" &&
                         (activeRequest.body_kind === "json" ? (
-                          <JsonEditor
+                          <ContentEditor
                             className="curlui-body-input"
+                            contentType="application/json"
                             value={activeRequest.body ?? ""}
                             onChange={(body) => patchActive({ body })}
                             placeholder={'{\n  "key": "value"\n}'}
@@ -1956,9 +1966,16 @@ export function CurlUiWorkspace({
                   </div>
                   <div className="curlui-tab-panel">
                     {resTab === "body" && (
-                      <pre className="curlui-response-body">
-                        {prettyBody(response.body, response.body_encoding)}
-                      </pre>
+                      <ContentEditor
+                        readOnly
+                        contentType={
+                          response.body_encoding === "binary"
+                            ? undefined
+                            : headerValue(response.headers, "content-type")
+                        }
+                        value={response.body}
+                        onChange={() => {}}
+                      />
                     )}
                     {resTab === "headers" && (
                       <pre className="curlui-response-headers">

@@ -1683,164 +1683,50 @@ textarea.code {
   line-height: 1.5;
 }
 
-/* ── Syntax-highlighting code editor (CodeEditor.tsx) ──────────────────────
-   A transparent <textarea> overlaid on a highlighted <pre>. Both layers MUST
-   share identical typography and box metrics or the caret drifts from the
-   rendered glyphs. The wrapper also carries one of the legacy editor classes
-   (`code` for SQL, `cli-editor-area` for the CLI script editor) so it inherits
-   each editor's sizing; the variant rules below push the shared metrics down
-   onto the two layers. */
-.code-editor {
+/* ── CodeMirror code editor (CodeEditorV2.tsx) ────────────────────────────
+   The wrapper (`.code-editor-v2`) carries one of the editor variant classes
+   (`code` for SQL, `cli-editor-area` for the CLI script editor, plus the
+   content-editor variants) for sizing; CodeMirror's view (`.cm-editor`) fills
+   it. Token colors come from a CodeMirror HighlightStyle keyed on theme vars
+   (see CodeEditorV2.tsx); the rules here are structural chrome only. */
+.code-editor-v2 {
   position: relative;
+  display: flex;
+  min-height: 0;
   overflow: hidden;
 }
 
-.code-editor-highlight,
-.code-editor-input {
-  margin: 0;
-  border: 0;
-  font: inherit;
+.code-editor-v2 > .cm-editor {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+.code-editor-v2 .cm-scroller {
   font-family: inherit;
-  font-size: inherit;
-  line-height: inherit;
-  letter-spacing: inherit;
-  tab-size: inherit;
-  white-space: inherit;
-  word-wrap: inherit;
-}
-
-/* The highlighted layer is positioned absolutely behind the textarea, which
-   stays in normal flow on top so it can own the native resize grip and drive
-   the container's height. The highlight ignores pointer events. */
-.code-editor-highlight {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: transparent;
-  overflow: hidden;
-}
-
-.code-editor-highlight code {
-  font: inherit;
-  background: transparent;
-  padding: 0;
-}
-
-/* The interactive layer sits on top in normal flow. Its glyphs are rendered
-   transparent (via -webkit-text-fill-color, which WKWebView honors where
-   `color: transparent` does not) so the colored layer beneath shows through;
-   the caret + selection stay visible. Being in flow, its own resize grip works
-   and it sizes the container (the absolute highlight follows via inset:0). */
-.code-editor-input {
-  position: relative;
-  display: block;
-  height: 100%;
-  width: 100%;
-  resize: none;
-  background: transparent;
-  color: var(--text);
-  -webkit-text-fill-color: transparent;
-  caret-color: var(--text);
-  outline: none;
-  overflow: hidden;
-}
-
-.code-editor-input::placeholder {
-  -webkit-text-fill-color: var(--muted);
-  color: var(--muted);
-}
-
-/* SQL editor variant: wraps, fills its (drag-resizable) pane. The pane height is
-   controlled by the `.pane-resizer-y` handle, so the textarea fills it rather
-   than carrying its own native resize grip. */
-.code-editor.code {
-  width: 100%;
-  height: 100%;
   line-height: 1.5;
-  white-space: pre-wrap;
-  word-wrap: break-word;
+}
+
+.code-editor-v2 .cm-content {
+  font-family: inherit;
+}
+
+/* SQL editor variant: fills its (drag-resizable) pane, soft-wraps long lines
+   (the editor passes `lineWrapping`). */
+.code-editor-v2.code {
+  width: 100%;
+  height: 100%;
   background: var(--bg-2);
   border: 1px solid var(--border);
   border-radius: 6px;
 }
 
-.code-editor.code .code-editor-input {
-  min-height: 0;
-  height: 100%;
-  resize: none;
-}
-
-.code-editor.code .code-editor-highlight,
-.code-editor.code .code-editor-input {
-  padding: 8px 10px;
-}
-
-/* CLI script editor variant: fills the pane, no-wrap with horizontal scroll. */
-.code-editor.cli-editor-area {
+/* CLI script editor variant: fills the pane; no wrap, horizontal scroll. */
+.code-editor-v2.cli-editor-area {
   flex: 1;
   min-height: 0;
-  white-space: pre;
-}
-
-.code-editor.cli-editor-area .code-editor-highlight {
-  overflow: auto;
-}
-
-.code-editor.cli-editor-area .code-editor-input {
-  overflow: auto;
-}
-
-.code-editor.cli-editor-area .code-editor-highlight,
-.code-editor.cli-editor-area .code-editor-input {
-  padding: 8px 10px;
-}
-
-/* highlight.js token palette mapped onto the app theme vars, so highlighting
-   follows the active [data-theme] (vs shipping a fixed hljs stylesheet). */
-.hljs {
-  color: var(--text);
-  background: transparent;
-}
-.hljs-comment,
-.hljs-quote {
-  color: var(--muted);
-  font-style: italic;
-}
-.hljs-keyword,
-.hljs-selector-tag,
-.hljs-built_in,
-.hljs-meta {
-  color: var(--accent);
-}
-.hljs-string,
-.hljs-regexp,
-.hljs-symbol {
-  color: var(--ok);
-}
-.hljs-number,
-.hljs-literal {
-  color: var(--warn);
-}
-.hljs-variable,
-.hljs-template-variable,
-.hljs-attr,
-.hljs-attribute {
-  color: var(--accent-2);
-}
-.hljs-title,
-.hljs-name,
-.hljs-section,
-.hljs-type {
-  color: var(--accent-2);
-}
-.hljs-deletion {
-  color: var(--err);
-}
-.hljs-emphasis {
-  font-style: italic;
-}
-.hljs-strong {
-  font-weight: bold;
 }
 
 .status-line {
@@ -3692,48 +3578,43 @@ select.curlui-method {
   resize: none;
 }
 
-/* JSON editor: the shared CodeEditor (syntax-highlighted overlay) fills the
-   pane, with the Format / Validate actions overlaying its bottom-left so they
-   read as part of the editor surface rather than a separate toolbar. Used for
-   curl request bodies and the rdbms cell editor (the `.cell-editor` class on
-   the inner CodeEditor sets the modal sizing). */
-.curlui-json-editor {
+/* Content editor: the shared CodeEditorV2 (CodeMirror) fills the pane, with the
+   Format / Validate actions overlaying its bottom-left so they read as part of
+   the editor surface rather than a separate toolbar. Used for curl request
+   bodies and the rdbms cell editor (the `.cell-editor` class forwarded to the
+   inner editor sets the modal sizing). */
+.content-editor {
   position: relative;
   flex: 1;
   display: flex;
   min-height: 0;
 }
 
-.curlui-json-editor > .code-editor {
+.content-editor > .code-editor-v2 {
   flex: 1;
   min-height: 80px;
-  white-space: pre;
   background: var(--bg-2);
   border: 1px solid var(--border);
   border-radius: 6px;
 }
 
 /* In the rdbms cell-editor modal the wrapper sits in normal block flow (no flex
-   parent to size it), so give it an explicit height. `.cell-editor`'s
-   min-height alone isn't a definite height, so the textarea's height:100%
-   couldn't resolve against it and collapsed to one line. */
-.curlui-json-editor:has(> .cell-editor) {
+   parent to size it), so give it an explicit height. */
+.content-editor:has(> .cell-editor) {
   height: 460px;
 }
 
-.curlui-json-editor > .code-editor.cell-editor {
+.content-editor > .code-editor-v2.cell-editor {
   height: 100%;
 }
 
-/* Pad the bottom of both overlay layers equally so the last line never hides
-   under the overlaid actions and the highlight stays aligned with the text. */
-.curlui-json-editor > .code-editor .code-editor-highlight,
-.curlui-json-editor > .code-editor .code-editor-input {
-  padding: 8px 10px 30px;
-  overflow: auto;
+/* Leave room below the last line for the overlaid Format/Validate actions so
+   they don't cover content (read-only mode has no toolbar, so skip it). */
+.content-editor:not(.is-readonly) > .code-editor-v2 .cm-content {
+  padding-bottom: 26px;
 }
 
-.curlui-json-toolbar {
+.content-editor-toolbar {
   position: absolute;
   bottom: 6px;
   left: 12px;
@@ -3744,11 +3625,11 @@ select.curlui-method {
   pointer-events: none;
 }
 
-.curlui-json-toolbar > * {
+.content-editor-toolbar > * {
   pointer-events: auto;
 }
 
-.curlui-json-toolbar button {
+.content-editor-toolbar button {
   padding: 2px 8px;
   font-size: 11px;
   line-height: 1.6;
@@ -3759,12 +3640,12 @@ select.curlui-method {
   cursor: pointer;
 }
 
-.curlui-json-toolbar button:hover {
+.content-editor-toolbar button:hover {
   color: var(--text);
   border-color: var(--accent);
 }
 
-.curlui-json-status {
+.content-editor-status {
   font-size: 11px;
   font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   max-width: 380px;
@@ -3777,11 +3658,11 @@ select.curlui-method {
   background: color-mix(in srgb, var(--bg) 92%, transparent);
 }
 
-.curlui-json-status.is-ok {
+.content-editor-status.is-ok {
   color: var(--ok);
 }
 
-.curlui-json-status.is-err {
+.content-editor-status.is-err {
   color: var(--err);
 }
 
@@ -3822,7 +3703,6 @@ select.curlui-method {
 }
 
 .curlui-response-headers,
-.curlui-response-body,
 .curlui-curl {
   margin: 0;
   padding: 10px;
@@ -3834,5 +3714,24 @@ select.curlui-method {
   white-space: pre-wrap;
   word-break: break-word;
   overflow: auto;
+}
+
+/* Response body is rendered by a read-only ContentEditor. It fills the tab
+   panel whether it lands as the highlighted code surface (json/xml/html) or a
+   bare textarea (text/plain or binary) — both wrapped in .content-editor. */
+.curlui-tab-panel > .content-editor {
+  height: 100%;
+}
+
+/* The text/plain (or binary) response textarea: monospace box, no resize.
+   Sizing/fill comes from `.content-editor > textarea`. */
+.curlui-tab-panel > .content-editor > textarea {
+  padding: 10px;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  resize: none;
 }
 
