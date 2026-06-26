@@ -11,7 +11,7 @@ import { useLoader, WorkspaceLoaderSlot } from "./components/Loader";
 import { clearConnectionState } from "./connectionState";
 import { checkForUpdate, type UpdateInfo } from "./api/updater.ts";
 import { RdbmsWorkspace } from "./components/workspaces/RdbmsWorkspace";
-import { DocumentWorkspace } from "./components/workspaces/DocumentWorkspace";
+import { MongodbWorkspace } from "./components/workspaces/MongodbWorkspace";
 import { RabbitMqWorkspace } from "./components/workspaces/RabbitMqWorkspace";
 import { CliWorkspace } from "./components/workspaces/CliWorkspace";
 import { FileManagerWorkspace } from "./components/workspaces/FileManagerWorkspace";
@@ -311,16 +311,21 @@ export function App() {
           />
         );
       }
-      case "document":
+      case "document": {
+        // The configured default DB seeds the workspace's database picker.
+        const cfg = saved.find((s) => s.id === conn.savedId)?.config;
+        const db = cfg?.database;
         return (
-          <DocumentWorkspace
+          <MongodbWorkspace
             key={conn.id}
             connectionId={conn.id}
             savedId={conn.savedId}
+            database={typeof db === "string" && db ? db : null}
             treeWidth={treeWidthFor(conn.savedId, TREE_DEFAULT)}
             onTreeWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
           />
         );
+      }
       case "rabbitmq":
         return (
           <RabbitMqWorkspace
@@ -365,6 +370,9 @@ export function App() {
             savedId={conn.savedId}
             treeWidth={treeWidthFor(conn.savedId, TREE_DEFAULT)}
             onTreeWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
+            pluginVersion={
+              plugins.find((p) => p.id === conn.pluginId)?.version ?? ""
+            }
           />
         );
       }

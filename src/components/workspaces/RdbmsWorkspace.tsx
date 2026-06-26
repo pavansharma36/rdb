@@ -24,14 +24,14 @@ import {
   isLargeType,
 } from "./rdbms/columns";
 import { CellEditorModal } from "./rdbms/CellEditorModal";
-import { CodeEditor } from "../CodeEditor";
+import { CodeEditorV2, type CodeEditorV2Handle } from "../CodeEditorV2.tsx";
 import {
   FilterPopover,
   FunnelIcon,
   type FilterRow,
   opNeedsValue,
 } from "./rdbms/FilterPopover";
-import { SchemaTree } from "./rdbms/SchemaTree";
+import { NavTree } from "./NavTree";
 import { WorkspaceFileList } from "./WorkspaceFileList";
 import { StructureTable } from "./rdbms/StructureTable";
 import {
@@ -248,6 +248,22 @@ export function RdbmsWorkspace({
   // Set when a blur should be ignored because the edit was already staged or
   // cancelled by a keystroke.
   const editHandled = useRef(false);
+
+  // Imperative handle on the SQL editor, for run-selection / run-statement.
+  const sqlEditorRef = useRef<CodeEditorV2Handle>(null);
+
+  /** ⌘/Ctrl+Enter: run the selection if any, else the statement the cursor is
+   *  in. */
+  function runFromEditor() {
+    if (busy || saving) return;
+    const ed = sqlEditorRef.current;
+    if (!ed) return;
+    const sel = ed.getSelection();
+    const stmt = sel.trim()
+      ? sel
+      : statementAtCursor(ed.getValue(), ed.getCursorOffset());
+    if (stmt.trim()) void runManual(stmt);
+  }
 
   // The result the grid/footer/editing currently act on (the selected tab).
   const result = results[activeResult] ?? null;
@@ -982,13 +998,22 @@ export function RdbmsWorkspace({
           </div>
         </div>
         </div>
-        <SchemaTree
-          schemas={schemas}
-          tables={tables}
-          openSchema={openSchema}
-          activeTable={activeTable}
-          onToggleSchema={toggleSchema}
-          onPickTable={pickTable}
+        <NavTree
+          groups={schemas.map((s) => s.name)}
+          items={Object.fromEntries(
+            Object.entries(tables).map(([schema, ts]) => [
+              schema,
+              ts.map((t) => ({
+                name: t.name,
+                badge: t.kind !== "table" ? t.kind : null,
+              })),
+            ]),
+          )}
+          openGroup={openSchema}
+          activeKey={activeTable}
+          onToggleGroup={toggleSchema}
+          onPickItem={pickTable}
+          emptyText="No schemas."
         />
       </div>
       <div
@@ -1009,26 +1034,14 @@ export function RdbmsWorkspace({
         )}
         {activeFile && (
           <div className="editor-code-pane" style={{ height: editHeight }}>
-            <CodeEditor
+            <CodeEditorV2
+              handleRef={sqlEditorRef}
               className="code"
               language="sql"
               value={sql}
-              spellCheck={false}
               onChange={setSql}
-              onKeyDown={(e) => {
-                // ⌘/Ctrl+Enter runs the selection if any, else the statement the
-                // cursor is in.
-                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                  e.preventDefault();
-                  if (busy || saving) return;
-                  const ta = e.currentTarget;
-                  const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
-                  const stmt = sel.trim()
-                    ? sel
-                    : statementAtCursor(ta.value, ta.selectionStart);
-                  if (stmt.trim()) void runManual(stmt);
-                }
-              }}
+              lineWrapping
+              keybindings={[{ key: "Mod-Enter", run: runFromEditor }]}
             />
           </div>
         )}

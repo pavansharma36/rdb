@@ -1,6 +1,5 @@
-import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Modal } from "../../Modal";
-import { JsonEditor } from "../../JsonEditor";
+import { ContentEditor } from "../../ContentEditor";
 
 interface CellEditorModalProps {
   columnName: string;
@@ -15,9 +14,9 @@ interface CellEditorModalProps {
 }
 
 /** Modal editor for large cell values (text/json/xml), opened on double-click.
- * JSON columns get the syntax-highlighting {@link JsonEditor} (its own
- * Validate/Format actions, quote-normalizing); other types use a plain
- * textarea. ⌘/Ctrl+Enter applies, Esc cancels. */
+ * JSON columns get the syntax-highlighting {@link ContentEditor} (its own
+ * Validate/Format actions, quote-normalizing); other types fall through to its
+ * plain-text mode. ⌘/Ctrl+Enter applies, Esc cancels. */
 export function CellEditorModal({
   columnName,
   json,
@@ -29,15 +28,10 @@ export function CellEditorModal({
   onCancel,
 }: CellEditorModalProps) {
   // Esc cancels, ⌘/Ctrl+Enter applies — shared by both editor variants.
-  function onKeyDown(e: ReactKeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      onCancel();
-    } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      onApply();
-    }
-  }
+  const keybindings = [
+    { key: "Escape", run: onCancel },
+    { key: "Mod-Enter", run: onApply },
+  ];
 
   return (
     <Modal
@@ -50,26 +44,14 @@ export function CellEditorModal({
         </>
       }
     >
-      {json ? (
-        <JsonEditor
-          className="cell-editor"
-          autoFocus
-          value={draft}
-          onChange={onDraftChange}
-          onKeyDown={onKeyDown}
-        />
-      ) : (
-        <textarea
-          className="cell-editor"
-          autoFocus
-          spellCheck={false}
-          autoCorrect="off"
-          autoCapitalize="off"
-          value={draft}
-          onChange={(e) => onDraftChange(e.target.value)}
-          onKeyDown={onKeyDown}
-        />
-      )}
+      <ContentEditor
+        className="cell-editor"
+        autoFocus
+        contentType={json ? "application/json" : "text/plain"}
+        value={draft}
+        onChange={onDraftChange}
+        keybindings={keybindings}
+      />
       {message && <div className={"msg " + message.kind}>{message.text}</div>}
       <div className="form-actions cell-editor-actions">
         <span className="spacer" />

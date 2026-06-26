@@ -15,4 +15,4 @@ tracing.workspace = true
 anyhow.workspace = true
 base64 = "0.22"
 percent-encoding = "2"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "multipart"] }

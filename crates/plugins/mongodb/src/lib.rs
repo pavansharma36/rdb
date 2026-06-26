@@ -292,7 +292,18 @@ impl MongoPlugin {
             Some(s) if !s.trim().is_empty() => {
                 let v: serde_json::Value = serde_json::from_str(s)
                     .map_err(|e| PluginError::Config(format!("invalid filter: {e}")))?;
-                bson::serialize_to_document(&v).map_err(|e| PluginError::Config(e.to_string()))?
+                // Interpret MongoDB extended JSON (`{"$oid":...}`, `{"$date":...}`,
+                // …) so `_id`/typed filters become real BSON, not literal `$`-keyed
+                // sub-documents. bson's `TryFrom` handles relaxed and canonical.
+                match v {
+                    serde_json::Value::Object(map) => bson::Document::try_from(map)
+                        .map_err(|e| PluginError::Config(format!("invalid filter: {e}")))?,
+                    _ => {
+                        return Err(PluginError::Config(
+                            "filter must be a JSON object".into(),
+                        ))
+                    }
+                }
             }
             _ => doc! {},
         };

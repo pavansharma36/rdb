@@ -15,4 +15,4 @@ tracing.workspace = true
 anyhow.workspace = true
 mongodb = { version = "3", default-features = false, features = ["rustls-tls", "bson-3", "compat-3-3-0"] }
 futures-util = "0.3"
-bson = { version = "3", features = ["serde"] }
+bson = { version = "3", features = ["serde", "serde_json-1"] }

@@ -12,7 +12,7 @@ import {
   type WorkspaceFile,
 } from "../../api/store.ts";
 import { WorkspaceFileList } from "./WorkspaceFileList";
-import { CodeEditor } from "../CodeEditor";
+import { CodeEditorV2, type CodeEditorV2Handle } from "../CodeEditorV2.tsx";
 import { ConfirmDialog } from "../Modal";
 import { useResizable, TREE_MIN, TREE_MAX, EDITOR_MIN, EDITOR_MAX } from "../../useResizable";
 import { ConnScope, useConnectionState } from "../../connectionState";
@@ -182,7 +182,7 @@ export function CliWorkspace({
   editorHeight,
   onEditorHeightChange,
 }: Props) {
-  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<CodeEditorV2Handle>(null);
   // Scripts list width (px); restored from per-connection config, resizable.
   const [width, setWidth] = useState(scriptsWidth);
   const scriptsResize = useResizable({
@@ -359,23 +359,13 @@ export function CliWorkspace({
 
   /** The current selection in the editor, or null if nothing is selected. */
   function selectedText(): string | null {
-    const ta = editorRef.current;
-    if (!ta) return null;
-    const { selectionStart, selectionEnd } = ta;
-    if (selectionStart === selectionEnd) return null;
-    return ta.value.slice(selectionStart, selectionEnd);
+    const sel = editorRef.current?.getSelection() ?? "";
+    return sel === "" ? null : sel;
   }
 
   /** The full line the cursor sits on (newlines stripped at the boundaries). */
   function cursorLine(): string {
-    const ta = editorRef.current;
-    if (!ta) return "";
-    const v = ta.value;
-    const pos = ta.selectionStart;
-    const start = v.lastIndexOf("\n", pos - 1) + 1;
-    const endNl = v.indexOf("\n", pos);
-    const end = endNl === -1 ? v.length : endNl;
-    return v.slice(start, end);
+    return editorRef.current?.getCursorLine() ?? "";
   }
 
   /** Run button: run the selection if any, else the whole script. */
@@ -449,20 +439,14 @@ export function CliWorkspace({
               )}
             </div>
           </div>
-          <CodeEditor
-            textareaRef={editorRef}
+          <CodeEditorV2
+            handleRef={editorRef}
             className="cli-editor-area"
             language="bash"
             value={script}
             placeholder="# Write a shell script, then Run to pipe it into the SSH session…"
-            spellCheck={false}
             onChange={setScript}
-            onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                e.preventDefault();
-                runSelectionOrLine();
-              }
-            }}
+            keybindings={[{ key: "Mod-Enter", run: runSelectionOrLine }]}
           />
         </div>
       </div>
