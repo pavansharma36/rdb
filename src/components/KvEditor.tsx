@@ -7,17 +7,28 @@ let keyCounter = 0;
 const genKey = () => "kv" + keyCounter++;
 
 /** Editable key/value table shared by params, headers, and form body.
- *  Keeps a trailing blank row so typing into it appends a new one. */
+ *  Keeps a trailing blank row so typing into it appends a new one.
+ *
+ *  In `disabled` mode the table is read-only: rows render greyed and locked
+ *  (no editing, toggling, or deleting, and no trailing blank is appended). This
+ *  is used to display the auto-generated headers — a row with `enabled: false`
+ *  is shown struck-through to signal it's been overridden. */
 export function KvEditor({
   rows,
   onChange,
   keyPlaceholder = "Key",
   valuePlaceholder = "Value",
+  disabled = false,
+  disabledTitle = "Added automatically — add a header with the same name to override",
+  overriddenTitle = "Overridden by a header you added below",
 }: {
   rows: KvRow[];
   onChange: (rows: KvRow[]) => void;
   keyPlaceholder?: string;
   valuePlaceholder?: string;
+  disabled?: boolean;
+  disabledTitle?: string;
+  overriddenTitle?: string;
 }) {
   // Stable, generated React key per row *position*. The rows handed in may
   // carry freshly-generated `r.id`s on every render (some callers rebuild them
@@ -32,6 +43,7 @@ export function KvEditor({
   const keys = keysRef.current;
 
   function patch(id: string, field: "key" | "value" | "enabled", value: unknown) {
+    if (disabled) return;
     let next = rows.map((r) => (r.id === id ? { ...r, [field]: value } : r));
     const last = next[next.length - 1];
     if (last && (last.key.trim() || last.value.trim())) {
@@ -40,6 +52,7 @@ export function KvEditor({
     onChange(next);
   }
   function remove(id: string) {
+    if (disabled) return;
     const next = rows.filter((r) => r.id !== id);
     onChange(next.length ? next : [newKvRow()]);
   }
@@ -47,13 +60,31 @@ export function KvEditor({
     <div className="curlui-kv">
       {rows.map((r, i) => {
         const isLast = i === rows.length - 1;
+        // In disabled mode an unchecked row is one that's been overridden.
+        const overridden = disabled && !r.enabled;
         return (
-          <div key={keys[i]} className="curlui-kv-row">
+          <div
+            key={keys[i]}
+            className={
+              "curlui-kv-row" +
+              (disabled ? " curlui-kv-locked" : "") +
+              (overridden ? " curlui-kv-overridden" : "")
+            }
+            title={
+              overridden
+                ? overriddenTitle || undefined
+                : disabled
+                  ? disabledTitle || undefined
+                  : undefined
+            }
+          >
             <input
               type="checkbox"
               className="curlui-kv-check"
               checked={r.enabled}
-              disabled={isLast && !r.key.trim() && !r.value.trim()}
+              disabled={
+                disabled || (isLast && !r.key.trim() && !r.value.trim())
+              }
               onChange={(e) => patch(r.id, "enabled", e.target.checked)}
             />
             <input
@@ -61,6 +92,7 @@ export function KvEditor({
               className="curlui-kv-key"
               placeholder={keyPlaceholder}
               value={r.key}
+              readOnly={disabled}
               onChange={(e) => patch(r.id, "key", e.target.value)}
             />
             <input
@@ -68,6 +100,7 @@ export function KvEditor({
               className="curlui-kv-value"
               placeholder={valuePlaceholder}
               value={r.value}
+              readOnly={disabled}
               onChange={(e) => patch(r.id, "value", e.target.value)}
             />
             <button
@@ -76,7 +109,9 @@ export function KvEditor({
               title="Remove"
               tabIndex={-1}
               onClick={() => remove(r.id)}
-              style={{ visibility: isLast ? "hidden" : "visible" }}
+              style={{
+                visibility: disabled || isLast ? "hidden" : "visible",
+              }}
             >
               ✕
             </button>

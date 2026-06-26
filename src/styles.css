@@ -1745,6 +1745,21 @@ textarea.code {
   border-radius: 6px;
 }
 
+/* MongoDB results: one read-only CodeEditorV2 per document. Each sizes to its
+   own content (height auto, block layout) so the documents stack down the
+   scroll list rather than each filling the pane. */
+.code-editor-v2.doc-card {
+  display: block;
+  margin: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-2);
+}
+
+.code-editor-v2.doc-card > .cm-editor {
+  height: auto;
+}
+
 /* Per-statement result tabs (multi-statement scripts). */
 .result-tabs {
   display: flex;
@@ -2071,21 +2086,6 @@ table.grid tr.new-row td {
 .grid-footer-table {
   font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   color: var(--text);
-}
-
-.doc-card {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  margin: 8px;
-  padding: 10px;
-  background: var(--bg-2);
-}
-
-.doc-card pre {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12px;
 }
 
 .row {
@@ -3447,6 +3447,59 @@ select.curlui-method {
 
 .curlui-kv-del:hover {
   color: var(--err);
+}
+
+/* Multipart/form-data field table (extends .curlui-kv). */
+.curlui-mp-kind {
+  flex: 0 0 84px;
+  font-size: 12px;
+}
+
+.curlui-mp-file {
+  flex: 1;
+  min-width: 120px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.curlui-mp-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Read-only (auto-generated) header rows. */
+.curlui-kv-locked .curlui-kv-key,
+.curlui-kv-locked .curlui-kv-value {
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+  cursor: default;
+}
+
+.curlui-kv-locked .curlui-kv-check {
+  cursor: default;
+}
+
+.curlui-kv-overridden .curlui-kv-key,
+.curlui-kv-overridden .curlui-kv-value {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.curlui-auto-headers-label {
+  margin-top: 10px;
+  margin-bottom: 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
 }
 
 .curlui-body-editor {

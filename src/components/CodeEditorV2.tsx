@@ -8,15 +8,19 @@ import {
 import { indentWithTab } from "@codemirror/commands";
 import {
   StreamLanguage,
+  HighlightStyle,
+  syntaxHighlighting,
+  defaultHighlightStyle,
 } from "@codemirror/language";
 import { basicSetup } from "codemirror";
 import { sql } from "@codemirror/lang-sql";
 import { json } from "@codemirror/lang-json";
+import { javascript } from "@codemirror/lang-javascript";
 import { html } from "@codemirror/lang-html";
 import { xml } from "@codemirror/lang-xml";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 
-export type CodeLanguage = "sql" | "bash" | "json" | "xml" | "html";
+export type CodeLanguage = "sql" | "bash" | "json" | "javascript" | "xml" | "html";
 
 /** A keybinding the host layers on top of the editor's own. The `key` is a
  *  CodeMirror key name (e.g. "Mod-Enter", "Escape"); `run` is invoked when it
@@ -129,6 +133,41 @@ const baseTheme = EditorView.theme(
   { dark: true },
 );
 
+/** Syntax colors that track the app's theme CSS variables, so highlighting stays
+ *  legible on every (dark) theme instead of CodeMirror's light-tuned
+ *  `defaultHighlightStyle` — whose dark token colors render near-invisible on our
+ *  dark editor background (e.g. `false`, object keys).
+ *
+ *  Rather than author a fresh tag→color list (which would require the `tags`
+ *  object, only shipped by `@lezer/highlight`), we reuse `defaultHighlightStyle`'s
+ *  own specs — they already carry the `Tag` objects — and just remap each spec's
+ *  hard-coded light color onto a theme variable. This keeps the proper tag-based
+ *  API with no direct `@lezer/highlight` dependency. */
+const TOKEN_COLORS: Record<string, string> = {
+  "#404740": "var(--muted)", // meta
+  "#708": "var(--accent)", // keyword
+  "#219": "var(--warn)", // atom, bool, labelName  (was invisible)
+  "#164": "var(--accent-2)", // literal / number
+  "#a11": "var(--ok)", // string
+  "#e40": "var(--ok)", // regexp / escape / special string
+  "#00f": "var(--text)", // definition(variableName)
+  "#30a": "var(--text)", // local(variableName)
+  "#085": "var(--warn)", // typeName / namespace
+  "#167": "var(--warn)", // className
+  "#256": "var(--accent-2)", // special(variableName) / macroName
+  "#00c": "var(--text)", // definition(propertyName)  (was invisible)
+  "#940": "var(--muted)", // comment
+  "#f00": "var(--err)", // invalid
+};
+
+const highlightStyle = HighlightStyle.define(
+  // Specs with no color (link/heading/emphasis/strong/strikethrough) pass
+  // through unchanged; an unmapped color falls back to itself.
+  defaultHighlightStyle.specs.map((spec) =>
+    spec.color ? { ...spec, color: TOKEN_COLORS[spec.color] ?? spec.color } : spec,
+  ),
+);
+
 /** The grammar extension for a language (empty for plain text). */
 function languageExtension(language?: CodeLanguage) {
   switch (language) {
@@ -136,6 +175,8 @@ function languageExtension(language?: CodeLanguage) {
       return sql();
     case "json":
       return json();
+    case "javascript":
+      return javascript();
     case "html":
       return html();
     case "xml":
@@ -219,7 +260,7 @@ export function CodeEditorV2({
         ]),
         placeholderComp.current.of(placeholder ? placeholderExt(placeholder) : []),
         lineWrapping ? EditorView.lineWrapping : [],
-        // syntaxHighlighting(highlightStyle),
+        Prec.highest(syntaxHighlighting(highlightStyle)),
         baseTheme,
         EditorView.updateListener.of((u) => {
           if (u.docChanged) onChangeRef.current?.(u.state.doc.toString());

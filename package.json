@@ -19,6 +19,7 @@
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.10.4",
     "@codemirror/lang-html": "^6.4.11",
+    "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/lang-xml": "^6.1.0",
@@ -34,7 +35,9 @@
     "@tauri-apps/plugin-updater": "^2.10.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "bson": "^6.10.4",
     "codemirror": "^6.0.2",
+    "mongodb-query-parser": "^4.7.13",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },

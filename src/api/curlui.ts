@@ -9,7 +9,21 @@ import {
 
 // --- HTTP Client (curlui) ---------------------------------------------------
 
-export type BodyKind = "none" | "json" | "text" | "form";
+export type BodyKind = "none" | "json" | "text" | "form" | "multipart";
+
+/** One field of a `multipart/form-data` body. A `file` part carries a local
+ *  file path in `value`; the (local sidecar) plugin reads the bytes at send
+ *  time, so file contents never cross the host pipe. */
+export interface MultipartPart {
+  name: string;
+  kind: "text" | "file";
+  /** Text value for a `text` part, or the local file path for a `file` part. */
+  value: string;
+  /** Optional filename override for a `file` part (defaults to the basename). */
+  filename?: string | null;
+  /** Optional explicit Content-Type for the part. */
+  content_type?: string | null;
+}
 
 export interface HttpRequest {
   method: string;
@@ -17,6 +31,8 @@ export interface HttpRequest {
   headers: Record<string, string>;
   body?: string | null;
   body_kind: BodyKind;
+  /** Multipart fields, used only when `body_kind === "multipart"`. */
+  parts?: MultipartPart[];
 }
 
 export interface HttpResponse {
@@ -44,6 +60,8 @@ export interface HttpRequestItem {
   headers: Record<string, string>;
   body?: string | null;
   body_kind: BodyKind;
+  /** Multipart fields, used only when `body_kind === "multipart"`. */
+  parts?: MultipartPart[];
   auth?: Auth;
   /** Whether to merge the parent collection's headers (default true when
    *  unset). When false, only the request's own headers are sent. */
@@ -473,6 +491,34 @@ export function newKvRow(key = "", value = "", enabled = true): KvRow {
   return { id: genId(), enabled, key, value };
 }
 
+/** The User-Agent rdb sends, embedding the running plugin's version (which is
+ *  the plugin's `CARGO_PKG_VERSION`, so it matches the backend client default). */
+export function userAgent(version: string): string {
+  return `rdb/${version || "0"} Http-Client (plugin)`;
+}
+
+/** Headers rdb adds to every request automatically (Postman-style). They are
+ *  shown read-only in the Headers tab and sent unless the user (or the owning
+ *  collection) sets a header with the same name, which overrides them. */
+export function autoHeaders(version: string): Record<string, string> {
+  return { "User-Agent": userAgent(version) };
+}
+
+/** Read-only display rows for {@link autoHeaders}. Any auto header whose name
+ *  the caller's own (enabled) header keys override — case-insensitively — is
+ *  marked `enabled: false` so the UI can show it as inactive/struck-through. */
+export function autoHeaderRows(overrideKeys: string[], version: string): KvRow[] {
+  const overridden = new Set(
+    overrideKeys.map((k) => k.trim().toLowerCase()).filter(Boolean),
+  );
+  return Object.entries(autoHeaders(version)).map(([k, v]) => ({
+    id: "auto:" + k,
+    enabled: !overridden.has(k.toLowerCase()),
+    key: k,
+    value: v,
+  }));
+}
+
 /** Build rows from a header map, always leaving one trailing blank row. */
 export function headersToRows(headers: Record<string, string>): KvRow[] {
   const rows = Object.entries(headers).map(([k, v]) => newKvRow(k, v));
@@ -489,6 +535,32 @@ export function rowsToHeaders(rows: KvRow[]): Record<string, string> {
     out[key] = r.value;
   }
   return out;
+}
+
+/** Parse a urlencoded form body (`a=1&b=2`) into editable rows. Values are kept
+ *  verbatim — no percent-decoding — so `{{VAR}}` placeholders and any
+ *  already-encoded text round-trip unchanged through {@link rowsToForm}. Always
+ *  leaves one trailing blank row. */
+export function formToRows(body: string | null | undefined): KvRow[] {
+  const rows: KvRow[] = [];
+  for (const pair of (body ?? "").split("&")) {
+    if (!pair) continue;
+    const eq = pair.indexOf("=");
+    const key = eq < 0 ? pair : pair.slice(0, eq);
+    const val = eq < 0 ? "" : pair.slice(eq + 1);
+    rows.push(newKvRow(key, val));
+  }
+  rows.push(newKvRow());
+  return rows;
+}
+
+/** Collapse rows back into a urlencoded form body string (enabled, non-empty
+ *  keys only). Written verbatim — the inverse of {@link formToRows}. */
+export function rowsToForm(rows: KvRow[]): string {
+  return rows
+    .filter((r) => r.enabled && r.key.trim())
+    .map((r) => `${r.key.trim()}=${r.value}`)
+    .join("&");
 }
 
 /** Split a URL into its base (scheme://host/path) and query rows. Values are
@@ -575,6 +647,7 @@ export function buildSendable(
   req: HttpRequestItem,
   env: Record<string, string>,
   collection?: Pick<HttpCollection, "env" | "headers" | "auth">,
+  pluginVersion = "",
 ): HttpRequest {
   // Collection env overrides connection env.
   const effEnv = collection?.env
@@ -641,8 +714,53 @@ export function buildSendable(
       break;
   }
 
+  // Add the auto-generated headers (e.g. User-Agent) unless the user or the
+  // collection already set one with the same name — a same-name header the user
+  // adds overrides the auto value.
+  for (const [k, v] of Object.entries(autoHeaders(pluginVersion))) {
+    if (!haveKey(k)) headers[k] = v;
+  }
+
   // A body of kind "none" carries no content regardless of any text left in the
-  // editor from a previous kind, so don't send it.
+  // editor from a previous kind, so don't send it. A "multipart" body carries
+  // structured `parts` instead of a body string.
+  if (req.body_kind === "multipart") {
+    const parts = (req.parts ?? [])
+      .filter((p) => p.name.trim() || p.value.trim())
+      .map((p) => ({
+        name: interpolate(p.name, effEnv),
+        kind: p.kind,
+        value: interpolate(p.value, effEnv),
+        ...(p.filename ? { filename: interpolate(p.filename, effEnv) } : {}),
+        ...(p.content_type
+          ? { content_type: interpolate(p.content_type, effEnv) }
+          : {}),
+      }));
+    return {
+      method: req.method,
+      url,
+      headers,
+      body: "",
+      body_kind: req.body_kind,
+      parts,
+    };
+  }
+
+  // An `application/x-www-form-urlencoded` body: percent-encode the field pairs
+  // (the editor keeps them verbatim) and default the Content-Type header.
+  if (req.body_kind === "form") {
+    if (!haveKey("Content-Type")) {
+      headers["Content-Type"] = "application/x-www-form-urlencoded";
+    }
+    return {
+      method: req.method,
+      url,
+      headers,
+      body: encodeFormBody(req.body ?? "", effEnv),
+      body_kind: req.body_kind,
+    };
+  }
+
   const body =
     req.body_kind === "none" ? "" : interpolate(req.body ?? "", effEnv);
 
@@ -655,6 +773,49 @@ export function buildSendable(
   };
 }
 
+/** Percent-encode one `x-www-form-urlencoded` key or value, preserving any
+ *  existing `%XX` escapes so an already-encoded value (e.g. from curl import) is
+ *  not double-encoded. Iterates by code point so multi-byte chars round-trip.
+ *  Mirrors the URL-query `enc` in the curlui plugin. */
+function encodeFormComponent(s: string): string {
+  let out = "";
+  const chars = Array.from(s);
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    if (
+      ch === "%" &&
+      i + 2 < chars.length &&
+      /^[0-9a-fA-F]$/.test(chars[i + 1]) &&
+      /^[0-9a-fA-F]$/.test(chars[i + 2])
+    ) {
+      out += ch + chars[i + 1] + chars[i + 2];
+      i += 2;
+      continue;
+    }
+    out += encodeURIComponent(ch);
+  }
+  return out;
+}
+
+/** Encode a verbatim form body (`a=hello world&b={{V}}`) as
+ *  `application/x-www-form-urlencoded`: split on the structural `&`/`=`,
+ *  interpolate `{{VAR}}` in each component, then percent-encode each. Splitting
+ *  before interpolating keeps a variable whose value contains `&`/`=` from
+ *  corrupting the field structure. */
+function encodeFormBody(body: string, env: Record<string, string>): string {
+  return body
+    .split("&")
+    .filter((pair) => pair !== "")
+    .map((pair) => {
+      const eq = pair.indexOf("=");
+      if (eq < 0) return encodeFormComponent(interpolate(pair, env));
+      const k = encodeFormComponent(interpolate(pair.slice(0, eq), env));
+      const v = encodeFormComponent(interpolate(pair.slice(eq + 1), env));
+      return `${k}=${v}`;
+    })
+    .join("&");
+}
+
 /** Render a request as a copy-pasteable `curl` command. Mirrors the plugin's
  *  `build_curl_command` output so a copied command matches the "As cURL" view.
  *  Pass the concrete request from {@link buildSendable} so auth and `{{VAR}}`
@@ -664,9 +825,25 @@ export function buildCurl(req: HttpRequest): string {
   for (const [k, v] of Object.entries(req.headers)) {
     parts.push(`  -H '${k}: ${v}'`);
   }
-  const body = req.body ?? "";
-  if (body) {
-    parts.push(`  -d '${body.replace(/'/g, "'\\''")}'`);
+  const esc = (s: string) => s.replace(/'/g, "'\\''");
+  if (req.body_kind === "multipart") {
+    for (const p of req.parts ?? []) {
+      if (!p.name.trim()) continue;
+      let spec: string;
+      if (p.kind === "file") {
+        spec = `${p.name}=@${p.value}`;
+        if (p.content_type) spec += `;type=${p.content_type}`;
+        if (p.filename) spec += `;filename=${p.filename}`;
+      } else {
+        spec = `${p.name}=${p.value}`;
+      }
+      parts.push(`  -F '${esc(spec)}'`);
+    }
+  } else {
+    const body = req.body ?? "";
+    if (body) {
+      parts.push(`  -d '${esc(body)}'`);
+    }
   }
   return parts.join(" \\\n");
 }

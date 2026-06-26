@@ -14,6 +14,7 @@ import {
   defaultCollectionsFile,
   defaultEnvironmentsFile,
   filesToCollections,
+  formToRows,
   headersToRows,
   HTTP_METHODS,
   joinUrl,
@@ -23,6 +24,8 @@ import {
   newEnvironment,
   newKvRow,
   newRequest,
+  autoHeaderRows,
+  rowsToForm,
   rowsToHeaders,
   saveCurlFiles,
   saveEnvironments,
@@ -42,6 +45,7 @@ import {
 import { genId } from "../../api/store.ts";
 import { ConfirmDialog, Modal } from "../Modal";
 import { KvEditor } from "../KvEditor";
+import { MultipartEditor } from "../MultipartEditor";
 import { ContentEditor } from "../ContentEditor";
 import { useLoader } from "../Loader";
 import {
@@ -309,6 +313,8 @@ interface Props {
   savedId: string;
   treeWidth: number;
   onTreeWidthChange: (width: number) => void;
+  /** The running curlui plugin's version, used for the default User-Agent. */
+  pluginVersion: string;
 }
 
 type TreeTarget =
@@ -525,6 +531,7 @@ export function CurlUiWorkspace({
   savedId,
   treeWidth,
   onTreeWidthChange,
+  pluginVersion,
 }: Props) {
   const loader = useLoader();
   const scope = ConnScope(savedId, "curlui");
@@ -570,6 +577,7 @@ export function CurlUiWorkspace({
   const [loaded, setLoaded] = useState(false);
   const [headerRows, setHeaderRows] = useState<KvRow[]>([newKvRow()]);
   const [paramRows, setParamRows] = useState<KvRow[]>([newKvRow()]);
+  const [formRows, setFormRows] = useState<KvRow[]>([newKvRow()]);
   const [reqTab, setReqTab] = useState<RequestTab>("params");
   const [resTab, setResTab] = useState<ResponseTab>("body");
   // Last response per open tab, keyed by the tab's request key, so switching
@@ -803,6 +811,9 @@ export function CurlUiWorkspace({
     if (activeRequest) {
       setHeaderRows(headersToRows(activeRequest.headers));
       setParamRows(splitUrl(activeRequest.url).params);
+      setFormRows(
+        formToRows(activeRequest.body_kind === "form" ? activeRequest.body : ""),
+      );
     }
   }, [activeRequest?.id]);
 
@@ -958,6 +969,11 @@ export function CurlUiWorkspace({
     patchActive({ url: joinUrl(base, rows) });
   }
 
+  function onFormRowsChange(rows: KvRow[]) {
+    setFormRows(rows);
+    patchActive({ body: rowsToForm(rows) });
+  }
+
   function patchAuth(patch: Partial<Auth>) {
     if (!activeRequest) return;
     const current = activeRequest.auth ?? defaultAuth();
@@ -1109,7 +1125,12 @@ export function CurlUiWorkspace({
     try {
       const res = await api.httpSend(
         connectionId,
-        buildSendable(activeRequest, env, activeRequestCollection ?? undefined),
+        buildSendable(
+          activeRequest,
+          env,
+          activeRequestCollection ?? undefined,
+          pluginVersion,
+        ),
       );
       setResponses((r) => ({ ...r, [key]: res }));
     } catch (e) {
@@ -1132,7 +1153,12 @@ export function CurlUiWorkspace({
     try {
       await navigator.clipboard.writeText(
         buildCurl(
-          buildSendable(activeRequest, env, activeRequestCollection ?? undefined),
+          buildSendable(
+            activeRequest,
+            env,
+            activeRequestCollection ?? undefined,
+            pluginVersion,
+          ),
         ),
       );
       setCopiedCurl(true);
@@ -1159,9 +1185,13 @@ export function CurlUiWorkspace({
         headers: parsed.headers,
         body: parsed.body ?? "",
         body_kind: (parsed.body_kind as BodyKind) || "none",
+        parts: parsed.parts,
       });
       setHeaderRows(headersToRows(parsed.headers));
       setParamRows(splitUrl(parsed.url).params);
+      setFormRows(
+        formToRows(parsed.body_kind === "form" ? (parsed.body ?? "") : ""),
+      );
     } catch (err) {
       setError(errString(err));
     } finally {
@@ -1181,6 +1211,7 @@ export function CurlUiWorkspace({
       req.headers = parsed.headers;
       req.body = parsed.body ?? "";
       req.body_kind = (parsed.body_kind as BodyKind) || "none";
+      req.parts = parsed.parts;
       setCollectionsAndSave((data) => insertRequest(data, importTarget, req));
       const folderId =
         importTarget.kind === "folder" ? importTarget.folderId : null;
@@ -1879,6 +1910,22 @@ export function CurlUiWorkspace({
                             )}
                           </div>
                         )}
+                      <div className="curlui-auto-headers-label">
+                        Auto-generated headers
+                      </div>
+                      <KvEditor
+                        rows={autoHeaderRows(
+                          headerRows
+                            .filter((r) => r.enabled)
+                            .map((r) => r.key),
+                          pluginVersion,
+                        )}
+                        onChange={() => {}}
+                        disabled
+                      />
+                      <div className="curlui-auto-headers-label">
+                        Custom headers
+                      </div>
                       <KvEditor
                         rows={headerRows}
                         onChange={onHeaderRowsChange}
@@ -1891,14 +1938,21 @@ export function CurlUiWorkspace({
                       <select
                         className="curlui-body-kind"
                         value={activeRequest.body_kind}
-                        onChange={(e) =>
-                          patchActive({ body_kind: e.target.value as BodyKind })
-                        }
+                        onChange={(e) => {
+                          const body_kind = e.target.value as BodyKind;
+                          patchActive({ body_kind });
+                          // Form shares the `body` string with text/json; rebuild
+                          // its rows from whatever body is currently there.
+                          if (body_kind === "form") {
+                            setFormRows(formToRows(activeRequest.body));
+                          }
+                        }}
                       >
                         <option value="none">None</option>
                         <option value="json">JSON</option>
                         <option value="text">Text</option>
-                        <option value="form">Form</option>
+                        <option value="form">x-www-form-urlencoded</option>
+                        <option value="multipart">Multipart (form-data)</option>
                       </select>
                       {activeRequest.body_kind !== "none" &&
                         (activeRequest.body_kind === "json" ? (
@@ -1908,6 +1962,17 @@ export function CurlUiWorkspace({
                             value={activeRequest.body ?? ""}
                             onChange={(body) => patchActive({ body })}
                             placeholder={'{\n  "key": "value"\n}'}
+                          />
+                        ) : activeRequest.body_kind === "multipart" ? (
+                          <MultipartEditor
+                            parts={activeRequest.parts ?? []}
+                            onChange={(parts) => patchActive({ parts })}
+                          />
+                        ) : activeRequest.body_kind === "form" ? (
+                          <KvEditor
+                            rows={formRows}
+                            onChange={onFormRowsChange}
+                            valuePlaceholder="Value"
                           />
                         ) : (
                           <textarea
@@ -1978,11 +2043,14 @@ export function CurlUiWorkspace({
                       />
                     )}
                     {resTab === "headers" && (
-                      <pre className="curlui-response-headers">
-                        {Object.entries(response.headers)
-                          .map(([k, v]) => `${k}: ${v}`)
-                          .join("\n")}
-                      </pre>
+                      <KvEditor
+                        rows={Object.entries(response.headers).map(([k, v]) =>
+                          newKvRow(k, v),
+                        )}
+                        onChange={() => {}}
+                        disabled
+                        disabledTitle=""
+                      />
                     )}
                     {resTab === "curl" && (
                       <pre className="curlui-curl">{response.curl_command}</pre>

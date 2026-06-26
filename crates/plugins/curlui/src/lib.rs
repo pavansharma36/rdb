@@ -55,10 +55,37 @@ pub struct HttpRequest {
     pub body: Option<String>,
     #[serde(default = "default_body_kind")]
     pub body_kind: String,
+    /// Multipart/form-data fields, used only when `body_kind == "multipart"`.
+    #[serde(default)]
+    pub parts: Option<Vec<MultipartPart>>,
 }
 
 fn default_body_kind() -> String {
     "none".into()
+}
+
+/// One field of a `multipart/form-data` body. A `file` part carries a local
+/// file path in `value` that this (local sidecar) process reads at send time —
+/// file bytes never cross the host pipe.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultipartPart {
+    pub name: String,
+    /// `"text"` or `"file"`.
+    #[serde(default = "default_part_kind")]
+    pub kind: String,
+    /// Text value for a `text` part, or the local file path for a `file` part.
+    #[serde(default)]
+    pub value: String,
+    /// Optional filename override for a `file` part (defaults to the basename).
+    #[serde(default)]
+    pub filename: Option<String>,
+    /// Optional explicit Content-Type for the part.
+    #[serde(default)]
+    pub content_type: Option<String>,
+}
+
+fn default_part_kind() -> String {
+    "text".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,6 +190,8 @@ fn cfg_u64(config: &ConnectionConfig, key: &str, default: u64) -> u64 {
 
 fn build_client(settings: &SessionSettings) -> Result<Client> {
     let mut builder = Client::builder()
+        // Default User-Agent; a per-request `User-Agent` header overrides it.
+        .user_agent(concat!("rdb/", env!("CARGO_PKG_VERSION"), " Http-Client (plugin)"))
         .redirect(if settings.follow_redirects {
             reqwest::redirect::Policy::limited(10)
         } else {
@@ -263,9 +292,15 @@ pub async fn send_request(conn: &CurlUiConnection, req: &HttpRequest) -> Result<
     // before the request reaches us; the URL is otherwise a literal, so we
     // percent-encode its query component here at send time.
     let url = encode_query_url(&req.url);
+    let is_multipart = req.body_kind == "multipart";
     let mut headers = HeaderMap::new();
     for (k, v) in &req.headers {
         if k.trim().is_empty() {
+            continue;
+        }
+        // reqwest sets the multipart Content-Type (with the boundary) itself, so
+        // a user-supplied one would conflict — drop it for multipart bodies.
+        if is_multipart && k.trim().eq_ignore_ascii_case("content-type") {
             continue;
         }
         let name = HeaderName::from_str(k.trim())
@@ -279,11 +314,18 @@ pub async fn send_request(conn: &CurlUiConnection, req: &HttpRequest) -> Result<
         Some(raw) => Some(raw.to_owned()),
     };
 
-    let curl_command = build_curl_command(&method, &url, &headers, body.as_deref());
+    let parts = if is_multipart {
+        req.parts.as_deref()
+    } else {
+        None
+    };
+    let curl_command = build_curl_command(&method, &url, &headers, body.as_deref(), parts);
 
     let started = Instant::now();
     let mut rb = conn.client.request(method, &url).headers(headers);
-    if let Some(body) = body {
+    if is_multipart {
+        rb = rb.multipart(build_multipart_form(parts.unwrap_or(&[])).await?);
+    } else if let Some(body) = body {
         rb = rb.body(body);
     }
     let response = rb
@@ -332,18 +374,117 @@ fn build_curl_command(
     url: &str,
     headers: &HeaderMap,
     body: Option<&str>,
+    parts: Option<&[MultipartPart]>,
 ) -> String {
-    let mut parts = vec![format!("curl -X {method} '{url}'")];
+    let mut out = vec![format!("curl -X {method} '{url}'")];
     for (k, v) in headers {
         if let Ok(s) = v.to_str() {
-            parts.push(format!("  -H '{k}: {s}'"));
+            out.push(format!("  -H '{k}: {s}'"));
         }
     }
-    if let Some(body) = body {
+    if let Some(parts) = parts {
+        for p in parts {
+            if p.name.trim().is_empty() {
+                continue;
+            }
+            let spec = if p.kind == "file" {
+                let mut s = format!("{}=@{}", p.name, p.value);
+                if let Some(ct) = p.content_type.as_deref().filter(|s| !s.is_empty()) {
+                    s.push_str(&format!(";type={ct}"));
+                }
+                if let Some(fname) = p.filename.as_deref().filter(|s| !s.is_empty()) {
+                    s.push_str(&format!(";filename={fname}"));
+                }
+                s
+            } else {
+                format!("{}={}", p.name, p.value)
+            };
+            let escaped = spec.replace('\'', "'\\''");
+            out.push(format!("  -F '{escaped}'"));
+        }
+    } else if let Some(body) = body {
         let escaped = body.replace('\'', "'\\''");
-        parts.push(format!("  -d '{escaped}'"));
+        out.push(format!("  -d '{escaped}'"));
     }
-    parts.join(" \\\n")
+    out.join(" \\\n")
+}
+
+/// Build a `multipart/form-data` form from the request parts, reading each
+/// `file` part's bytes from disk (this is a local sidecar process). Parts with
+/// an empty name are skipped.
+async fn build_multipart_form(parts: &[MultipartPart]) -> Result<reqwest::multipart::Form> {
+    use reqwest::multipart::{Form, Part};
+    let mut form = Form::new();
+    for p in parts {
+        if p.name.trim().is_empty() {
+            continue;
+        }
+        if p.kind == "file" {
+            let bytes = tokio::fs::read(&p.value)
+                .await
+                .map_err(|e| PluginError::Backend(format!("read file {}: {e}", p.value)))?;
+            let filename = p
+                .filename
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| basename(&p.value));
+            let mime = p
+                .content_type
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| guess_mime(&filename));
+            let part = Part::bytes(bytes)
+                .file_name(filename)
+                .mime_str(&mime)
+                .map_err(|e| PluginError::Config(format!("invalid content-type {mime}: {e}")))?;
+            form = form.part(p.name.clone(), part);
+        } else {
+            let mut part = Part::text(p.value.clone());
+            if let Some(ct) = p.content_type.as_deref().filter(|s| !s.is_empty()) {
+                part = part
+                    .mime_str(ct)
+                    .map_err(|e| PluginError::Config(format!("invalid content-type {ct}: {e}")))?;
+            }
+            form = form.part(p.name.clone(), part);
+        }
+    }
+    Ok(form)
+}
+
+/// Last path segment of a (possibly Windows or POSIX) file path.
+fn basename(path: &str) -> String {
+    path.rsplit(['/', '\\'])
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(path)
+        .to_owned()
+}
+
+/// A minimal extension → MIME guess, defaulting to `application/octet-stream`.
+fn guess_mime(filename: &str) -> String {
+    let ext = filename
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "json" => "application/json",
+        "txt" | "text" | "log" => "text/plain",
+        "csv" => "text/csv",
+        "html" | "htm" => "text/html",
+        "xml" => "application/xml",
+        "pdf" => "application/pdf",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "zip" => "application/zip",
+        "gz" => "application/gzip",
+        _ => "application/octet-stream",
+    }
+    .to_owned()
 }
 
 /// Parse a `curl` command line into an [`HttpRequest`].
@@ -375,6 +516,7 @@ pub fn parse_curl_command(curl: &str) -> Result<HttpRequest> {
     let mut url: Option<String> = None;
     let mut headers = HashMap::new();
     let mut data: Vec<String> = Vec::new();
+    let mut forms: Vec<MultipartPart> = Vec::new();
     let mut basic_auth: Option<String> = None;
 
     while let Some(tok) = it.next() {
@@ -411,6 +553,13 @@ pub fn parse_curl_command(curl: &str) -> Result<HttpRequest> {
                     // `--data-raw` keeps a leading `$` / `@` literally; we don't
                     // expand @file references.
                     data.push(d);
+                }
+            }
+            "-F" | "--form" | "--form-string" => {
+                if let Some(f) = value_flag(&mut it, inline) {
+                    // `--form-string` is always a literal text field, even if the
+                    // value starts with `@`/`<`.
+                    forms.push(parse_form_field(&f, name == "--form-string"));
                 }
             }
             "-u" | "--user" => {
@@ -482,9 +631,18 @@ pub fn parse_curl_command(curl: &str) -> Result<HttpRequest> {
     } else {
         Some(data.join("&"))
     };
-    let body_kind = infer_body_kind(&headers, body.as_deref());
+    // `-F` makes it a multipart request; that takes precedence over `-d` data.
+    let (body, body_kind, parts) = if !forms.is_empty() {
+        (None, "multipart".to_owned(), Some(forms))
+    } else {
+        (body.clone(), infer_body_kind(&headers, body.as_deref()), None)
+    };
     let method = method.unwrap_or_else(|| {
-        if body.is_some() { "POST".into() } else { "GET".into() }
+        if body.is_some() || parts.is_some() {
+            "POST".into()
+        } else {
+            "GET".into()
+        }
     });
 
     Ok(HttpRequest {
@@ -493,7 +651,52 @@ pub fn parse_curl_command(curl: &str) -> Result<HttpRequest> {
         headers,
         body,
         body_kind,
+        parts,
     })
+}
+
+/// Parse one `-F`/`--form` field value into a [`MultipartPart`].
+///
+/// curl syntax: `name=value` is a text field; `name=@path` / `name=<path` is a
+/// file field, with optional `;type=<mime>` and `;filename=<name>` modifiers.
+/// `force_text` (from `--form-string`) keeps the value literal even if it begins
+/// with `@`/`<`.
+fn parse_form_field(field: &str, force_text: bool) -> MultipartPart {
+    let (name, rhs) = match field.split_once('=') {
+        Some((n, r)) => (n.trim().to_owned(), r),
+        None => (field.trim().to_owned(), ""),
+    };
+
+    let is_file = !force_text && (rhs.starts_with('@') || rhs.starts_with('<'));
+    if !is_file {
+        return MultipartPart {
+            name,
+            kind: "text".into(),
+            value: rhs.to_owned(),
+            filename: None,
+            content_type: None,
+        };
+    }
+
+    // Split the path from any `;type=`/`;filename=` modifiers.
+    let mut segs = rhs[1..].split(';');
+    let path = segs.next().unwrap_or("").to_owned();
+    let mut content_type = None;
+    let mut filename = None;
+    for seg in segs {
+        if let Some(v) = seg.trim().strip_prefix("type=") {
+            content_type = Some(v.to_owned());
+        } else if let Some(v) = seg.trim().strip_prefix("filename=") {
+            filename = Some(v.to_owned());
+        }
+    }
+    MultipartPart {
+        name,
+        kind: "file".into(),
+        value: path,
+        filename,
+        content_type,
+    }
 }
 
 /// Split a flag token into its name and optional inline value (`--data=x`).
@@ -616,6 +819,41 @@ mod tests {
         // A bare host (no scheme) is accepted; the frontend normalizes it.
         let r = parse_curl_command("curl www.google.com").unwrap();
         assert_eq!(r.url, "www.google.com");
+    }
+
+    #[test]
+    fn parse_curl_form_files_and_fields() {
+        let r = parse_curl_command(
+            "curl https://x.com/up -F 'name=Bob' -F 'photo=@/tmp/a.png;type=image/png;filename=pic.png' -F 'doc=<readme.txt'",
+        )
+        .unwrap();
+        assert_eq!(r.method, "POST"); // -F present, no explicit -X
+        assert_eq!(r.body_kind, "multipart");
+        assert!(r.body.is_none());
+        let parts = r.parts.expect("parts");
+        assert_eq!(parts.len(), 3);
+
+        assert_eq!(parts[0].name, "name");
+        assert_eq!(parts[0].kind, "text");
+        assert_eq!(parts[0].value, "Bob");
+
+        assert_eq!(parts[1].name, "photo");
+        assert_eq!(parts[1].kind, "file");
+        assert_eq!(parts[1].value, "/tmp/a.png");
+        assert_eq!(parts[1].content_type.as_deref(), Some("image/png"));
+        assert_eq!(parts[1].filename.as_deref(), Some("pic.png"));
+
+        assert_eq!(parts[2].name, "doc");
+        assert_eq!(parts[2].kind, "file");
+        assert_eq!(parts[2].value, "readme.txt");
+    }
+
+    #[test]
+    fn parse_curl_form_string_keeps_literal_at() {
+        let r = parse_curl_command("curl https://x.com --form-string 'q=@notafile'").unwrap();
+        let parts = r.parts.expect("parts");
+        assert_eq!(parts[0].kind, "text");
+        assert_eq!(parts[0].value, "@notafile");
     }
 
     #[test]

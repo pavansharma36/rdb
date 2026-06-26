@@ -31,7 +31,7 @@ import {
   type FilterRow,
   opNeedsValue,
 } from "./rdbms/FilterPopover";
-import { SchemaTree } from "./rdbms/SchemaTree";
+import { NavTree } from "./NavTree";
 import { WorkspaceFileList } from "./WorkspaceFileList";
 import { StructureTable } from "./rdbms/StructureTable";
 import {
@@ -998,13 +998,22 @@ export function RdbmsWorkspace({
           </div>
         </div>
         </div>
-        <SchemaTree
-          schemas={schemas}
-          tables={tables}
-          openSchema={openSchema}
-          activeTable={activeTable}
-          onToggleSchema={toggleSchema}
-          onPickTable={pickTable}
+        <NavTree
+          groups={schemas.map((s) => s.name)}
+          items={Object.fromEntries(
+            Object.entries(tables).map(([schema, ts]) => [
+              schema,
+              ts.map((t) => ({
+                name: t.name,
+                badge: t.kind !== "table" ? t.kind : null,
+              })),
+            ]),
+          )}
+          openGroup={openSchema}
+          activeKey={activeTable}
+          onToggleGroup={toggleSchema}
+          onPickItem={pickTable}
+          emptyText="No schemas."
         />
       </div>
       <div
