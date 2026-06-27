@@ -2,7 +2,7 @@
 name = "rdb-app"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 description = "RDB desktop client (Tauri host)"
 
 [lib]

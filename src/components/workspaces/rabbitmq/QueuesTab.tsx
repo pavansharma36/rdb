@@ -3,7 +3,7 @@ import { api, errString } from "../../../api/api.ts";
 import type { ConnectionId } from "../../../api/api.ts";
 import { DataTable, Stat, type Col } from "../../DataTable";
 import { fmtBytes, fmtRate, vhostLabel } from "./format";
-import {MqMessage, MqQueue} from "../../../api/rabbitmq.ts";
+import { MqMessage, MqQueue } from "../../../api/rabbitmq.ts";
 
 export function QueuesTab({
   connectionId,
@@ -23,9 +23,7 @@ export function QueuesTab({
 
   // Keep the open detail panel in sync with refreshed data.
   const live = selected
-    ? queues.find(
-        (q) => q.name === selected.name && q.vhost === selected.vhost,
-      ) ?? selected
+    ? (queues.find((q) => q.name === selected.name && q.vhost === selected.vhost) ?? selected)
     : null;
 
   async function guard(fn: () => Promise<void>) {
@@ -252,11 +250,7 @@ function QueueDetail({
             />
           </label>
           <label className="row">
-            <input
-              type="checkbox"
-              checked={remove}
-              onChange={(e) => setRemove(e.target.checked)}
-            />{" "}
+            <input type="checkbox" checked={remove} onChange={(e) => setRemove(e.target.checked)} />{" "}
             remove from queue
           </label>
           <button disabled={busy} onClick={getMessages}>

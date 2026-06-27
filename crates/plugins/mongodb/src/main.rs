@@ -20,12 +20,10 @@ struct ListCollectionsParams {
 }
 
 #[derive(Deserialize)]
-struct FindParams {
+struct RunCommandParams {
     database: String,
-    collection: String,
-    #[serde(default)]
-    filter: Option<String>,
-    limit: i64,
+    /// The command document as extended JSON (e.g. `{"find":"users",...}`).
+    command: String,
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(params: Value) -> Result<T> {
@@ -45,13 +43,9 @@ impl Dispatcher for MongoDispatcher {
                 let p: ListCollectionsParams = parse(params)?;
                 to_value(self.0.list_collections(conn, &p.database).await?)
             }
-            "document.find" => {
-                let p: FindParams = parse(params)?;
-                to_value(
-                    self.0
-                        .find(conn, &p.database, &p.collection, p.filter.as_deref(), p.limit)
-                        .await?,
-                )
+            "document.run_command" => {
+                let p: RunCommandParams = parse(params)?;
+                to_value(self.0.run_command(conn, &p.database, &p.command).await?)
             }
             _ => Err(PluginError::Unsupported),
         }

@@ -32,9 +32,7 @@ export function NavTree({
 }: NavTreeProps) {
   return (
     <div className="tree-schemas">
-      {groups.length === 0 && (
-        <p className="muted">{emptyText ?? "Nothing here."}</p>
-      )}
+      {groups.length === 0 && <p className="muted">{emptyText ?? "Nothing here."}</p>}
       {groups.map((g) => (
         <div key={g} className="tree-group">
           <div
@@ -48,10 +46,7 @@ export function NavTree({
             (items[g] ?? []).map((it) => (
               <div
                 key={it.name}
-                className={
-                  "tree-node leaf" +
-                  (activeKey === g + "." + it.name ? " active" : "")
-                }
+                className={"tree-node leaf" + (activeKey === g + "." + it.name ? " active" : "")}
                 onClick={() => onPickItem(g, it.name)}
               >
                 <span>{it.name}</span>

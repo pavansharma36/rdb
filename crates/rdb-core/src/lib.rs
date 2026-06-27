@@ -81,7 +81,9 @@ pub enum ConfigFieldType {
     Password,
     Number,
     Boolean,
-    Select { options: Vec<String> },
+    Select {
+        options: Vec<String>,
+    },
     /// A file-path field: the UI shows a text input + "Browse…" button that
     /// opens a native file picker. The stored value is the absolute path string.
     FilePath,
@@ -229,11 +231,10 @@ pub trait Plugin: Send + Sync {
     }
 }
 
-
 pub mod test_utils {
-    use std::path::Path;
-    use serde::Deserialize;
     use crate::ConnectionConfig;
+    use serde::Deserialize;
+    use std::path::Path;
 
     /// A saved connection profile as persisted by the host at
     /// `<app_dir>/connections/<plugin_id>/connections.json`. Mirrors the host's
@@ -280,7 +281,10 @@ pub mod test_utils {
             }
         }
 
-        panic!("no saved connection with id '{connection_id}' under {}", connections_dir.display());
+        panic!(
+            "no saved connection with id '{connection_id}' under {}",
+            connections_dir.display()
+        );
     }
 }
 
@@ -305,7 +309,10 @@ pub mod tests {
             "password".into(),
             serde_json::to_value(SecretField::plaintext("hunter2")).unwrap(),
         );
-        assert_eq!(cfg_secret(&cfg, "password").unwrap().as_deref(), Some("hunter2"));
+        assert_eq!(
+            cfg_secret(&cfg, "password").unwrap().as_deref(),
+            Some("hunter2")
+        );
     }
 
     #[test]

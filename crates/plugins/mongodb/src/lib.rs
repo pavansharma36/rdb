@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use futures_util::StreamExt;
 use mongodb::{bson::doc, Client};
 use rdb_core::{
     cfg_secret, ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError,
@@ -40,8 +39,11 @@ pub struct MongoCollection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FindResult {
-    pub documents: Vec<serde_json::Value>,
+pub struct RunCommandResult {
+    /// The raw command reply, as extended JSON (`{"$oid":"..."}`, …). For
+    /// `find`/`aggregate`/`listIndexes` the documents live under
+    /// `result.cursor.firstBatch`.
+    pub result: serde_json::Value,
     pub elapsed_ms: u128,
 }
 
@@ -278,60 +280,40 @@ impl MongoPlugin {
             .collect())
     }
 
-    pub async fn find(
+    /// Run an arbitrary database command (`db.runCommand`). The frontend builds
+    /// the command document (e.g. `{ find, filter, limit }`,
+    /// `{ aggregate, pipeline, cursor }`, `{ listIndexes }`) as extended JSON;
+    /// we parse it preserving field order (the command name must come first)
+    /// and return the raw reply as extended JSON.
+    pub async fn run_command(
         &self,
         conn: Arc<dyn Connection>,
         database: &str,
-        collection: &str,
-        filter_json: Option<&str>,
-        limit: i64,
-    ) -> Result<FindResult> {
+        command_json: &str,
+    ) -> Result<RunCommandResult> {
         let conn = downcast(&conn)?;
         let start = std::time::Instant::now();
-        let filter = match filter_json {
-            Some(s) if !s.trim().is_empty() => {
-                let v: serde_json::Value = serde_json::from_str(s)
-                    .map_err(|e| PluginError::Config(format!("invalid filter: {e}")))?;
-                // Interpret MongoDB extended JSON (`{"$oid":...}`, `{"$date":...}`,
-                // …) so `_id`/typed filters become real BSON, not literal `$`-keyed
-                // sub-documents. bson's `TryFrom` handles relaxed and canonical.
-                match v {
-                    serde_json::Value::Object(map) => bson::Document::try_from(map)
-                        .map_err(|e| PluginError::Config(format!("invalid filter: {e}")))?,
-                    _ => {
-                        return Err(PluginError::Config(
-                            "filter must be a JSON object".into(),
-                        ))
-                    }
-                }
-            }
-            _ => doc! {},
+        let value: serde_json::Value = serde_json::from_str(command_json)
+            .map_err(|e| PluginError::Config(format!("invalid command: {e}")))?;
+        // Interpret MongoDB extended JSON so typed values (`{"$oid":...}`, …)
+        // become real BSON. `serde_json`'s `preserve_order` keeps the command
+        // name as the first key, which the server requires.
+        let command = match value {
+            serde_json::Value::Object(map) => bson::Document::try_from(map)
+                .map_err(|e| PluginError::Config(format!("invalid command: {e}")))?,
+            _ => return Err(PluginError::Config("command must be a JSON object".into())),
         };
-        let mut cursor = conn
+        let reply = conn
             .client
             .database(database)
-            .collection::<bson::Document>(collection)
-            .find(filter)
-            .limit(limit)
+            .run_command(command)
             .await
             .map_err(|e| PluginError::Backend(e.to_string()))?;
-
-        let mut out = Vec::new();
-        while let Some(next) = cursor.next().await {
-            let doc = next.map_err(|e| PluginError::Backend(e.to_string()))?;
-            let v: serde_json::Value =
-                bson::deserialize_from_document(doc).map_err(|e| PluginError::Backend(e.to_string()))?;
-            out.push(v);
-        }
+        let result: serde_json::Value = bson::deserialize_from_document(reply)
+            .map_err(|e| PluginError::Backend(e.to_string()))?;
         let elapsed_ms = start.elapsed().as_millis();
-        tracing::debug!(
-            "find {database}.{collection} returned {} doc(s) in {elapsed_ms}ms (limit {limit})",
-            out.len()
-        );
-        Ok(FindResult {
-            documents: out,
-            elapsed_ms,
-        })
+        tracing::debug!("runCommand on {database} completed in {elapsed_ms}ms");
+        Ok(RunCommandResult { result, elapsed_ms })
     }
 }
 

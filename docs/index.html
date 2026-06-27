@@ -3,10 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>rdb — one desktop client for databases & message brokers</title>
-  <meta name="description" content="rdb is a cross-platform desktop client for PostgreSQL, MongoDB, and RabbitMQ, built on a plugin architecture with Tauri and React. Free and open source." />
-  <meta property="og:title" content="rdb — one client for databases & message brokers" />
-  <meta property="og:description" content="Connect to relational databases, document stores, and queues from one window. Plugin-based, cross-platform, open source." />
+  <title>rdb — the Swiss Army knife for backend developers</title>
+  <meta name="description" content="rdb is the Swiss Army knife for backend developers — a cross-platform desktop client for PostgreSQL, MongoDB, RabbitMQ, and SSH, built on a plugin architecture with Tauri and React. Free and open source." />
+  <meta name="keywords" content="swiss army knife for backend developers, database client, PostgreSQL, MongoDB, RabbitMQ, SSH, message broker, Tauri, plugin" />
+  <meta property="og:title" content="rdb — the Swiss Army knife for backend developers" />
+  <meta property="og:description" content="The Swiss Army knife for backend developers: connect to relational databases, document stores, queues, and SSH from one window. Plugin-based, cross-platform, open source." />
   <meta property="og:type" content="website" />
   <link rel="icon" href="assets/icon.png" />
   <link rel="stylesheet" href="styles.css" />
@@ -35,20 +36,21 @@
     <section class="hero">
       <div class="wrap">
         <img class="logo" src="assets/icon.png" alt="rdb" />
-        <h1>One client. Every backend.</h1>
+        <h1>The Swiss Army knife for backend developers.</h1>
         <p class="tagline">
-          A cross-platform desktop client for relational databases, document
-          stores, and message brokers — unified behind a single plugin-based
-          window.
+          One cross-platform desktop client for SQL databases, document stores,
+          message brokers, SSH terminals, file transfer, and HTTP — every backend
+          tool you reach for, unified behind a single plugin-based window.
         </p>
         <div class="cta">
           <a class="btn primary" href="#download">↓ Download</a>
           <a class="btn" href="docs.html">Read the docs</a>
         </div>
         <div class="badges">
+          <span class="badge"><b>10</b> bundled plugins</span>
           <span class="badge">Built with <b>Tauri 2</b> + <b>React</b></span>
           <span class="badge"><b>macOS</b> · <b>Linux</b> · <b>Windows</b></span>
-          <span class="badge"><b>MIT</b> / <b>Apache-2.0</b></span>
+          <span class="badge"><b>Apache-2.0</b> + <b>Commons Clause</b></span>
         </div>
       </div>
     </section>
@@ -58,34 +60,49 @@
       <div class="wrap">
         <div class="section-head">
           <div class="kicker">Why rdb</div>
-          <h2>Stop juggling one tool per backend</h2>
-          <p>rdb speaks SQL, documents, and queues from the same window — and stays small because the host ships no drivers.</p>
+          <h2>One window for your whole backend</h2>
+          <p>rdb speaks SQL, documents, queues, shells, files, and HTTP from the same window — and stays small because the host ships no drivers.</p>
         </div>
         <div class="grid">
           <div class="card">
             <span class="ico">🔌</span>
             <h3>Plugin architecture</h3>
-            <p>Each backend is an out-of-process sidecar executable the host discovers at runtime. Connection forms and workspaces render generically from a plugin's declared config schema.</p>
-          </div>
-          <div class="card">
-            <span class="ico">🗂️</span>
-            <h3>Unified workspace</h3>
-            <p>One window, a sidebar of saved connections, and a workspace per connection rendered according to its plugin kind — relational, document, or queue.</p>
+            <p>Each backend is an out-of-process sidecar the host discovers at runtime. Connection forms and workspaces render generically from a plugin's declared config schema.</p>
           </div>
           <div class="card">
             <span class="ico">✏️</span>
-            <h3>RDBMS editing</h3>
-            <p>Browse schemas and tables, run SQL, and stage multi-cell edits — inserts, updates, deletes — that commit atomically in a single transaction.</p>
+            <h3>SQL browse &amp; edit</h3>
+            <p>Browse schemas, tables and DDL across PostgreSQL, MySQL, SQL Server and Snowflake. Run SQL, filter/sort, and stage multi-cell edits that commit atomically in one transaction.</p>
           </div>
           <div class="card">
             <span class="ico">📨</span>
-            <h3>Documents & queues</h3>
-            <p>Query MongoDB collections, and browse a RabbitMQ broker's overview, queues, exchanges, and connections — publish, get, and purge messages.</p>
+            <h3>Documents &amp; queues</h3>
+            <p>Query MongoDB collections, and browse a RabbitMQ broker's overview, queues, exchanges and connections — publish, get, and purge messages.</p>
           </div>
           <div class="card">
-            <span class="ico">💾</span>
-            <h3>Saved connections</h3>
-            <p>Connection profiles persist across restarts as human-readable JSON in your OS app-data directory, organised per owning plugin.</p>
+            <span class="ico">🖥️</span>
+            <h3>SSH terminal</h3>
+            <p>Full PTY terminal to remote hosts with password or key auth, plus saved shell scripts per connection — right inside the same app.</p>
+          </div>
+          <div class="card">
+            <span class="ico">📁</span>
+            <h3>Files: SFTP &amp; S3</h3>
+            <p>A unified file browser over SFTP servers and S3 buckets — upload, download, rename, delete and mkdir, with multipart uploads for large objects.</p>
+          </div>
+          <div class="card">
+            <span class="ico">🌐</span>
+            <h3>HTTP client</h3>
+            <p>A built-in REST client with collections, environment variables, auth presets, and curl import/export — like having Postman in the same window.</p>
+          </div>
+          <div class="card">
+            <span class="ico">📤</span>
+            <h3>Export &amp; persistence</h3>
+            <p>Stream full result sets to CSV, and keep saved connection profiles, SQL snippets and scripts per connection as human-readable JSON.</p>
+          </div>
+          <div class="card">
+            <span class="ico">⬇️</span>
+            <h3>In-app plugin install</h3>
+            <p>Install more plugins straight from a GitHub release — OS/arch matched, SHA-256 checksum-verified, no rebuild. The app and plugins auto-update.</p>
           </div>
           <div class="card">
             <span class="ico">🎨</span>
@@ -101,14 +118,29 @@
       <div class="wrap">
         <div class="section-head">
           <div class="kicker">Bundled plugins</div>
-          <h2>Three backends, ready today</h2>
+          <h2>Ten backends, ready today</h2>
           <p>Install more in-app straight from a GitHub release — checksum-verified, no rebuild required.</p>
         </div>
         <div class="plugins">
           <div class="plugin">
             <span class="tag">rdbms</span>
             <h3>PostgreSQL</h3>
-            <p>PostgreSQL 12+ databases via <code>sqlx</code>. Full schema browsing, SQL editor, and inline cell editing.</p>
+            <p>PostgreSQL 12+ via <code>sqlx</code>. Schema browsing, SQL editor, inline cell editing.</p>
+          </div>
+          <div class="plugin">
+            <span class="tag">rdbms</span>
+            <h3>MySQL</h3>
+            <p>MySQL &amp; MariaDB. Browse schemas and tables, run SQL, and edit rows inline.</p>
+          </div>
+          <div class="plugin">
+            <span class="tag">rdbms</span>
+            <h3>SQL Server</h3>
+            <p>Microsoft SQL Server via the Tiberius driver, with configurable encryption.</p>
+          </div>
+          <div class="plugin">
+            <span class="tag">rdbms</span>
+            <h3>Snowflake</h3>
+            <p>Snowflake warehouses with key-pair or password auth and warehouse/role selection.</p>
           </div>
           <div class="plugin">
             <span class="tag">document</span>
@@ -119,6 +151,26 @@
             <span class="tag">rabbitmq</span>
             <h3>RabbitMQ</h3>
             <p>Brokers via the HTTP Management API. Management-UI-style browsing plus publish / get / purge.</p>
+          </div>
+          <div class="plugin">
+            <span class="tag">cli</span>
+            <h3>SSH</h3>
+            <p>PTY terminal to remote hosts with password or key auth, plus saved shell scripts.</p>
+          </div>
+          <div class="plugin">
+            <span class="tag">filemanager</span>
+            <h3>SFTP</h3>
+            <p>Browse and transfer files over SFTP — upload, download, rename, delete, mkdir.</p>
+          </div>
+          <div class="plugin">
+            <span class="tag">filemanager</span>
+            <h3>Amazon S3</h3>
+            <p>S3 and S3-compatible buckets with multipart uploads for large objects.</p>
+          </div>
+          <div class="plugin">
+            <span class="tag">http</span>
+            <h3>HTTP client</h3>
+            <p>REST client with collections, environments, auth presets, and curl import/export.</p>
           </div>
         </div>
       </div>
@@ -139,8 +191,8 @@
   Tauri host (Rust, no DB drivers)
             │  line-delimited JSON-RPC over stdio
             ▼
-  Plugin sidecars  ─  postgres · mongodb · rabbitmq
-  (live PgPool / Client / HTTP handles stay inside the plugin)</code></pre>
+  Plugin sidecars  ─  postgres · mysql · mssql · snowflake · mongodb · rabbitmq · ssh · sftp · s3 · http
+  (live driver / client / session handles stay inside the plugin)</code></pre>
         </div>
       </div>
     </section>
@@ -227,7 +279,7 @@ npm run tauri build</code></pre>
   <footer>
     <div class="wrap footer-inner">
       <div>
-        <strong style="color:var(--text)">rdb</strong> — dual-licensed MIT OR Apache-2.0
+        <strong style="color:var(--text)">rdb</strong> — Apache-2.0 with the Commons Clause (source-available)
       </div>
       <div style="display:flex;gap:20px">
         <a href="https://github.com/pavansharma36/rdb" target="_blank" rel="noopener">GitHub</a>

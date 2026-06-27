@@ -10,8 +10,8 @@ use rdb_rdbms_common::{
     TableDescription, TableKind,
 };
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
-use sqlx::{Column as _, Executor, Row, TypeInfo};
 use sqlx::{AssertSqlSafe, SqlSafeStr};
+use sqlx::{Column as _, Executor, Row, TypeInfo};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -158,7 +158,11 @@ fn swap_database_in_url(base: &str, database: &str) -> Result<String> {
         .ok_or_else(|| PluginError::Config("invalid connection string: no database path".into()))?;
     let query_start = base[path_start..].find('?').map(|i| path_start + i);
     let suffix = query_start.map(|i| &base[i..]).unwrap_or("");
-    Ok(format!("{}/{}{suffix}", &base[..path_start], urlencode(database)))
+    Ok(format!(
+        "{}/{}{suffix}",
+        &base[..path_start],
+        urlencode(database)
+    ))
 }
 
 /// The default database for a connection: the `database` field, or the one
@@ -283,11 +287,7 @@ impl Plugin for MysqlPlugin {
                     key: "ssl".into(),
                     label: "SSL mode".into(),
                     field_type: ConfigFieldType::Select {
-                        options: vec![
-                            "disabled".into(),
-                            "preferred".into(),
-                            "required".into(),
-                        ],
+                        options: vec!["disabled".into(), "preferred".into(), "required".into()],
                     },
                     required: false,
                     default: Some(serde_json::json!("preferred")),
@@ -312,7 +312,10 @@ impl Plugin for MysqlPlugin {
         tracing::info!(
             "connecting to mysql host={} port={} db={}",
             cfg_str_opt(&cfg, "host").as_deref().unwrap_or("?"),
-            cfg.get("port").map(|v| v.to_string()).as_deref().unwrap_or("?"),
+            cfg.get("port")
+                .map(|v| v.to_string())
+                .as_deref()
+                .unwrap_or("?"),
             cfg_str_opt(&cfg, "database").as_deref().unwrap_or("?"),
         );
         let pool = make_pool(&url).await.inspect_err(|e| {
@@ -448,14 +451,22 @@ impl RdbmsPlugin for MysqlPlugin {
         let columns = rows
             .into_iter()
             .map(
-                |(name, dtype, col_type, nullable, char_len, precision, scale,
-                  col_key, default_value, fk_table, fk_col)| {
+                |(
+                    name,
+                    dtype,
+                    col_type,
+                    nullable,
+                    char_len,
+                    precision,
+                    scale,
+                    col_key,
+                    default_value,
+                    fk_table,
+                    fk_col,
+                )| {
                     let d = dtype.to_ascii_lowercase();
                     let json = d == "json";
-                    let large = json
-                        || d.contains("text")
-                        || d.contains("blob")
-                        || d == "longtext";
+                    let large = json || d.contains("text") || d.contains("blob") || d == "longtext";
                     let foreign_key = fk_table
                         .zip(fk_col)
                         .map(|(table, column)| ForeignKey { table, column });
@@ -496,7 +507,11 @@ impl RdbmsPlugin for MysqlPlugin {
     ) -> Result<String> {
         let conn = downcast_conn::<MysqlConnection>(&conn)?;
         // MySQL exposes the authoritative DDL directly.
-        let sql = format!("SHOW CREATE TABLE {}.{}", quote_ident(schema), quote_ident(table));
+        let sql = format!(
+            "SHOW CREATE TABLE {}.{}",
+            quote_ident(schema),
+            quote_ident(table)
+        );
         let row: MySqlRow = sqlx::query(AssertSqlSafe(sql))
             .fetch_one(&conn.pool())
             .await
@@ -748,7 +763,11 @@ fn build_update(
 }
 
 /// Build an `INSERT INTO ...` and its bound parameters.
-fn build_insert(schema: &str, table: &str, values: &[ColumnValue]) -> Result<(String, Vec<String>)> {
+fn build_insert(
+    schema: &str,
+    table: &str,
+    values: &[ColumnValue],
+) -> Result<(String, Vec<String>)> {
     let mut params: Vec<String> = Vec::new();
     let mut cols = Vec::new();
     let mut vals = Vec::new();
@@ -757,7 +776,11 @@ fn build_insert(schema: &str, table: &str, values: &[ColumnValue]) -> Result<(St
         vals.push(value_expr(cv, &mut params)?);
     }
     let sql = if cols.is_empty() {
-        format!("INSERT INTO {}.{} () VALUES ()", quote_ident(schema), quote_ident(table))
+        format!(
+            "INSERT INTO {}.{} () VALUES ()",
+            quote_ident(schema),
+            quote_ident(table)
+        )
     } else {
         format!(
             "INSERT INTO {}.{} ({}) VALUES ({})",
@@ -801,7 +824,11 @@ fn build_browse(schema: &str, table: &str, spec: &BrowseSpec) -> Result<(String,
         conds.push(format!("({w})"));
     }
 
-    let mut sql = format!("SELECT * FROM {}.{}", quote_ident(schema), quote_ident(table));
+    let mut sql = format!(
+        "SELECT * FROM {}.{}",
+        quote_ident(schema),
+        quote_ident(table)
+    );
     if !conds.is_empty() {
         sql.push_str(&format!(" WHERE {}", conds.join(" AND ")));
     }
@@ -841,7 +868,11 @@ fn filter_expr(f: &BrowseFilter, params: &mut Vec<String>) -> Result<String> {
                 "gt" => ">",
                 "gte" => ">=",
                 "like" | "ilike" => "LIKE",
-                _ => return Err(PluginError::Config(format!("invalid filter operator: {op}"))),
+                _ => {
+                    return Err(PluginError::Config(format!(
+                        "invalid filter operator: {op}"
+                    )))
+                }
             };
             let cv = ColumnValue {
                 column: f.column.clone(),
@@ -863,7 +894,7 @@ fn quote_ident(s: &str) -> String {
 fn validate_type(t: &str) -> Result<&str> {
     let ok = !t.is_empty()
         && t.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '(' | ')' | ',' ));
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '(' | ')' | ','));
     if ok {
         Ok(t)
     } else {
@@ -880,7 +911,11 @@ fn cast_target(type_name: &str) -> &'static str {
     let t = type_name.to_ascii_lowercase();
     if t.contains("int") || t == "bit" || t == "bool" || t == "boolean" {
         "SIGNED"
-    } else if t.contains("decimal") || t.contains("numeric") || t.contains("float") || t.contains("double") {
+    } else if t.contains("decimal")
+        || t.contains("numeric")
+        || t.contains("float")
+        || t.contains("double")
+    {
         "DECIMAL(65,30)"
     } else if t == "date" {
         "DATE"
@@ -912,14 +947,20 @@ fn value_expr(cv: &ColumnValue, params: &mut Vec<String>) -> Result<String> {
 /// Build a `WHERE` clause that matches a single row by the given key columns.
 fn build_where(key: &[ColumnValue], params: &mut Vec<String>) -> Result<String> {
     if key.is_empty() {
-        return Err(PluginError::Config("cannot identify row: no key columns".into()));
+        return Err(PluginError::Config(
+            "cannot identify row: no key columns".into(),
+        ));
     }
     let mut parts = Vec::new();
     for cv in key {
         if cv.value.is_null() {
             parts.push(format!("{} IS NULL", quote_ident(&cv.column)));
         } else {
-            parts.push(format!("{} = {}", quote_ident(&cv.column), value_expr(cv, params)?));
+            parts.push(format!(
+                "{} = {}",
+                quote_ident(&cv.column),
+                value_expr(cv, params)?
+            ));
         }
     }
     Ok(parts.join(" AND "))
@@ -949,7 +990,10 @@ fn is_select(sql: &str) -> bool {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
-    matches!(head.as_str(), "select" | "with" | "show" | "explain" | "describe" | "desc")
+    matches!(
+        head.as_str(),
+        "select" | "with" | "show" | "explain" | "describe" | "desc"
+    )
 }
 
 /// Run one SELECT-ish statement and return its column metadata + JSON rows, plus
@@ -1139,8 +1183,12 @@ fn value_to_json(row: &MySqlRow, i: usize) -> serde_json::Value {
         "FLOAT" => decode!(f32, |v: f32| num_f64(v as f64)),
         "DOUBLE" => decode!(f64, num_f64),
         "DECIMAL" | "NUMERIC" => decode!(BigDecimal, |v: BigDecimal| Value::String(v.to_string())),
-        "TIMESTAMP" => decode!(DateTime<Utc>, |v: DateTime<Utc>| Value::String(v.to_rfc3339())),
-        "DATETIME" => decode!(NaiveDateTime, |v: NaiveDateTime| Value::String(v.to_string())),
+        "TIMESTAMP" => decode!(DateTime<Utc>, |v: DateTime<Utc>| Value::String(
+            v.to_rfc3339()
+        )),
+        "DATETIME" => decode!(NaiveDateTime, |v: NaiveDateTime| Value::String(
+            v.to_string()
+        )),
         "DATE" => decode!(NaiveDate, |v: NaiveDate| Value::String(v.to_string())),
         "TIME" => decode!(NaiveTime, |v: NaiveTime| Value::String(v.to_string())),
         "JSON" => decode!(Value, |v| v),

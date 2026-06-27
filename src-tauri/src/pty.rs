@@ -78,7 +78,9 @@ impl PtyManager {
 
 /// Does `chunk` contain the prompt `pattern` (case-insensitive substring)?
 fn matches_prompt(chunk: &str, pattern: &str) -> bool {
-    chunk.to_ascii_lowercase().contains(&pattern.to_ascii_lowercase())
+    chunk
+        .to_ascii_lowercase()
+        .contains(&pattern.to_ascii_lowercase())
 }
 
 /// Spawn a CLI plugin's terminal process in a PTY, identified by `terminal_id`,
@@ -125,15 +127,11 @@ pub async fn spawn(
     // Optional one-shot prompt auto-answer (e.g. feeding a saved password).
     let prompt = spec.prompt_response.clone();
 
-    let child = pair
-        .slave
-        .spawn_command(cmd)
-        .map_err(|e| e.to_string())?;
+    let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
 
-    let writer: Arc<std::sync::Mutex<Box<dyn Write + Send>>> =
-        Arc::new(std::sync::Mutex::new(
-            pair.master.take_writer().map_err(|e| e.to_string())?,
-        ));
+    let writer: Arc<std::sync::Mutex<Box<dyn Write + Send>>> = Arc::new(std::sync::Mutex::new(
+        pair.master.take_writer().map_err(|e| e.to_string())?,
+    ));
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
 
     let event_name = format!("pty://output/{}", terminal_id);
@@ -192,25 +190,16 @@ pub async fn spawn(
         .lock()
         .await
         .insert(terminal_id.clone(), connection_id);
-    tracing::info!(
-        "pty spawned for terminal {terminal_id} (connection {connection_id:?})"
-    );
+    tracing::info!("pty spawned for terminal {terminal_id} (connection {connection_id:?})");
     Ok(())
 }
 
 /// Return the retained scrollback for a terminal (recent PTY output), so a
 /// freshly-mounted UI can repaint the terminal. Empty if there's no live PTY.
-pub async fn snapshot(
-    manager: Arc<PtyManager>,
-    terminal_id: String,
-) -> Result<Vec<u8>, String> {
+pub async fn snapshot(manager: Arc<PtyManager>, terminal_id: String) -> Result<Vec<u8>, String> {
     let handles = manager.handles.lock().await;
     match handles.get(&terminal_id) {
-        Some(h) => Ok(h
-            .scrollback
-            .lock()
-            .map_err(|e| e.to_string())?
-            .snapshot()),
+        Some(h) => Ok(h.scrollback.lock().map_err(|e| e.to_string())?.snapshot()),
         None => Ok(Vec::new()),
     }
 }

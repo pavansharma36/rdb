@@ -21,8 +21,7 @@ const store = new Map<string, Bag>();
 
 /** Build the scope key for a connection's workspace. Kind is part of the key so
  * two different plugins for the same profile never collide on a field name. */
-export const ConnScope = (savedId: string, kind: string): string =>
-  `${savedId}::${kind}`;
+export const ConnScope = (savedId: string, kind: string): string => `${savedId}::${kind}`;
 
 /**
  * A drop-in replacement for `useState` whose value is mirrored into the
@@ -45,8 +44,7 @@ export function useConnectionState<T>(
   const set = useCallback(
     (next: T | ((prev: T) => T)) => {
       setValue((prev) => {
-        const resolved =
-          typeof next === "function" ? (next as (p: T) => T)(prev) : next;
+        const resolved = typeof next === "function" ? (next as (p: T) => T)(prev) : next;
         const bag = store.get(scope) ?? {};
         bag[field] = resolved;
         store.set(scope, bag);

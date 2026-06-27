@@ -2,18 +2,14 @@
  * text-input substitution swaps them in as you type, but they're never valid
  * JSON, so a hand-typed object would fail to parse without this. */
 export function normalizeQuotes(s: string): string {
-  return s
-    .replace(/[“”„‟]/g, '"')
-    .replace(/[‘’‚‛]/g, "'");
+  return s.replace(/[“”„‟]/g, '"').replace(/[‘’‚‛]/g, "'");
 }
 
 /** Character ranges of the top-level statements in `sql`, splitting on `;` and
  * ignoring `;` inside single-/double-quoted strings, dollar-quoted bodies, and
  * line/block comments. Mirrors the plugin-side splitter so "run statement at
  * cursor" matches what would actually execute. */
-export function statementRanges(
-  sql: string,
-): { text: string; start: number; end: number }[] {
+export function statementRanges(sql: string): { text: string; start: number; end: number }[] {
   const out: { text: string; start: number; end: number }[] = [];
   const n = sql.length;
   let i = 0;
@@ -92,9 +88,7 @@ export function statementAtCursor(sql: string, cursor: number): string {
  * can be made editable. Returns null for anything we can't safely map to one
  * table: joins, unions, group-by, distinct, multiple tables, or subqueries.
  * An unqualified table name is assumed to live in `public`. */
-export function parseSingleTable(
-  query: string,
-): { schema: string; table: string } | null {
+export function parseSingleTable(query: string): { schema: string; table: string } | null {
   // Drop line comments and normalize whitespace.
   const q = query
     .replace(/--[^\n]*/g, " ")
@@ -106,9 +100,7 @@ export function parseSingleTable(
   const lower = q.toLowerCase();
   if (!lower.startsWith("select ") && lower !== "select") return null;
   if (
-    /\bjoin\b|\bunion\b|\bintersect\b|\bexcept\b|\bgroup\s+by\b|\bdistinct\b|\bhaving\b/.test(
-      lower,
-    )
+    /\bjoin\b|\bunion\b|\bintersect\b|\bexcept\b|\bgroup\s+by\b|\bdistinct\b|\bhaving\b/.test(lower)
   ) {
     return null;
   }
@@ -126,12 +118,8 @@ export function parseSingleTable(
 
   // Match `schema.table` or `table`, each part optionally double-quoted; any
   // trailing alias is ignored.
-  const m = rest.match(
-    /^("[^"]+"|[A-Za-z_][\w$]*)(?:\s*\.\s*("[^"]+"|[A-Za-z_][\w$]*))?/,
-  );
+  const m = rest.match(/^("[^"]+"|[A-Za-z_][\w$]*)(?:\s*\.\s*("[^"]+"|[A-Za-z_][\w$]*))?/);
   if (!m) return null;
   const unq = (s: string) => (s.startsWith('"') ? s.slice(1, -1) : s);
-  return m[2]
-    ? { schema: unq(m[1]), table: unq(m[2]) }
-    : { schema: "public", table: unq(m[1]) };
+  return m[2] ? { schema: unq(m[1]), table: unq(m[2]) } : { schema: "public", table: unq(m[1]) };
 }

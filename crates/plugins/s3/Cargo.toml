@@ -2,7 +2,7 @@
 name = "rdb-plugin-s3"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 description = "S3 file manager plugin for RDB"
 

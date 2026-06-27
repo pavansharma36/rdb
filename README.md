@@ -417,4 +417,10 @@ references.
 
 ## License
 
-Dual-licensed under **MIT OR Apache-2.0** (see `Cargo.toml`).
+Source-available under the **Apache License 2.0 with the Commons Clause** (see
+[`LICENSE`](LICENSE)). You are free to use, modify, and distribute the software —
+including for commercial purposes within your own organization — but you may
+**not Sell** it. "Sell" means providing to third parties, for a fee, a product or
+service whose value derives substantially from the software's functionality
+(including paid hosting or support services). This is not an OSI-approved
+open-source license.

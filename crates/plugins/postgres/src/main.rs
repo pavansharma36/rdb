@@ -10,5 +10,8 @@ use rdb_plugin_postgres::PostgresPlugin;
 use rdb_rdbms_common::RdbmsDispatcher;
 
 fn main() -> anyhow::Result<()> {
-    rdb_plugin_runtime::run(PostgresPlugin::new(), RdbmsDispatcher(PostgresPlugin::new()))
+    rdb_plugin_runtime::run(
+        PostgresPlugin::new(),
+        RdbmsDispatcher(PostgresPlugin::new()),
+    )
 }

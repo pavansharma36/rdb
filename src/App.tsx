@@ -94,15 +94,11 @@ export function App() {
     // doesn't reappear on subsequent launches.
     loadConfig()
       .then((cfg) => {
-        const effective = cfg.pluginsDialogShown
-          ? cfg
-          : { ...cfg, pluginsDialogShown: true };
+        const effective = cfg.pluginsDialogShown ? cfg : { ...cfg, pluginsDialogShown: true };
         setConfig(effective);
         applyTheme(cfg.theme);
         if (cfg.sidebarWidth) {
-          setSidebarWidth(
-            Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, cfg.sidebarWidth)),
-          );
+          setSidebarWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, cfg.sidebarWidth)));
         }
         setSidebarCollapsible(cfg.sidebarCollapsible ?? false);
         if (!cfg.pluginsDialogShown) {
@@ -116,9 +112,7 @@ export function App() {
         api
           .listGithubPlugins(cfg.pluginRepo)
           .then((avail) => {
-            const n = avail.filter(
-              (p) => p.status === "update_available",
-            ).length;
+            const n = avail.filter((p) => p.status === "update_available").length;
             if (n > 0) setPluginUpdates(n);
           })
           .catch(() => {});
@@ -327,13 +321,7 @@ export function App() {
         );
       }
       case "rabbitmq":
-        return (
-          <RabbitMqWorkspace
-            key={conn.id}
-            connectionId={conn.id}
-            savedId={conn.savedId}
-          />
-        );
+        return <RabbitMqWorkspace key={conn.id} connectionId={conn.id} savedId={conn.savedId} />;
       case "cli": {
         // The ssh PTY lives in the host and survives this component
         // unmounting, so the workspace can mount/unmount like any other; it
@@ -370,22 +358,16 @@ export function App() {
             savedId={conn.savedId}
             treeWidth={treeWidthFor(conn.savedId, TREE_DEFAULT)}
             onTreeWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
-            pluginVersion={
-              plugins.find((p) => p.id === conn.pluginId)?.version ?? ""
-            }
+            pluginVersion={plugins.find((p) => p.id === conn.pluginId)?.version ?? ""}
           />
         );
       }
       default:
-        return (
-          <div className="placeholder">No workspace available for “{mod}”.</div>
-        );
+        return <div className="placeholder">No workspace available for “{mod}”.</div>;
     }
   }
 
-  const formError = loadError
-    ? "Failed to load plugins: " + loadError
-    : connectError;
+  const formError = loadError ? "Failed to load plugins: " + loadError : connectError;
 
   // Drag the divider between sidebar and main to resize; persist on release.
   function startSidebarResize(e: React.MouseEvent) {
@@ -393,10 +375,7 @@ export function App() {
     const startX = e.clientX;
     const startWidth = sidebarWidth;
     function onMove(ev: MouseEvent) {
-      const next = Math.min(
-        SIDEBAR_MAX,
-        Math.max(SIDEBAR_MIN, startWidth + ev.clientX - startX),
-      );
+      const next = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startWidth + ev.clientX - startX));
       setSidebarWidth(next);
     }
     function onUp() {
@@ -404,9 +383,7 @@ export function App() {
       document.removeEventListener("mouseup", onUp);
       document.body.style.cursor = "";
       setSidebarWidth((w) => {
-        saveConfig({ ...(config ?? ({} as AppConfig)), sidebarWidth: w }).catch(
-          () => {},
-        );
+        saveConfig({ ...(config ?? ({} as AppConfig)), sidebarWidth: w }).catch(() => {});
         return w;
       });
     }
@@ -532,7 +509,9 @@ export function App() {
         <WorkspaceLoaderSlot />
         {showForm ? (
           <ConnectionForm
-            key={editingId ?? (cloneDraft ? `clone-${cloneDraft.id}` : creating ? "new" : "default")}
+            key={
+              editingId ?? (cloneDraft ? `clone-${cloneDraft.id}` : creating ? "new" : "default")
+            }
             plugins={plugins}
             error={formError}
             existing={saved}
@@ -557,9 +536,7 @@ export function App() {
           onUninstalled={() => refreshPlugins()}
         />
       )}
-      {update && (
-        <UpdateBanner update={update} onDismiss={() => setUpdate(null)} />
-      )}
+      {update && <UpdateBanner update={update} onDismiss={() => setUpdate(null)} />}
       {pluginUpdates > 0 && !installing && (
         <PluginUpdateBanner
           count={pluginUpdates}
@@ -579,8 +556,7 @@ export function App() {
             <>
               Delete{" "}
               <strong>
-                {saved.find((c) => c.id === pendingDelete)?.name ??
-                  "this connection"}
+                {saved.find((c) => c.id === pendingDelete)?.name ?? "this connection"}
               </strong>
               ? This can't be undone.
             </>

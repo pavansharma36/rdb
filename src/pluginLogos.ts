@@ -19,7 +19,10 @@ const modules = import.meta.glob("./assets/plugin-logos/*.svg", {
 
 const logos: Record<string, string> = {};
 for (const [path, url] of Object.entries(modules)) {
-  const name = path.split("/").pop()!.replace(/\.svg$/, "");
+  const name = path
+    .split("/")
+    .pop()!
+    .replace(/\.svg$/, "");
   logos[name] = url;
 }
 

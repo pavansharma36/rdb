@@ -3,7 +3,7 @@ import { api, errString } from "../../../api/api.ts";
 import type { ConnectionId } from "../../../api/api.ts";
 import { DataTable, type Col } from "../../DataTable";
 import { vhostLabel } from "./format";
-import {MqExchange} from "../../../api/rabbitmq.ts";
+import { MqExchange } from "../../../api/rabbitmq.ts";
 
 export function ExchangesTab({
   connectionId,
@@ -21,9 +21,7 @@ export function ExchangesTab({
   const [status, setStatus] = useState<string | null>(null);
 
   const live = selected
-    ? exchanges.find(
-        (x) => x.name === selected.name && x.vhost === selected.vhost,
-      ) ?? selected
+    ? (exchanges.find((x) => x.name === selected.name && x.vhost === selected.vhost) ?? selected)
     : null;
 
   const publish = () =>
@@ -32,18 +30,8 @@ export function ExchangesTab({
       onError(null);
       setStatus(null);
       try {
-        const r = await api.mqPublish(
-          connectionId,
-          live!.vhost,
-          live!.name,
-          routingKey,
-          payload,
-        );
-        setStatus(
-          r.routed
-            ? "Published (routed)."
-            : "Published, but not routed to any queue.",
-        );
+        const r = await api.mqPublish(connectionId, live!.vhost, live!.name, routingKey, payload);
+        setStatus(r.routed ? "Published (routed)." : "Published, but not routed to any queue.");
       } catch (e) {
         onError(errString(e));
       } finally {
@@ -102,11 +90,7 @@ export function ExchangesTab({
         <div className="mq-detail">
           <div className="mq-detail-head">
             <strong>{live.name || "(AMQP default)"}</strong>
-            <button
-              className="icon-btn"
-              onClick={() => setSelected(null)}
-              title="Close"
-            >
+            <button className="icon-btn" onClick={() => setSelected(null)} title="Close">
               ✕
             </button>
           </div>

@@ -82,9 +82,7 @@ export function KvEditor({
               type="checkbox"
               className="curlui-kv-check"
               checked={r.enabled}
-              disabled={
-                disabled || (isLast && !r.key.trim() && !r.value.trim())
-              }
+              disabled={disabled || (isLast && !r.key.trim() && !r.value.trim())}
               onChange={(e) => patch(r.id, "enabled", e.target.checked)}
             />
             <input

@@ -175,23 +175,21 @@ fn session_settings(config: &ConnectionConfig) -> Result<SessionSettings> {
 }
 
 fn cfg_bool(config: &ConnectionConfig, key: &str, default: bool) -> bool {
-    config
-        .get(key)
-        .and_then(|v| v.as_bool())
-        .unwrap_or(default)
+    config.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
 }
 
 fn cfg_u64(config: &ConnectionConfig, key: &str, default: u64) -> u64 {
-    config
-        .get(key)
-        .and_then(|v| v.as_u64())
-        .unwrap_or(default)
+    config.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
 }
 
 fn build_client(settings: &SessionSettings) -> Result<Client> {
     let mut builder = Client::builder()
         // Default User-Agent; a per-request `User-Agent` header overrides it.
-        .user_agent(concat!("rdb/", env!("CARGO_PKG_VERSION"), " Http-Client (plugin)"))
+        .user_agent(concat!(
+            "rdb/",
+            env!("CARGO_PKG_VERSION"),
+            " Http-Client (plugin)"
+        ))
         .redirect(if settings.follow_redirects {
             reqwest::redirect::Policy::limited(10)
         } else {
@@ -248,11 +246,9 @@ fn encode_query_url(url: &str) -> String {
     }
     let encoded = query
         .split('&')
-        .map(|pair| {
-            match pair.split_once('=') {
-                Some((k, v)) => format!("{}={}", enc(k), enc(v)),
-                None => enc(pair),
-            }
+        .map(|pair| match pair.split_once('=') {
+            Some((k, v)) => format!("{}={}", enc(k), enc(v)),
+            None => enc(pair),
         })
         .collect::<Vec<_>>()
         .join("&");
@@ -495,21 +491,16 @@ fn guess_mime(filename: &str) -> String {
 /// rigid parser rejects. We tokenize respecting quotes/escapes/line-
 /// continuations, then interpret the flags we care about and ignore the rest.
 pub fn parse_curl_command(curl: &str) -> Result<HttpRequest> {
-    let tokens = tokenize_shell(curl)
-        .map_err(|e| PluginError::Config(format!("parse curl: {e}")))?;
+    let tokens =
+        tokenize_shell(curl).map_err(|e| PluginError::Config(format!("parse curl: {e}")))?;
     let mut it = tokens.iter().peekable();
 
-    // Skip an optional leading `curl` (and a shell prompt like `$`).
-    while let Some(tok) = it.peek() {
+    // Skip an optional leading `curl` (and a shell prompt like `$`). Anything
+    // else (a flag or a bare URL) is treated as the start of the args.
+    if let Some(tok) = it.peek() {
         if tok.as_str() == "$" || tok.eq_ignore_ascii_case("curl") {
             it.next();
-            break;
         }
-        // No `curl` prefix at all — treat the whole thing as args.
-        if !tok.starts_with('-') {
-            break;
-        }
-        break;
     }
 
     let mut method: Option<String> = None;
@@ -590,10 +581,9 @@ pub fn parse_curl_command(curl: &str) -> Result<HttpRequest> {
                 }
             }
             // Known value-less flags we can safely ignore.
-            "-k" | "--insecure" | "--compressed" | "-s" | "--silent" | "-i"
-            | "--include" | "-v" | "--verbose" | "-S" | "--show-error" | "-f"
-            | "--fail" | "-G" | "--get" | "-#" | "--progress-bar" | "-g"
-            | "--globoff" => {}
+            "-k" | "--insecure" | "--compressed" | "-s" | "--silent" | "-i" | "--include"
+            | "-v" | "--verbose" | "-S" | "--show-error" | "-f" | "--fail" | "-G" | "--get"
+            | "-#" | "--progress-bar" | "-g" | "--globoff" => {}
             other if other.starts_with('-') => {
                 // Unknown flag. If it clearly takes a value (long form without
                 // inline `=`), consume the following token so it isn't mistaken
@@ -635,7 +625,11 @@ pub fn parse_curl_command(curl: &str) -> Result<HttpRequest> {
     let (body, body_kind, parts) = if !forms.is_empty() {
         (None, "multipart".to_owned(), Some(forms))
     } else {
-        (body.clone(), infer_body_kind(&headers, body.as_deref()), None)
+        (
+            body.clone(),
+            infer_body_kind(&headers, body.as_deref()),
+            None,
+        )
     };
     let method = method.unwrap_or_else(|| {
         if body.is_some() || parts.is_some() {
@@ -804,7 +798,6 @@ fn infer_body_kind(headers: &HashMap<String, String>, body: Option<&str>) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn parse_curl_simple_get() {
@@ -901,10 +894,7 @@ mod tests {
 
     #[test]
     fn parse_curl_method_after_url_and_multiple_data() {
-        let r = parse_curl_command(
-            "curl https://x.com -d a=1 --data b=2 -X PUT",
-        )
-        .unwrap();
+        let r = parse_curl_command("curl https://x.com -d a=1 --data b=2 -X PUT").unwrap();
         assert_eq!(r.method, "PUT");
         assert_eq!(r.body.as_deref(), Some("a=1&b=2"));
     }

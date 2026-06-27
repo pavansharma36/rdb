@@ -202,7 +202,16 @@ impl BrowseFilter {
     /// The accepted operator tokens. Both ends (TS `<select>` and the plugin)
     /// enforce this list so no arbitrary operator text reaches SQL.
     pub const OPS: &'static [&'static str] = &[
-        "eq", "ne", "lt", "lte", "gt", "gte", "like", "ilike", "is_null", "is_not_null",
+        "eq",
+        "ne",
+        "lt",
+        "lte",
+        "gt",
+        "gte",
+        "like",
+        "ilike",
+        "is_null",
+        "is_not_null",
     ];
 }
 
@@ -294,7 +303,12 @@ pub trait RdbmsPlugin: Send + Sync {
             schema.replace('"', "\"\""),
             table.replace('"', "\"\""),
         );
-        if let Some(w) = spec.where_sql.as_deref().map(str::trim).filter(|w| !w.is_empty()) {
+        if let Some(w) = spec
+            .where_sql
+            .as_deref()
+            .map(str::trim)
+            .filter(|w| !w.is_empty())
+        {
             q.push_str(&format!(" WHERE ({w})"));
         }
         if !spec.sorts.is_empty() {
@@ -331,12 +345,7 @@ pub trait RdbmsPlugin: Send + Sync {
     /// The plugin owns the connection pool, so it streams rows straight to disk
     /// rather than shipping them across the wire. Plugins that don't support
     /// CSV export return [`PluginError::Unsupported`].
-    async fn export_csv(
-        &self,
-        _conn: Arc<dyn Connection>,
-        _sql: &str,
-        _path: &str,
-    ) -> Result<u64> {
+    async fn export_csv(&self, _conn: Arc<dyn Connection>, _sql: &str, _path: &str) -> Result<u64> {
         Err(PluginError::Unsupported)
     }
 
@@ -541,7 +550,11 @@ pub async fn dispatch_rdbms(
         }
         "rdbms.browse_table" => {
             let p: BrowseTableParams = parse(params)?;
-            to_value(plugin.browse_table(conn, &p.schema, &p.table, p.spec).await?)
+            to_value(
+                plugin
+                    .browse_table(conn, &p.schema, &p.table, p.spec)
+                    .await?,
+            )
         }
         "rdbms.execute" => {
             let p: ExecuteParams = parse(params)?;
@@ -553,7 +566,11 @@ pub async fn dispatch_rdbms(
         }
         "rdbms.apply_changes" => {
             let p: ApplyChangesParams = parse(params)?;
-            to_value(plugin.apply_changes(conn, &p.schema, &p.table, p.changes).await?)
+            to_value(
+                plugin
+                    .apply_changes(conn, &p.schema, &p.table, p.changes)
+                    .await?,
+            )
         }
         _ => Err(PluginError::Unsupported),
     }

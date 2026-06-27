@@ -2,7 +2,7 @@
 name = "rdb-plugin-sftp"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 description = "SFTP file manager plugin for RDB"
 
 [[bin]]

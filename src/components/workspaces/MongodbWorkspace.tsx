@@ -1,45 +1,49 @@
 import { useEffect, useRef, useState } from "react";
-import { EJSON } from "bson";
-import { parseFilter, toJSString } from "mongodb-query-parser";
 import { api, errString } from "../../api/api.ts";
 import type { ConnectionId } from "../../api/api.ts";
-import type { FindResult, MongoCollection } from "../../api/document.ts";
+import type { MongoCollection } from "../../api/document.ts";
 import type { WorkspaceFile } from "../../api/store.ts";
-import {
-  listWorkspaceFiles,
-  saveWorkspaceFile,
-  deleteWorkspaceFile,
-} from "../../api/store.ts";
+import { listWorkspaceFiles, saveWorkspaceFile, deleteWorkspaceFile } from "../../api/store.ts";
 import { useResizable, TREE_MIN, TREE_MAX } from "../../useResizable";
 import { ConnScope, useConnectionState } from "../../connectionState";
 import { CodeEditorV2, type CodeEditorV2Handle } from "../CodeEditorV2.tsx";
 import { ConfirmDialog } from "../Modal";
 import { NavTree } from "./NavTree";
 import { WorkspaceFileList } from "./WorkspaceFileList";
+import {
+  STAGE_OPS,
+  DEFAULT_PIPELINE,
+  newStage,
+  stageDefault,
+  formatDoc,
+  formatDocJson,
+  formatRunResult,
+  cursorBatch,
+  describeIndex,
+  buildFindCommand,
+  buildAggregateCommand,
+  buildListIndexesCommand,
+  findScript,
+  aggregateScript,
+  docId,
+  buildDeleteCommand,
+  buildReplaceCommand,
+  type Stage,
+  type DocsResult,
+  type StatementResult,
+} from "./mongodb/mongo.ts";
+import { executeScript, statementAtCursor } from "./mongodb/script.ts";
 
-/** Saved query files use this extension (the editor holds a JSON find filter). */
-const QUERY_EXT = "json";
+/** Saved script files use this extension (a mongosh-like multi-statement script). */
+const SCRIPT_EXT = "mongo";
 
-/** Render a result document in MongoDB shell syntax (`ObjectId('...')`,
- * `ISODate('...')`, …). The backend sends documents as extended JSON
- * (`{"$oid":"..."}`); deserialize that back to BSON types, then stringify the
- * shell representation. Falls back to plain JSON so one odd document can't break
- * the whole result view. */
-function formatDoc(doc: unknown): string {
-  try {
-    return (
-      toJSString(EJSON.deserialize(doc as Record<string, unknown>), 2) ??
-      JSON.stringify(doc, null, 2)
-    );
-  } catch {
-    return JSON.stringify(doc, null, 2);
-  }
-}
+/** The per-collection views plus the database-scoped Script tab. */
+type Tab = "documents" | "aggregation" | "indexes" | "script";
 
 interface Props {
   connectionId: ConnectionId;
   /** Stable saved-profile id; scopes session-preserved workspace state and the
-   * saved query files to this profile. */
+   * saved script files to this profile. */
   savedId: string;
   /** Configured default database; opened automatically on connect when present
    * (and known to the server). Null when none is configured. */
@@ -70,53 +74,63 @@ export function MongodbWorkspace({
   // unmount a connection switch causes, keyed by the stable saved-profile id.
   const scope = ConnScope(savedId, "document");
   // Databases on the server (drive the picker) and the one currently selected.
-  const [databases, setDatabases] = useConnectionState<string[]>(
+  const [databases, setDatabases] = useConnectionState<string[]>(scope, "databases", []);
+  const [currentDatabase, setCurrentDatabase] = useConnectionState<string | null>(
     scope,
-    "databases",
-    [],
+    "currentDatabase",
+    null,
   );
-  const [currentDatabase, setCurrentDatabase] = useConnectionState<
-    string | null
-  >(scope, "currentDatabase", null);
   // Collections cache keyed by database; only the current database's list shows.
-  const [collections, setCollections] = useConnectionState<
-    Record<string, MongoCollection[]>
-  >(scope, "collections", {});
+  const [collections, setCollections] = useConnectionState<Record<string, MongoCollection[]>>(
+    scope,
+    "collections",
+    {},
+  );
   // The expanded database node in the tree (its name), or null when collapsed.
-  const [openDb, setOpenDb] = useConnectionState<string | null>(
-    scope,
-    "openDb",
-    null,
-  );
+  const [openDb, setOpenDb] = useConnectionState<string | null>(scope, "openDb", null);
   // The selected collection (within the current database), or null.
-  const [active, setActive] = useConnectionState<string | null>(
-    scope,
-    "active",
-    null,
-  );
+  const [active, setActive] = useConnectionState<string | null>(scope, "active", null);
+  // Which tab is showing (per-collection views, or the database-scoped Script).
+  const [tab, setTab] = useConnectionState<Tab>(scope, "tab", "documents");
   const [filter, setFilter] = useConnectionState(scope, "filter", "{}");
   const [limit, setLimit] = useConnectionState(scope, "limit", 50);
-  const [result, setResult] = useConnectionState<FindResult | null>(
+  const [result, setResult] = useConnectionState<DocsResult | null>(scope, "result", null);
+  // Aggregation builder state (scoped to the active collection; reset on pick).
+  const [pipeline, setPipeline] = useConnectionState<Stage[]>(scope, "pipeline", DEFAULT_PIPELINE);
+  const [aggResult, setAggResult] = useConnectionState<DocsResult | null>(scope, "aggResult", null);
+  // Indexes for the active collection; null means "not loaded yet" (lazy-loaded
+  // when the Indexes tab is opened).
+  const [indexes, setIndexes] = useConnectionState<unknown[] | null>(scope, "indexes", null);
+
+  // --- Script tab state (database-scoped, mongosh-like multi-statement) ----
+  const [scriptText, setScriptText] = useConnectionState(scope, "scriptText", "");
+  const [scriptResults, setScriptResults] = useConnectionState<StatementResult[] | null>(
     scope,
-    "result",
+    "scriptResults",
     null,
   );
-  // Saved query files for this connection profile (the "Queries" section).
-  const [queryFiles, setQueryFiles] = useState<WorkspaceFile[]>([]);
-  // When non-null, the inline "new query file name" input is open with this draft.
-  const [newQueryName, setNewQueryName] = useState<string | null>(null);
-  // Name of the query file currently loaded in the editor (shown in its header).
-  const [activeFile, setActiveFile] = useConnectionState<string | null>(
+  // Saved `.mongo` script files for this connection profile (the "Scripts" section).
+  const [scriptFiles, setScriptFiles] = useState<WorkspaceFile[]>([]);
+  const [newScriptName, setNewScriptName] = useState<string | null>(null);
+  const [scriptActiveFile, setScriptActiveFile] = useConnectionState<string | null>(
     scope,
-    "activeFile",
+    "scriptActiveFile",
     null,
   );
-  // Name of the query file awaiting inline delete confirmation, if any.
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [confirmDeleteScript, setConfirmDeleteScript] = useState<string | null>(null);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Brief "Copied" flash on the Documents/Aggregation copy-query buttons.
+  const [copied, setCopied] = useState(false);
+  // Per-document actions in the Documents result (Compass-style edit/copy/delete).
+  const [editingDoc, setEditingDoc] = useState<number | null>(null);
+  const [editDocText, setEditDocText] = useState("");
+  const [copiedDoc, setCopiedDoc] = useState<string | null>(null);
+  const [confirmDeleteDoc, setConfirmDeleteDoc] = useState<number | null>(null);
 
   const filterEditorRef = useRef<CodeEditorV2Handle>(null);
+  const scriptEditorRef = useRef<CodeEditorV2Handle>(null);
 
   // Whether a database was already selected on mount (state restored from a
   // connection switch-back); if so, don't auto-select and clobber it.
@@ -143,32 +157,36 @@ export function MongodbWorkspace({
       .catch((e) => setError(errString(e)));
   }, [connectionId]);
 
-  // Load this profile's saved query files.
+  // Load this profile's saved script files.
   useEffect(() => {
-    listWorkspaceFiles(savedId, QUERY_EXT)
-      .then(setQueryFiles)
-      .catch(() => setQueryFiles([]));
+    listWorkspaceFiles(savedId, SCRIPT_EXT)
+      .then(setScriptFiles)
+      .catch(() => setScriptFiles([]));
   }, [savedId]);
 
-  // Auto-save edits to the active query file, debounced so we don't write on
+  // Lazily load indexes the first time the Indexes tab is shown for a collection.
+  useEffect(() => {
+    if (tab === "indexes" && active && indexes === null) void loadIndexes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, active, indexes]);
+
+  // Auto-save edits to the active script file (debounced) so we don't write on
   // every keystroke. No-op when nothing's loaded or content already matches disk.
   useEffect(() => {
-    if (!activeFile) return;
-    const stored = queryFiles.find((f) => f.name === activeFile);
-    if (!stored || stored.content === filter) return;
+    if (!scriptActiveFile) return;
+    const stored = scriptFiles.find((f) => f.name === scriptActiveFile);
+    if (!stored || stored.content === scriptText) return;
     const t = setTimeout(() => {
-      saveWorkspaceFile(savedId, activeFile, filter, QUERY_EXT)
+      saveWorkspaceFile(savedId, scriptActiveFile, scriptText, SCRIPT_EXT)
         .then(() =>
-          setQueryFiles((prev) =>
-            prev.map((f) =>
-              f.name === activeFile ? { ...f, content: filter } : f,
-            ),
+          setScriptFiles((prev) =>
+            prev.map((f) => (f.name === scriptActiveFile ? { ...f, content: scriptText } : f)),
           ),
         )
         .catch((e) => setError(errString(e)));
     }, 800);
     return () => clearTimeout(t);
-  }, [filter, activeFile, queryFiles, savedId]);
+  }, [scriptText, scriptActiveFile, scriptFiles, savedId]);
 
   async function loadCollections(db: string) {
     try {
@@ -179,6 +197,17 @@ export function MongodbWorkspace({
     }
   }
 
+  /** Drop any per-collection view state (used when the selected collection or
+   * database changes). */
+  function resetCollectionViews() {
+    setResult(null);
+    setAggResult(null);
+    setIndexes(null);
+    setPipeline(DEFAULT_PIPELINE);
+    setEditingDoc(null);
+    setConfirmDeleteDoc(null);
+  }
+
   /** Switch the picker to another database and load its collections. Everything
    * shown belonged to the previous database, so the selection/result reset. */
   async function switchDatabase(db: string) {
@@ -186,7 +215,7 @@ export function MongodbWorkspace({
     setCurrentDatabase(db);
     setOpenDb(db);
     setActive(null);
-    setResult(null);
+    resetCollectionViews();
     if (!collections[db]) await loadCollections(db);
   }
 
@@ -206,7 +235,7 @@ export function MongodbWorkspace({
         setOpenDb(null);
         setCollections({});
         setActive(null);
-        setResult(null);
+        resetCollectionViews();
       }
     } catch (e) {
       setError(errString(e));
@@ -217,35 +246,30 @@ export function MongodbWorkspace({
 
   async function pick(coll: string) {
     setActive(coll);
+    setTab("documents");
+    resetCollectionViews();
+    setError(null);
     await runFind(coll);
   }
 
+  /** Run the Documents filter as a `find` command via `runCommand`. */
   async function runFind(coll?: string) {
     const db = currentDatabase;
     const target = coll ?? active;
     if (!db || !target) return;
-    // Parse the filter box (which accepts MongoDB shell syntax like
-    // `{ _id: ObjectId('...') }`) into BSON, then send canonical extended JSON
-    // the backend can interpret. An empty box means "no filter".
-    let filterArg: string | null = null;
-    const text = filter.trim();
-    if (text) {
-      let parsed: unknown;
-      try {
-        parsed = parseFilter(text);
-      } catch (e) {
-        setError("Invalid filter: " + errString(e));
-        return;
-      }
-      filterArg = EJSON.stringify(parsed as Record<string, unknown>, {
-        relaxed: false,
-      });
+    let command: string;
+    try {
+      // The filter box accepts MongoDB shell syntax (`{ _id: ObjectId('...') }`).
+      command = buildFindCommand(target, filter, limit);
+    } catch (e) {
+      setError("Invalid filter: " + errString(e));
+      return;
     }
     setBusy(true);
     setError(null);
     try {
-      const r = await api.docFind(connectionId, db, target, filterArg, limit);
-      setResult(r);
+      const rc = await api.docRunCommand(connectionId, db, command);
+      setResult({ documents: cursorBatch(rc), elapsed_ms: rc.elapsed_ms });
     } catch (e) {
       setError(errString(e));
       setResult(null);
@@ -254,53 +278,237 @@ export function MongodbWorkspace({
     }
   }
 
-  /** Save the current editor filter under `name` (from the inline name input). */
-  async function saveCurrentQuery() {
-    const name = newQueryName?.trim();
-    if (!name) {
-      setNewQueryName(null);
+  /** Run the builder's pipeline as an `aggregate` command via `runCommand`. */
+  async function runAggregate() {
+    const db = currentDatabase;
+    const target = active;
+    if (!db || !target) return;
+    let command: string;
+    try {
+      command = buildAggregateCommand(target, pipeline, limit);
+    } catch (e) {
+      setError("Invalid pipeline stage: " + errString(e));
       return;
     }
-    if (queryFiles.some((f) => f.name.toLowerCase() === name.toLowerCase())) {
-      setError(`A query named "${name}" already exists.`);
+    setBusy(true);
+    setError(null);
+    try {
+      const rc = await api.docRunCommand(connectionId, db, command);
+      setAggResult({ documents: cursorBatch(rc), elapsed_ms: rc.elapsed_ms });
+    } catch (e) {
+      setError(errString(e));
+      setAggResult(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Load the active collection's indexes via a `listIndexes` command. */
+  async function loadIndexes(coll?: string) {
+    const db = currentDatabase;
+    const target = coll ?? active;
+    if (!db || !target) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const rc = await api.docRunCommand(connectionId, db, buildListIndexesCommand(target));
+      setIndexes(cursorBatch(rc));
+    } catch (e) {
+      setError(errString(e));
+      setIndexes([]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Run the Script tab's text: each statement is executed as JavaScript with a
+   * `db` runtime in scope, building and running one command per method call.
+   * `srcOverride` runs that text instead of the editor's (used by ▶ run-from-list,
+   * whose `setScriptText` hasn't applied yet). */
+  async function runScript(srcOverride?: string) {
+    const db = currentDatabase;
+    if (!db) return;
+    const src = srcOverride ?? scriptText;
+    setBusy(true);
+    setError(null);
+    setScriptResults(null);
+    try {
+      const results = await executeScript(
+        src,
+        limit,
+        db,
+        (commandJson) => api.docRunCommand(connectionId, db, commandJson),
+        (partial) => setScriptResults(partial),
+      );
+      setScriptResults(results);
+    } catch (e) {
+      setError(errString(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** ⌘/Ctrl+Enter: run the selection if any, else the statement the cursor is
+   *  in — not the whole script (the Run button does that). */
+  function runFromEditor() {
+    if (busy) return;
+    const ed = scriptEditorRef.current;
+    if (!ed) return;
+    const sel = ed.getSelection();
+    const stmt = sel.trim() ? sel : statementAtCursor(ed.getValue(), ed.getCursorOffset());
+    if (stmt.trim()) void runScript(stmt);
+  }
+
+  /** Copy the current Documents/Aggregation query as a runnable mongosh script. */
+  async function copyQuery() {
+    if (!active) return;
+    const script =
+      tab === "aggregation" ? aggregateScript(active, pipeline) : findScript(active, filter, limit);
+    try {
+      await navigator.clipboard.writeText(script);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (e) {
+      setError(errString(e));
+    }
+  }
+
+  /** Copy a single result document to the clipboard — `shell` syntax
+   * (`ObjectId('…')`) or raw relaxed JSON. */
+  async function copyDoc(i: number, kind: "shell" | "json") {
+    const doc = result?.documents[i];
+    if (doc === undefined) return;
+    const text = kind === "json" ? formatDocJson(doc) : formatDoc(doc);
+    const key = `${i}-${kind}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedDoc(key);
+      setTimeout(() => setCopiedDoc((c) => (c === key ? null : c)), 1500);
+    } catch (e) {
+      setError(errString(e));
+    }
+  }
+
+  /** Open the inline editor for a result document. */
+  function startEditDoc(i: number) {
+    const doc = result?.documents[i];
+    if (doc === undefined) return;
+    setEditDocText(formatDoc(doc));
+    setEditingDoc(i);
+    setError(null);
+  }
+
+  /** Save the edited document: replace the matched (_id) document, then refresh. */
+  async function saveEditDoc() {
+    const db = currentDatabase;
+    if (!db || !active) return;
+    let command: string;
+    try {
+      command = buildReplaceCommand(active, editDocText);
+    } catch (e) {
+      setError("Invalid document: " + errString(e));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.docRunCommand(connectionId, db, command);
+      setEditingDoc(null);
+      await runFind();
+    } catch (e) {
+      setError(errString(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Delete a result document by its _id (after inline confirmation), then refresh. */
+  async function deleteDoc(i: number) {
+    setConfirmDeleteDoc(null);
+    const db = currentDatabase;
+    const doc = result?.documents[i];
+    if (!db || !active || doc === undefined) return;
+    let command: string;
+    try {
+      command = buildDeleteCommand(active, doc);
+    } catch (e) {
+      setError(errString(e));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.docRunCommand(connectionId, db, command);
+      await runFind();
+    } catch (e) {
+      setError(errString(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // --- Aggregation builder mutations ---------------------------------------
+  function updateStage(i: number, patch: Partial<Stage>) {
+    setPipeline((p) => p.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+  }
+  /** Change a stage's operator, dropping the new operator's default snippet
+   * into the editor as the stage body. */
+  function changeStageOp(i: number, op: string) {
+    setPipeline((p) => p.map((s, idx) => (idx === i ? { ...s, op, body: stageDefault(op) } : s)));
+  }
+  function addStage() {
+    setPipeline((p) => [...p, newStage()]);
+  }
+  function removeStage(i: number) {
+    setPipeline((p) => (p.length > 1 ? p.filter((_, idx) => idx !== i) : DEFAULT_PIPELINE));
+  }
+
+  /** Save the current script under `name` (from the inline name input). */
+  async function saveCurrentScript() {
+    const name = newScriptName?.trim();
+    if (!name) {
+      setNewScriptName(null);
+      return;
+    }
+    if (scriptFiles.some((f) => f.name.toLowerCase() === name.toLowerCase())) {
+      setError(`A script named "${name}" already exists.`);
       return;
     }
     try {
-      await saveWorkspaceFile(savedId, name, filter, QUERY_EXT);
-      setQueryFiles(await listWorkspaceFiles(savedId, QUERY_EXT));
-      setNewQueryName(null);
-      setActiveFile(name);
+      await saveWorkspaceFile(savedId, name, scriptText, SCRIPT_EXT);
+      setScriptFiles(await listWorkspaceFiles(savedId, SCRIPT_EXT));
+      setNewScriptName(null);
+      setScriptActiveFile(name);
       setError(null);
     } catch (e) {
       setError(errString(e));
     }
   }
 
-  /** Delete a saved query file (after inline confirmation). */
-  async function removeQueryFile(name: string) {
-    setConfirmDelete(null);
+  /** Delete a saved script file (after inline confirmation). */
+  async function removeScriptFile(name: string) {
+    setConfirmDeleteScript(null);
     try {
-      await deleteWorkspaceFile(savedId, name, QUERY_EXT);
-      setQueryFiles(await listWorkspaceFiles(savedId, QUERY_EXT));
-      if (activeFile === name) setActiveFile(null);
+      await deleteWorkspaceFile(savedId, name, SCRIPT_EXT);
+      setScriptFiles(await listWorkspaceFiles(savedId, SCRIPT_EXT));
+      if (scriptActiveFile === name) setScriptActiveFile(null);
     } catch (e) {
       setError(errString(e));
     }
   }
 
-  /** Open a saved query file: load its filter into the editor. */
-  function loadQueryFile(file: WorkspaceFile) {
-    setFilter(file.content);
-    setActiveFile(file.name);
+  /** Open a saved script file: load it into the script editor. */
+  function loadScriptFile(file: WorkspaceFile) {
+    setScriptText(file.content);
+    setScriptActiveFile(file.name);
+    setTab("script");
   }
 
-  const fileDirty =
-    !!activeFile &&
-    queryFiles.find((f) => f.name === activeFile)?.content !== filter;
+  const scriptDirty =
+    !!scriptActiveFile &&
+    scriptFiles.find((f) => f.name === scriptActiveFile)?.content !== scriptText;
   const shownCollections = currentDatabase
-    ? [...(collections[currentDatabase] ?? [])].sort((a, b) =>
-        a.name.localeCompare(b.name),
-      )
+    ? [...(collections[currentDatabase] ?? [])].sort((a, b) => a.name.localeCompare(b.name))
     : [];
 
   return (
@@ -308,24 +516,38 @@ export function MongodbWorkspace({
       <div className="tree" style={{ width }}>
         <div className="tree-top">
           <WorkspaceFileList
-            files={queryFiles}
-            activeFile={activeFile}
-            newName={newQueryName}
-            onToggleAdd={() => setNewQueryName((n) => (n === null ? "" : null))}
-            onNewNameChange={setNewQueryName}
-            onSave={saveCurrentQuery}
-            onCancelAdd={() => setNewQueryName(null)}
-            onLoad={loadQueryFile}
-            onRequestDelete={setConfirmDelete}
-            label="Queries"
-            ext={QUERY_EXT}
-            addTitle="Save current filter as a query"
-            emptyText="No saved queries."
+            files={scriptFiles}
+            activeFile={scriptActiveFile}
+            newName={newScriptName}
+            onToggleAdd={() => {
+              if (newScriptName === null) {
+                // Start a new script: blank editor shown in the script view,
+                // with the inline name input open to save it.
+                setScriptText("");
+                setScriptActiveFile(null);
+                setScriptResults(null);
+                setTab("script");
+                setNewScriptName("");
+              } else {
+                setNewScriptName(null);
+              }
+            }}
+            onNewNameChange={setNewScriptName}
+            onSave={saveCurrentScript}
+            onCancelAdd={() => setNewScriptName(null)}
+            onLoad={loadScriptFile}
+            onRequestDelete={setConfirmDeleteScript}
+            onRun={(f) => {
+              loadScriptFile(f);
+              void runScript(f.content);
+            }}
+            label="Scripts"
+            ext={SCRIPT_EXT}
+            addTitle="Save current script as a file"
+            emptyText="No saved scripts."
           />
           <div className="tree-dbselect">
-            {databases.length > 0 && (
-              <span className="field-label">Database</span>
-            )}
+            {databases.length > 0 && <span className="field-label">Database</span>}
             <div className="tree-db-row">
               {databases.length > 0 && (
                 <select
@@ -363,105 +585,445 @@ export function MongodbWorkspace({
               : {}
           }
           openGroup={openDb}
-          activeKey={
-            active && currentDatabase ? currentDatabase + "." + active : null
-          }
-          onToggleGroup={(name) =>
-            setOpenDb((o) => (o === name ? null : name))
-          }
+          activeKey={active && currentDatabase ? currentDatabase + "." + active : null}
+          onToggleGroup={(name) => setOpenDb((o) => (o === name ? null : name))}
           onPickItem={(_db, name) => pick(name)}
           emptyText="Select a database."
         />
       </div>
-      <div
-        className="tree-resizer"
-        onMouseDown={treeResize.onMouseDown}
-        title="Drag to resize"
-      />
+      <div className="tree-resizer" onMouseDown={treeResize.onMouseDown} title="Drag to resize" />
       <div className="editor-pane">
-        {activeFile && (
-          <div className="editor-file">
-            <span className="editor-file-name">
-              {activeFile}.{QUERY_EXT}
+        {active && tab !== "script" && (
+          <div className="mongo-tabs">
+            <span className="mongo-tabs-coll">
+              {currentDatabase} / {active}
             </span>
-            {fileDirty && (
-              <span className="editor-file-dirty" title="Auto-saving…">
-                ●
-              </span>
-            )}
+            <button
+              className={"mongo-tab" + (tab === "documents" ? " active" : "")}
+              onClick={() => setTab("documents")}
+            >
+              Documents
+            </button>
+            <button
+              className={"mongo-tab" + (tab === "aggregation" ? " active" : "")}
+              onClick={() => setTab("aggregation")}
+            >
+              Aggregation
+            </button>
+            <button
+              className={"mongo-tab" + (tab === "indexes" ? " active" : "")}
+              onClick={() => setTab("indexes")}
+            >
+              Indexes
+            </button>
           </div>
         )}
-        <div className="editor-code-pane" style={{ height: 160 }}>
-          <CodeEditorV2
-            handleRef={filterEditorRef}
-            className="code"
-            language="javascript"
-            value={filter}
-            onChange={setFilter}
-            placeholder="{ }"
-            lineWrapping
-            keybindings={[{ key: "Mod-Enter", run: () => void runFind() }]}
-          />
-        </div>
-        <div className="editor-toolbar">
-          <label className="row">
-            Limit{" "}
-            <input
-              type="number"
-              min={1}
-              value={limit}
-              style={{ width: 80 }}
-              onChange={(e) => setLimit(Number(e.target.value) || 1)}
-            />
-          </label>
-          <button
-            className="primary"
-            disabled={busy || !active}
-            onClick={() => runFind()}
-          >
-            Find
-          </button>
-          <span className="muted">
-            {active && currentDatabase
-              ? `${currentDatabase} / ${active}`
-              : "Select a collection"}
-          </span>
-          {result && (
-            <span className="status-line">
-              {result.documents.length} doc(s) · {result.elapsed_ms} ms
-            </span>
-          )}
-        </div>
-        {error && <div className="status-line error">{error}</div>}
-        {result && (
-          <div className="result-scroll">
-            {result.documents.map((d, i) => (
+
+        {tab === "script" ? (
+          <>
+            {scriptActiveFile && (
+              <div className="editor-file">
+                <span className="editor-file-name">
+                  {scriptActiveFile}.{SCRIPT_EXT}
+                </span>
+                {scriptDirty && (
+                  <span className="editor-file-dirty" title="Auto-saving…">
+                    ●
+                  </span>
+                )}
+              </div>
+            )}
+            <div className="editor-code-pane" style={{ height: 220 }}>
               <CodeEditorV2
-                key={i}
-                className="doc-card"
+                handleRef={scriptEditorRef}
+                className="code"
                 language="javascript"
-                value={formatDoc(d)}
-                readOnly
+                value={scriptText}
+                onChange={setScriptText}
+                placeholder={"db.users.find({ active: true }).limit(5);"}
                 lineWrapping
+                keybindings={[{ key: "Mod-Enter", run: () => void runFromEditor() }]}
               />
-            ))}
+            </div>
+            <div className="editor-toolbar">
+              <label className="row">
+                Limit{" "}
+                <input
+                  type="number"
+                  min={1}
+                  value={limit}
+                  style={{ width: 80 }}
+                  onChange={(e) => setLimit(Number(e.target.value) || 1)}
+                />
+              </label>
+              <button
+                className="primary"
+                disabled={busy || !currentDatabase}
+                onClick={() => runScript()}
+                title="Run the whole script"
+              >
+                Run all
+              </button>
+              {!currentDatabase ? (
+                <span className="status-line">Select a database first.</span>
+              ) : (
+                <span className="status-line muted">
+                  ⌘/Ctrl+Enter runs the selection, or the statement at the cursor
+                </span>
+              )}
+              {scriptResults && (
+                <span className="status-line">
+                  {scriptResults.length} result(s) · {scriptResults.filter((r) => !r.error).length}{" "}
+                  ok · {scriptResults.filter((r) => r.error).length} error(s)
+                </span>
+              )}
+            </div>
+            {error && <div className="status-line error">{error}</div>}
+            {scriptResults && (
+              <div className="result-scroll">
+                {scriptResults.map((r, i) => {
+                  const docs = r.result ? formatRunResult(r.result) : [];
+                  return (
+                    <div className="script-result" key={i}>
+                      <div className="script-result-head">
+                        <span className="script-result-num">#{r.index}</span>
+                        <code className="script-result-src">
+                          {r.method ? `${r.collection}.${r.method}()` : r.source}
+                        </code>
+                        {r.result && <span className="status-line">{r.result.elapsed_ms} ms</span>}
+                      </div>
+                      {r.error ? (
+                        <div className="status-line error">{r.error}</div>
+                      ) : r.result ? (
+                        docs.length > 0 ? (
+                          docs.map((doc, j) => (
+                            <CodeEditorV2
+                              key={j}
+                              className="doc-card"
+                              language="javascript"
+                              value={doc}
+                              readOnly
+                              lineWrapping
+                            />
+                          ))
+                        ) : (
+                          <div className="status-line muted script-empty">No documents.</div>
+                        )
+                      ) : r.value !== undefined ? (
+                        <CodeEditorV2
+                          className="doc-card"
+                          language="javascript"
+                          value={r.value}
+                          readOnly
+                          lineWrapping
+                        />
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        ) : !active ? (
+          <div className="empty-hint">
+            Select a collection to view its documents, build an aggregation, or inspect its indexes
+            — or open a script to run shell commands.
           </div>
+        ) : (
+          <>
+            {tab === "documents" && (
+              <>
+                <div className="editor-code-pane" style={{ height: 160 }}>
+                  <CodeEditorV2
+                    handleRef={filterEditorRef}
+                    className="code"
+                    language="javascript"
+                    value={filter}
+                    onChange={setFilter}
+                    placeholder="{ }"
+                    lineWrapping
+                    keybindings={[{ key: "Mod-Enter", run: () => void runFind() }]}
+                  />
+                </div>
+                <div className="editor-toolbar">
+                  <label className="row">
+                    Limit{" "}
+                    <input
+                      type="number"
+                      min={1}
+                      value={limit}
+                      style={{ width: 80 }}
+                      onChange={(e) => setLimit(Number(e.target.value) || 1)}
+                    />
+                  </label>
+                  <button className="primary" disabled={busy} onClick={() => runFind()}>
+                    Find
+                  </button>
+                  <button
+                    className="ghost"
+                    title="Copy as a runnable mongosh script"
+                    onClick={() => void copyQuery()}
+                  >
+                    {copied ? "Copied" : "Copy query"}
+                  </button>
+                  {result && (
+                    <span className="status-line">
+                      {result.documents.length} doc(s) · {result.elapsed_ms} ms
+                    </span>
+                  )}
+                </div>
+                {error && <div className="status-line error">{error}</div>}
+                {result && (
+                  <div className="result-scroll">
+                    {result.documents.length === 0 && (
+                      <div className="status-line muted script-empty">No documents.</div>
+                    )}
+                    {result.documents.map((d, i) => {
+                      const hasId = docId(d) !== null;
+                      if (editingDoc === i) {
+                        return (
+                          <div className="doc-row editing" key={i}>
+                            <CodeEditorV2
+                              className="doc-card"
+                              language="javascript"
+                              value={editDocText}
+                              onChange={setEditDocText}
+                              lineWrapping
+                              keybindings={[{ key: "Mod-Enter", run: () => void saveEditDoc() }]}
+                            />
+                            <div className="doc-actions">
+                              <button
+                                className="primary"
+                                disabled={busy}
+                                onClick={() => void saveEditDoc()}
+                              >
+                                Save
+                              </button>
+                              <button
+                                className="ghost"
+                                disabled={busy}
+                                onClick={() => setEditingDoc(null)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="doc-row" key={i}>
+                          <div className="doc-actions">
+                            {hasId && (
+                              <button
+                                className="icon-btn"
+                                title="Edit document"
+                                disabled={busy}
+                                onClick={() => startEditDoc(i)}
+                              >
+                                ✎
+                              </button>
+                            )}
+                            <button
+                              className="icon-btn"
+                              title="Copy document (shell syntax)"
+                              onClick={() => void copyDoc(i, "shell")}
+                            >
+                              {copiedDoc === `${i}-shell` ? "✓" : "⧉"}
+                            </button>
+                            <button
+                              className="icon-btn"
+                              title="Copy raw JSON"
+                              onClick={() => void copyDoc(i, "json")}
+                            >
+                              {copiedDoc === `${i}-json` ? "✓" : "{ }"}
+                            </button>
+                            {hasId && (
+                              <button
+                                className="icon-btn danger"
+                                title="Delete document"
+                                disabled={busy}
+                                onClick={() => setConfirmDeleteDoc(i)}
+                              >
+                                🗑
+                              </button>
+                            )}
+                          </div>
+                          <CodeEditorV2
+                            className="doc-card"
+                            language="javascript"
+                            value={formatDoc(d)}
+                            readOnly
+                            lineWrapping
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+
+            {tab === "aggregation" && (
+              <>
+                <div className="agg-stages">
+                  {pipeline.map((stage, i) => (
+                    <div key={i} className={"agg-stage" + (stage.enabled ? "" : " disabled")}>
+                      <div className="agg-stage-head">
+                        <span className="agg-stage-num">{i + 1}</span>
+                        <select value={stage.op} onChange={(e) => changeStageOp(i, e.target.value)}>
+                          {STAGE_OPS.map((op) => (
+                            <option key={op} value={op}>
+                              {op}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          className="agg-stage-btn"
+                          title={stage.enabled ? "Disable stage" : "Enable stage"}
+                          onClick={() => updateStage(i, { enabled: !stage.enabled })}
+                        >
+                          {stage.enabled ? "⊘" : "○"}
+                        </button>
+                        <button
+                          className="agg-stage-btn"
+                          title="Remove stage"
+                          onClick={() => removeStage(i)}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <div className="agg-stage-editor">
+                        <CodeEditorV2
+                          className="code"
+                          language="javascript"
+                          value={stage.body}
+                          onChange={(v) => updateStage(i, { body: v })}
+                          placeholder="{ }"
+                          lineWrapping
+                          keybindings={[{ key: "Mod-Enter", run: () => void runAggregate() }]}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="editor-toolbar">
+                  <button className="ghost" onClick={addStage}>
+                    + Add stage
+                  </button>
+                  <label className="row">
+                    Limit{" "}
+                    <input
+                      type="number"
+                      min={1}
+                      value={limit}
+                      style={{ width: 80 }}
+                      onChange={(e) => setLimit(Number(e.target.value) || 1)}
+                    />
+                  </label>
+                  <button className="primary" disabled={busy} onClick={() => runAggregate()}>
+                    Run pipeline
+                  </button>
+                  <button
+                    className="ghost"
+                    title="Copy as a runnable mongosh script"
+                    onClick={() => void copyQuery()}
+                  >
+                    {copied ? "Copied" : "Copy query"}
+                  </button>
+                  {aggResult && (
+                    <span className="status-line">
+                      {aggResult.documents.length} doc(s) · {aggResult.elapsed_ms} ms
+                    </span>
+                  )}
+                </div>
+                {error && <div className="status-line error">{error}</div>}
+                {aggResult && (
+                  <div className="result-scroll">
+                    {aggResult.documents.map((d, i) => (
+                      <CodeEditorV2
+                        key={i}
+                        className="doc-card"
+                        language="javascript"
+                        value={formatDoc(d)}
+                        readOnly
+                        lineWrapping
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {tab === "indexes" && (
+              <>
+                <div className="editor-toolbar">
+                  <button className="ghost" disabled={busy} onClick={() => loadIndexes()}>
+                    ↻ Refresh
+                  </button>
+                  {indexes && <span className="status-line">{indexes.length} index(es)</span>}
+                </div>
+                {error && <div className="status-line error">{error}</div>}
+                {indexes && (
+                  <div className="result-scroll">
+                    <table className="grid">
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>Keys</th>
+                          <th>Properties</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {indexes.map((raw, i) => {
+                          const idx = describeIndex(raw);
+                          return (
+                            <tr key={i}>
+                              <td>{idx.name}</td>
+                              <td>{idx.keys}</td>
+                              <td>{idx.props}</td>
+                            </tr>
+                          );
+                        })}
+                        {indexes.length === 0 && (
+                          <tr className="empty-row">
+                            <td colSpan={3}>No indexes.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
+          </>
         )}
       </div>
-      {confirmDelete && (
+      {confirmDeleteScript && (
         <ConfirmDialog
-          title="Delete query"
+          title="Delete script"
           message={
             <>
               Delete{" "}
               <strong>
-                {confirmDelete}.{QUERY_EXT}
+                {confirmDeleteScript}.{SCRIPT_EXT}
               </strong>
               ? This can't be undone.
             </>
           }
-          onCancel={() => setConfirmDelete(null)}
-          onConfirm={() => void removeQueryFile(confirmDelete)}
+          onCancel={() => setConfirmDeleteScript(null)}
+          onConfirm={() => void removeScriptFile(confirmDeleteScript)}
+        />
+      )}
+      {confirmDeleteDoc !== null && (
+        <ConfirmDialog
+          title="Delete document"
+          message={
+            <>
+              Delete this document from <strong>{active}</strong>? This can't be undone.
+            </>
+          }
+          onCancel={() => setConfirmDeleteDoc(null)}
+          onConfirm={() => void deleteDoc(confirmDeleteDoc)}
         />
       )}
     </div>

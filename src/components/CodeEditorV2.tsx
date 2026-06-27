@@ -1,10 +1,6 @@
 import { useEffect, useImperativeHandle, useRef } from "react";
 import { Compartment, EditorState, Prec } from "@codemirror/state";
-import {
-  EditorView,
-  keymap,
-  placeholder as placeholderExt,
-} from "@codemirror/view";
+import { EditorView, keymap, placeholder as placeholderExt } from "@codemirror/view";
 import { indentWithTab } from "@codemirror/commands";
 import {
   StreamLanguage,
@@ -82,7 +78,9 @@ const baseTheme = EditorView.theme(
       border: "none",
     },
     ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--accent) 9%, transparent)" },
-    ".cm-activeLineGutter": { backgroundColor: "color-mix(in srgb, var(--accent) 14%, transparent)" },
+    ".cm-activeLineGutter": {
+      backgroundColor: "color-mix(in srgb, var(--accent) 14%, transparent)",
+    },
     ".cm-foldPlaceholder": {
       backgroundColor: "var(--bg-3)",
       color: "var(--muted)",
@@ -254,10 +252,7 @@ export function CodeEditorV2({
         languageComp.current.of(languageExtension(language)),
         // `readOnly` blocks edits; keep the editor `editable` (focusable) so the
         // find panel (⌘/Ctrl+F) and text selection still work when read-only.
-        readOnlyComp.current.of([
-          EditorState.readOnly.of(readOnly),
-          EditorView.editable.of(true),
-        ]),
+        readOnlyComp.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(true)]),
         placeholderComp.current.of(placeholder ? placeholderExt(placeholder) : []),
         lineWrapping ? EditorView.lineWrapping : [],
         Prec.highest(syntaxHighlighting(highlightStyle)),
@@ -308,9 +303,7 @@ export function CodeEditorV2({
 
   useEffect(() => {
     viewRef.current?.dispatch({
-      effects: placeholderComp.current.reconfigure(
-        placeholder ? placeholderExt(placeholder) : [],
-      ),
+      effects: placeholderComp.current.reconfigure(placeholder ? placeholderExt(placeholder) : []),
     });
   }, [placeholder]);
 

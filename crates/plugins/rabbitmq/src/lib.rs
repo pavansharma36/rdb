@@ -344,7 +344,11 @@ impl Plugin for RabbitMqPlugin {
         let user = cfg_str_opt(&cfg, "user").unwrap_or_else(|| "guest".into());
         let password = cfg_secret(&cfg, "password")?.unwrap_or_else(|| "guest".into());
         let default_vhost = cfg_str_opt(&cfg, "vhost").unwrap_or_else(|| "/".into());
-        let scheme = if cfg_bool(&cfg, "tls") { "https" } else { "http" };
+        let scheme = if cfg_bool(&cfg, "tls") {
+            "https"
+        } else {
+            "http"
+        };
         let base = format!("{scheme}://{host}:{port}");
 
         let client = reqwest::Client::builder()
@@ -365,10 +369,12 @@ impl Plugin for RabbitMqPlugin {
         );
         // Validate eagerly so a bad host / disabled management plugin fails at
         // connect time rather than on first capability call.
-        conn.get_json::<Overview>("/api/overview").await.map_err(|e| {
-            tracing::warn!("rabbitmq connect validation failed: {e}");
-            e
-        })?;
+        conn.get_json::<Overview>("/api/overview")
+            .await
+            .map_err(|e| {
+                tracing::warn!("rabbitmq connect validation failed: {e}");
+                e
+            })?;
         tracing::info!("rabbitmq management API reachable");
         Ok(Arc::new(conn))
     }
@@ -448,11 +454,7 @@ impl RabbitMqPlugin {
         ackmode: &str,
     ) -> Result<Vec<GotMessage>> {
         let conn = downcast(&conn)?;
-        let path = format!(
-            "/api/queues/{}/{}/get",
-            urlencode(vhost),
-            urlencode(queue)
-        );
+        let path = format!("/api/queues/{}/{}/get", urlencode(vhost), urlencode(queue));
         let body = serde_json::json!({
             "count": count,
             "ackmode": ackmode,
@@ -483,7 +485,9 @@ impl RabbitMqPlugin {
         payload: &str,
     ) -> Result<PublishResult> {
         let conn = downcast(&conn)?;
-        tracing::info!("publishing to exchange '{exchange}' (vhost '{vhost}', key '{routing_key}')");
+        tracing::info!(
+            "publishing to exchange '{exchange}' (vhost '{vhost}', key '{routing_key}')"
+        );
         let path = format!(
             "/api/exchanges/{}/{}/publish",
             urlencode(vhost),
