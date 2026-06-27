@@ -275,9 +275,9 @@ export function Sidebar({
                 Check for updates
               </button>
               <button
-                  className="footer-menu-item support-btn"
-                  title="Support / Donate"
-                  onClick={() => open("https://github.com/sponsors/pavansharma36")}
+                className="footer-menu-item support-btn"
+                title="Support / Donate"
+                onClick={() => open("https://github.com/sponsors/pavansharma36")}
               >
                 ♥ Support
               </button>

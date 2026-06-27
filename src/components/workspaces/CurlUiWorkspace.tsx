@@ -1896,9 +1896,7 @@ export function CurlUiWorkspace({
                       onClick={() => setResTab("headers")}
                     >
                       Headers
-                      <span className="tab-badge">
-                        {Object.keys(response.headers).length}
-                      </span>
+                      <span className="tab-badge">{Object.keys(response.headers).length}</span>
                     </button>
                     <button
                       type="button"
