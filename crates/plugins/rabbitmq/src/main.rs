@@ -87,7 +87,11 @@ impl Dispatcher for RabbitMqDispatcher {
             }
             "rabbitmq.declare_queue" => {
                 let p: DeclareQueueParams = parse(params)?;
-                to_value(self.0.declare_queue(conn, &p.vhost, &p.queue, p.durable).await?)
+                to_value(
+                    self.0
+                        .declare_queue(conn, &p.vhost, &p.queue, p.durable)
+                        .await?,
+                )
             }
             "rabbitmq.delete_queue" => {
                 let p: QueueParams = parse(params)?;
@@ -100,5 +104,8 @@ impl Dispatcher for RabbitMqDispatcher {
 }
 
 fn main() -> anyhow::Result<()> {
-    rdb_plugin_runtime::run(RabbitMqPlugin::new(), RabbitMqDispatcher(RabbitMqPlugin::new()))
+    rdb_plugin_runtime::run(
+        RabbitMqPlugin::new(),
+        RabbitMqDispatcher(RabbitMqPlugin::new()),
+    )
 }

@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState, type CSSProperties} from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { OpenConnection } from "../App";
 import type { PluginInfo, ConnectionId } from "../api/api.ts";
 import type { SavedConnection } from "../api/store.ts";
@@ -6,12 +6,11 @@ import { pluginLogo } from "../pluginLogos";
 import { THEMES } from "../theme";
 import { Modal } from "./Modal";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
-import { getVersion } from '@tauri-apps/api/app'; // v2 Import
+import { getVersion } from "@tauri-apps/api/app"; // v2 Import
 import pkg from "../../package.json";
 
 /** Project home (from package.json) — opened by Help and shown in About. */
 const REPO_URL = pkg.homepage;
-
 
 interface SidebarProps {
   saved: SavedConnection[];
@@ -72,20 +71,18 @@ export function Sidebar({
   // Viewport coords (right/top, px) to anchor the open popup. The popup is
   // position:fixed so it escapes the scrollable .conn-list (which would
   // otherwise clip it and add a scrollbar).
-  const [menuPos, setMenuPos] = useState<{ right: number; top: number } | null>(
-    null,
-  );
+  const [menuPos, setMenuPos] = useState<{ right: number; top: number } | null>(null);
   const connMenuRef = useRef<HTMLDivElement>(null);
 
-  const [version, setVersion] = useState('');
+  const [version, setVersion] = useState("");
   // When true, the About dialog is shown.
   const [aboutOpen, setAboutOpen] = useState(false);
 
   useEffect(() => {
     // getVersion returns a Promise <string>
     getVersion()
-        .then((appVersion) => setVersion(appVersion))
-        .catch((err) => console.error('Failed to get version:', err));
+      .then((appVersion) => setVersion(appVersion))
+      .catch((err) => console.error("Failed to get version:", err));
   }, []);
 
   useEffect(() => {
@@ -123,29 +120,20 @@ export function Sidebar({
   return (
     <aside
       className={"sidebar" + (collapsible ? " collapsible" : "")}
-      style={
-        collapsible
-          ? ({ "--sidebar-expanded": `${width}px` } as CSSProperties)
-          : { width }
-      }
+      style={collapsible ? ({ "--sidebar-expanded": `${width}px` } as CSSProperties) : { width }}
     >
       <div className="sidebar-header">
         <span className="logo">rdb</span>
         <span className="logo-sub">client</span>
         <span className="logo-badge" title="App Version">
-          { channel === "nightly" ? "nightly" : `v${version}` }
+          {channel === "nightly" ? "nightly" : `v${version}`}
         </span>
       </div>
-      <button
-        className={"new-btn" + (creating ? " active" : "")}
-        onClick={onNew}
-      >
+      <button className={"new-btn" + (creating ? " active" : "")} onClick={onNew}>
         + New connection
       </button>
       <nav className="conn-list">
-        {saved.length === 0 && (
-          <p className="muted">No saved connections.</p>
-        )}
+        {saved.length === 0 && <p className="muted">No saved connections.</p>}
         {saved.map((s) => {
           const live = openConnections.find((o) => o.savedId === s.id);
           const isActive = !creating && live != null && live.id === activeId;
@@ -154,11 +142,7 @@ export function Sidebar({
           return (
             <div
               key={s.id}
-              className={
-                "conn-item" +
-                (isActive ? " active" : "") +
-                (live ? " connected" : "")
-              }
+              className={"conn-item" + (isActive ? " active" : "") + (live ? " connected" : "")}
               onClick={() => onSelect(s)}
             >
               {logo ? (
@@ -171,11 +155,7 @@ export function Sidebar({
               ) : (
                 <span
                   className={
-                    "dot dot-" +
-                    kind +
-                    " dot-id-" +
-                    s.pluginId +
-                    (live ? " connected" : "")
+                    "dot dot-" + kind + " dot-id-" + s.pluginId + (live ? " connected" : "")
                   }
                   title={live ? "Connected" : "Not connected"}
                 />
@@ -195,10 +175,7 @@ export function Sidebar({
                   ⏏
                 </button>
               )}
-              <div
-                className="conn-menu"
-                ref={openMenuId === s.id ? connMenuRef : undefined}
-              >
+              <div className="conn-menu" ref={openMenuId === s.id ? connMenuRef : undefined}>
                 <button
                   className="icon-btn"
                   title="More"
@@ -264,29 +241,15 @@ export function Sidebar({
         <button className="install-btn" onClick={onInstallPlugin}>
           ⤓ Install plugin
         </button>
-        {/*<button*/}
-        {/*  className="support-btn"*/}
-        {/*  title="Support / Donate"*/}
-        {/*  onClick={() => open("https://github.com/sponsors/pavansharma36")}*/}
-        {/*>*/}
-        {/*  ♥*/}
-        {/*</button>*/}
         <div className="footer-menu" ref={menuRef}>
-          <button
-            className="icon-btn"
-            title="More"
-            onClick={() => setMenuOpen((o) => !o)}
-          >
+          <button className="icon-btn" title="More" onClick={() => setMenuOpen((o) => !o)}>
             ⋮
           </button>
           {menuOpen && (
             <div className="footer-menu-popup">
               <label className="footer-menu-theme">
                 <span className="muted">Theme</span>
-                <select
-                  value={theme}
-                  onChange={(e) => onThemeChange(e.target.value)}
-                >
+                <select value={theme} onChange={(e) => onThemeChange(e.target.value)}>
                   {THEMES.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.label}
@@ -312,10 +275,17 @@ export function Sidebar({
                 Check for updates
               </button>
               <button
+                className="footer-menu-item support-btn"
+                title="Support / Donate"
+                onClick={() => open("https://github.com/sponsors/pavansharma36")}
+              >
+                ♥ Support
+              </button>
+              <button
                 className="footer-menu-item"
                 onClick={() => {
                   setMenuOpen(false);
-                  openExternal(REPO_URL).catch(() => {});
+                  openExternal(REPO_URL + "/discussions").catch(() => {});
                 }}
               >
                 ? Help
@@ -337,18 +307,15 @@ export function Sidebar({
         <Modal title="About rdb" onClose={() => setAboutOpen(false)}>
           <div className="about-dialog">
             <p className="about-name">
-              <span className="logo">rdb</span>{" "}
-              <span className="muted">client</span>
+              <span className="logo">rdb</span> <span className="muted">client</span>
             </p>
             <p>
               Version{" "}
-              <strong>
-                {channel === "nightly" ? `${version} (nightly)` : `v${version}`}
-              </strong>
+              <strong>{channel === "nightly" ? `${version} (nightly)` : `v${version}`}</strong>
             </p>
             <p className="muted">
-              A cross-platform desktop client for relational databases, document
-              stores, and message brokers.
+              A cross-platform desktop client for relational databases, document stores, and message
+              brokers.
             </p>
             <p>
               <a

@@ -22,9 +22,7 @@ export function PluginUpdateBanner({
       <div className="update-banner-main">
         <strong>Plugin updates available</strong>
         <span className="muted small">
-          {count === 1
-            ? "1 plugin can be updated"
-            : `${count} plugins can be updated`}
+          {count === 1 ? "1 plugin can be updated" : `${count} plugins can be updated`}
         </span>
       </div>
       <div className="update-banner-actions">

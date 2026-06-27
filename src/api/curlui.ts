@@ -146,15 +146,7 @@ export function newEnvironment(name = "New environment"): HttpEnvironment {
   return { id: genId(), name, variables: {} };
 }
 
-export const HTTP_METHODS = [
-  "GET",
-  "POST",
-  "PUT",
-  "PATCH",
-  "DELETE",
-  "HEAD",
-  "OPTIONS",
-] as const;
+export const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 
 export function defaultCollectionsFile(): CollectionsFile {
   return {
@@ -287,17 +279,12 @@ export function collectionsToFiles(data: CollectionsFile): CurlFile[] {
 
 /** Rebuild a live folder from its shape, with requests filled in from the parsed
  *  request map (in the shape's recorded order; missing ids are skipped). */
-function reviveFolder(
-  shape: FolderShape,
-  reqs: Map<string, HttpRequestItem>,
-): HttpFolder {
+function reviveFolder(shape: FolderShape, reqs: Map<string, HttpRequestItem>): HttpFolder {
   return {
     id: shape.id,
     name: shape.name,
     folders: shape.folders.map((f) => reviveFolder(f, reqs)),
-    requests: shape.requestIds
-      .map((id) => reqs.get(id))
-      .filter((r): r is HttpRequestItem => !!r),
+    requests: shape.requestIds.map((id) => reqs.get(id)).filter((r): r is HttpRequestItem => !!r),
   };
 }
 
@@ -333,9 +320,7 @@ export function filesToCollections(files: CurlFile[]): CollectionsFile {
       id: c.id,
       name: c.name,
       folders: c.folders.map((f) => reviveFolder(f, reqs)),
-      requests: c.requestIds
-        .map((id) => reqs.get(id))
-        .filter((r): r is HttpRequestItem => !!r),
+      requests: c.requestIds.map((id) => reqs.get(id)).filter((r): r is HttpRequestItem => !!r),
       ...(c.env ? { env: c.env } : {}),
       ...(c.headers ? { headers: c.headers } : {}),
       ...(c.auth ? { auth: c.auth } : {}),
@@ -348,11 +333,7 @@ export function filesToCollections(files: CurlFile[]): CollectionsFile {
 /** Recursively collect every `*.json` path under the connection root, driving
  *  `listWorkspaceDir`. `rel` is the dir's path relative to the root ("" for the
  *  root itself). */
-async function walkJson(
-  savedId: string,
-  rel: string,
-  out: string[],
-): Promise<void> {
+async function walkJson(savedId: string, rel: string, out: string[]): Promise<void> {
   const entries = await listWorkspaceDir(savedId, rel);
   for (const e of entries) {
     const childRel = rel ? `${rel}/${e.name}` : e.name;
@@ -381,10 +362,7 @@ export async function loadCurlFiles(savedId: string): Promise<CurlFile[]> {
 /** Persist the curl file set (from {@link collectionsToFiles}) for a profile:
  *  write every desired file, then prune any existing `*.json` not in the set and
  *  any stale top-level collection dir, so deletions are reflected on disk. */
-export async function saveCurlFiles(
-  savedId: string,
-  files: CurlFile[],
-): Promise<void> {
+export async function saveCurlFiles(savedId: string, files: CurlFile[]): Promise<void> {
   const wanted = new Set(files.map((f) => f.path));
 
   // Snapshot what's currently on disk before writing.
@@ -426,9 +404,7 @@ export const ENVIRONMENTS_FILE = "environments.json";
 
 /** Load the environments file for a profile, falling back to an empty set when
  *  absent or unparseable. */
-export async function loadEnvironments(
-  savedId: string,
-): Promise<EnvironmentsFile> {
+export async function loadEnvironments(savedId: string): Promise<EnvironmentsFile> {
   const content = await readWorkspaceFile(savedId, ENVIRONMENTS_FILE);
   if (content === null) return defaultEnvironmentsFile();
   try {
@@ -447,15 +423,8 @@ export async function loadEnvironments(
 }
 
 /** Persist the environments file for a profile. */
-export async function saveEnvironments(
-  savedId: string,
-  data: EnvironmentsFile,
-): Promise<void> {
-  await writeWorkspaceFileAt(
-    savedId,
-    ENVIRONMENTS_FILE,
-    JSON.stringify(data, null, 2),
-  );
+export async function saveEnvironments(savedId: string, data: EnvironmentsFile): Promise<void> {
+  await writeWorkspaceFileAt(savedId, ENVIRONMENTS_FILE, JSON.stringify(data, null, 2));
 }
 
 /** Color class suffix for an HTTP method, Postman-style. */
@@ -508,9 +477,7 @@ export function autoHeaders(version: string): Record<string, string> {
  *  the caller's own (enabled) header keys override — case-insensitively — is
  *  marked `enabled: false` so the UI can show it as inactive/struck-through. */
 export function autoHeaderRows(overrideKeys: string[], version: string): KvRow[] {
-  const overridden = new Set(
-    overrideKeys.map((k) => k.trim().toLowerCase()).filter(Boolean),
-  );
+  const overridden = new Set(overrideKeys.map((k) => k.trim().toLowerCase()).filter(Boolean));
   return Object.entries(autoHeaders(version)).map(([k, v]) => ({
     id: "auto:" + k,
     enabled: !overridden.has(k.toLowerCase()),
@@ -606,10 +573,7 @@ function base64Utf8(s: string): string {
 /** Replace `{{NAME}}` placeholders using the environment map. Throws on an
  *  unclosed placeholder, an empty name, or an unknown variable. Mirrors the
  *  behaviour the curlui plugin used to apply server-side. */
-export function interpolate(
-  template: string,
-  env: Record<string, string>,
-): string {
+export function interpolate(template: string, env: Record<string, string>): string {
   let out = "";
   let rest = template;
   for (let start = rest.indexOf("{{"); start >= 0; start = rest.indexOf("{{")) {
@@ -650,9 +614,7 @@ export function buildSendable(
   pluginVersion = "",
 ): HttpRequest {
   // Collection env overrides connection env.
-  const effEnv = collection?.env
-    ? { ...env, ...collection.env }
-    : env;
+  const effEnv = collection?.env ? { ...env, ...collection.env } : env;
 
   // Collection headers are defaults (when inheritance is on); request headers
   // (same key, case-insensitive) win.
@@ -732,9 +694,7 @@ export function buildSendable(
         kind: p.kind,
         value: interpolate(p.value, effEnv),
         ...(p.filename ? { filename: interpolate(p.filename, effEnv) } : {}),
-        ...(p.content_type
-          ? { content_type: interpolate(p.content_type, effEnv) }
-          : {}),
+        ...(p.content_type ? { content_type: interpolate(p.content_type, effEnv) } : {}),
       }));
     return {
       method: req.method,
@@ -761,8 +721,7 @@ export function buildSendable(
     };
   }
 
-  const body =
-    req.body_kind === "none" ? "" : interpolate(req.body ?? "", effEnv);
+  const body = req.body_kind === "none" ? "" : interpolate(req.body ?? "", effEnv);
 
   return {
     method: req.method,

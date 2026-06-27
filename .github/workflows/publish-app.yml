@@ -14,11 +14,17 @@ permissions:
   contents: write
 
 jobs:
+  # Formatting + linting gate — the app is only built/published if this passes.
+  checks:
+    uses: ./.github/workflows/checks.yml
+
   build:
     name: build ${{ matrix.os }} (${{ matrix.rust-target }})
     runs-on: ${{ matrix.os }}
+    needs: checks
     if: |
       !cancelled() &&
+      needs.checks.result == 'success' &&
       (github.ref_type == 'tag' || !contains(github.event.head_commit.message, '[skip ci]'))
     strategy:
       fail-fast: false

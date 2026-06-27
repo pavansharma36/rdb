@@ -10,8 +10,7 @@ export function fmt(v: unknown): string {
  * applicable (e.g. `varchar(255)`, `numeric(10,2)`). Enums report
  * `USER-DEFINED`; their real type name lives in `udt_name`. */
 export function displayType(c: Column): string {
-  const base =
-    c.data_type === "USER-DEFINED" && c.udt_name ? c.udt_name : c.data_type;
+  const base = c.data_type === "USER-DEFINED" && c.udt_name ? c.udt_name : c.data_type;
   // Character types: varchar(n) / char(n).
   if (c.char_max_length != null) return `${base}(${c.char_max_length})`;
   // numeric/decimal: numeric(p) or numeric(p,s).

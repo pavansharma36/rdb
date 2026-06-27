@@ -122,7 +122,10 @@ pub fn select_binary_asset<'a>(
             Err(format!(
                 "{} assets match {filter_desc}; expected exactly one: [{}]",
                 many.len(),
-                many.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
+                many.iter()
+                    .map(|a| a.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ))
         }
     }
@@ -173,9 +176,14 @@ fn extract_plugin_id(asset_name: &str) -> Option<String> {
         // Remove .exe suffix on Windows
         let rest = rest.strip_suffix(".exe").unwrap_or(rest);
         // Find the last occurrence of a known target triple to split id from target
-        for target in ["aarch64-apple-darwin", "x86_64-apple-darwin",
-                       "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
-                       "x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"] {
+        for target in [
+            "aarch64-apple-darwin",
+            "x86_64-apple-darwin",
+            "x86_64-unknown-linux-gnu",
+            "aarch64-unknown-linux-gnu",
+            "x86_64-pc-windows-msvc",
+            "aarch64-pc-windows-msvc",
+        ] {
             if let Some(idx) = rest.rfind(target) {
                 let id = &rest[..idx];
                 // Strip the trailing hyphen separating id from the target triple.
@@ -377,7 +385,10 @@ fn auth(req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
 /// Normalise and validate a `owner/name` repo string (tolerating a pasted
 /// `https://github.com/owner/name` URL and surrounding slashes).
 fn normalize_repo(repo: &str) -> Result<String, String> {
-    let repo = repo.trim().trim_start_matches("https://github.com/").trim_matches('/');
+    let repo = repo
+        .trim()
+        .trim_start_matches("https://github.com/")
+        .trim_matches('/');
     if repo.split('/').filter(|s| !s.is_empty()).count() != 2 {
         return Err(format!("expected repo as 'owner/name', got '{repo}'"));
     }
@@ -513,13 +524,19 @@ mod tests {
         let agg = release_with(&[bin, "SHA256SUMS"]);
         assert_eq!(find_checksum(&agg, bin).unwrap().name, "SHA256SUMS");
         let per = release_with(&[bin, &format!("{bin}.sha256")]);
-        assert_eq!(find_checksum(&per, bin).unwrap().name, format!("{bin}.sha256"));
+        assert_eq!(
+            find_checksum(&per, bin).unwrap().name,
+            format!("{bin}.sha256")
+        );
     }
 
     #[test]
     fn parses_aggregate_sha256sums() {
         let hash = "a".repeat(64);
-        let text = format!("{hash}  rdb-plugin-mysql-aarch64-apple-darwin\n{}  other\n", "b".repeat(64));
+        let text = format!(
+            "{hash}  rdb-plugin-mysql-aarch64-apple-darwin\n{}  other\n",
+            "b".repeat(64)
+        );
         let got = parse_sha256sums(&text, "rdb-plugin-mysql-aarch64-apple-darwin").unwrap();
         assert_eq!(got, hash);
     }
@@ -683,7 +700,10 @@ mod tests {
 
     #[test]
     fn finds_plugin_info_asset_case_insensitively() {
-        let r = release_with(&["rdb-plugin-postgres-aarch64-apple-darwin", "Plugin_Info.json"]);
+        let r = release_with(&[
+            "rdb-plugin-postgres-aarch64-apple-darwin",
+            "Plugin_Info.json",
+        ]);
         assert_eq!(find_plugin_info(&r).unwrap().name, "Plugin_Info.json");
         let none = release_with(&["rdb-plugin-postgres-aarch64-apple-darwin"]);
         assert!(find_plugin_info(&none).is_none());
@@ -697,7 +717,10 @@ mod tests {
         }"#;
         let map = parse_plugin_info(text);
         assert_eq!(map["postgres"].name.as_deref(), Some("PostgreSQL"));
-        assert_eq!(map["postgres"].description.as_deref(), Some("Connect to Postgres"));
+        assert_eq!(
+            map["postgres"].description.as_deref(),
+            Some("Connect to Postgres")
+        );
         assert_eq!(map["postgres"].version.as_deref(), Some("0.2.41"));
         // Missing fields are None, not an error.
         assert_eq!(map["mongodb"].name.as_deref(), Some("MongoDB"));

@@ -2,14 +2,17 @@
 name = "rdb-plugin-mongodb"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [dependencies]
 rdb-core.workspace = true
 rdb-plugin-runtime.workspace = true
 async-trait.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+# `preserve_order` keeps JSON object key order through serde_json::Value so the
+# command name stays the first field of a `runCommand` document (the server
+# requires it). Scoped to this sidecar binary; doesn't affect other plugins/host.
+serde_json = { workspace = true, features = ["preserve_order"] }
 tokio.workspace = true
 tracing.workspace = true
 anyhow.workspace = true

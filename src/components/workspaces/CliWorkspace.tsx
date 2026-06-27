@@ -146,7 +146,7 @@ function CliTerminal({
       // Intentionally NOT closing the PTY here: the host keeps the ssh session
       // alive so a remount (switching tabs/connections) reattaches to it.
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Becoming active: the element was display:none so xterm couldn't measure it.
@@ -206,10 +206,7 @@ export function CliWorkspace({
   // Live PTY writers per terminal, published by each mounted CliTerminal so
   // "Run" can pipe a script into the *active* tab.
   const writers = useRef<Map<string, (text: string) => void>>(new Map());
-  const registerWriter = (
-    terminalId: string,
-    write: ((text: string) => void) | null,
-  ) => {
+  const registerWriter = (terminalId: string, write: ((text: string) => void) | null) => {
     if (write) writers.current.set(terminalId, write);
     else writers.current.delete(terminalId);
   };
@@ -239,7 +236,7 @@ export function CliWorkspace({
     } else if (!activeTab || !tabs.some((t) => t.id === activeTab)) {
       setActiveTab(tabs[0].id);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function addTab() {
@@ -266,11 +263,7 @@ export function CliWorkspace({
   // connectionState.ts.
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [script, setScript] = useConnectionState(scope, "script", "");
-  const [activeFile, setActiveFile] = useConnectionState<string | null>(
-    scope,
-    "activeFile",
-    null,
-  );
+  const [activeFile, setActiveFile] = useConnectionState<string | null>(scope, "activeFile", null);
   const [newName, setNewName] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
@@ -296,9 +289,7 @@ export function CliWorkspace({
       saveWorkspaceFile(savedId, activeFile, script, SCRIPT_EXT)
         .then(() =>
           setFiles((prev) =>
-            prev.map((f) =>
-              f.name === activeFile ? { ...f, content: script } : f,
-            ),
+            prev.map((f) => (f.name === activeFile ? { ...f, content: script } : f)),
           ),
         )
         .catch(() => {});
@@ -380,8 +371,7 @@ export function CliWorkspace({
 
   // True while the active script has edits not yet flushed to disk by autosave.
   const unsaved =
-    activeFile != null &&
-    files.find((f) => f.name === activeFile)?.content !== script;
+    activeFile != null && files.find((f) => f.name === activeFile)?.content !== script;
 
   return (
     <div className="workspace cli-workspace">
@@ -411,13 +401,9 @@ export function CliWorkspace({
         />
         <div className="cli-editor">
           <div className="cli-editor-head">
-            <span className="editor-file-name">
-              {activeFile ? `${activeFile}.sh` : "Script"}
-            </span>
+            <span className="editor-file-name">{activeFile ? `${activeFile}.sh` : "Script"}</span>
             {activeFile && (
-              <span className="muted cli-save-status">
-                {unsaved ? "Saving…" : "Saved"}
-              </span>
+              <span className="muted cli-save-status">{unsaved ? "Saving…" : "Saved"}</span>
             )}
             <div className="cli-editor-actions">
               <button

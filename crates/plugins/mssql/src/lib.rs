@@ -324,7 +324,9 @@ impl RdbmsPlugin for MssqlPlugin {
         Ok(rows
             .iter()
             .filter_map(|r| r.try_get::<&str, _>(0).ok().flatten())
-            .map(|n| Schema { name: n.to_string() })
+            .map(|n| Schema {
+                name: n.to_string(),
+            })
             .collect())
     }
 
@@ -374,7 +376,11 @@ impl RdbmsPlugin for MssqlPlugin {
             .iter()
             .filter_map(|r| {
                 let name = r.try_get::<&str, _>(0).ok().flatten()?;
-                let kind = r.try_get::<&str, _>(1).ok().flatten().unwrap_or("BASE TABLE");
+                let kind = r
+                    .try_get::<&str, _>(1)
+                    .ok()
+                    .flatten()
+                    .unwrap_or("BASE TABLE");
                 Some(Table {
                     schema: schema.to_string(),
                     name: name.to_string(),
@@ -443,7 +449,12 @@ impl RdbmsPlugin for MssqlPlugin {
             .iter()
             .filter_map(|r| {
                 let name = r.try_get::<&str, _>(0).ok().flatten()?.to_string();
-                let dtype = r.try_get::<&str, _>(1).ok().flatten().unwrap_or("").to_string();
+                let dtype = r
+                    .try_get::<&str, _>(1)
+                    .ok()
+                    .flatten()
+                    .unwrap_or("")
+                    .to_string();
                 let max_length = r.try_get::<i16, _>(2).ok().flatten();
                 let precision = r.try_get::<u8, _>(3).ok().flatten();
                 let scale = r.try_get::<u8, _>(4).ok().flatten();
@@ -670,11 +681,15 @@ impl RdbmsPlugin for MssqlPlugin {
         let outcome = async {
             let mut result = ApplyResult::default();
             for u in &changes.updates {
-                result.updated +=
-                    run_dml(&mut client, &build_update(schema, table, &u.pk, &u.changes)?).await?;
+                result.updated += run_dml(
+                    &mut client,
+                    &build_update(schema, table, &u.pk, &u.changes)?,
+                )
+                .await?;
             }
             for values in &changes.inserts {
-                result.inserted += run_dml(&mut client, &build_insert(schema, table, values)?).await?;
+                result.inserted +=
+                    run_dml(&mut client, &build_insert(schema, table, values)?).await?;
             }
             for pk in &changes.deletes {
                 result.deleted += run_dml(&mut client, &build_delete(schema, table, pk)?).await?;
@@ -781,7 +796,11 @@ fn build_browse(schema: &str, table: &str, spec: &BrowseSpec) -> String {
         conds.push(format!("({w})"));
     }
 
-    let mut sql = format!("SELECT * FROM {}.{}", quote_ident(schema), quote_ident(table));
+    let mut sql = format!(
+        "SELECT * FROM {}.{}",
+        quote_ident(schema),
+        quote_ident(table)
+    );
     if !conds.is_empty() {
         sql.push_str(&format!(" WHERE {}", conds.join(" AND ")));
     }

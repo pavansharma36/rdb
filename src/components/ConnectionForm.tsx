@@ -1,11 +1,6 @@
 import { useMemo, useState } from "react";
 import { api, errString, plainSecret } from "../api/api.ts";
-import type {
-  PluginInfo,
-  ConfigField,
-  ConnectionConfig,
-  SecretField,
-} from "../api/api.ts";
+import type { PluginInfo, ConfigField, ConnectionConfig, SecretField } from "../api/api.ts";
 import type { SavedConnection } from "../api/store.ts";
 import { genId } from "../api/store.ts";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
@@ -75,14 +70,10 @@ export function ConnectionForm({
   const [values, setValues] = useState<ConnectionConfig>(() => {
     if (!seed) return {};
     const schema = plugins.find((p) => p.id === seed.pluginId)?.config_schema;
-    return schema
-      ? { ...defaultValues(schema), ...seed.config }
-      : { ...seed.config };
+    return schema ? { ...defaultValues(schema), ...seed.config } : { ...seed.config };
   });
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ kind: "error" | "ok"; text: string } | null>(
-    null,
-  );
+  const [msg, setMsg] = useState<{ kind: "error" | "ok"; text: string } | null>(null);
   const editing = Boolean(initial);
 
   function selectPlugin(id: string) {
@@ -107,23 +98,17 @@ export function ConnectionForm({
   function buildLabel(): string {
     const v = values as Record<string, unknown>;
     const host = v.host ?? v.uri ?? v.database;
-    return selected
-      ? `${selected.name}${host ? " · " + String(host) : ""}`
-      : "connection";
+    return selected ? `${selected.name}${host ? " · " + String(host) : ""}` : "connection";
   }
 
   /** Only the fields currently shown, used both for rendering and submit. */
   function visibleFields(): ConfigField[] {
-    return selected
-      ? selected.config_schema.filter((f) => isVisible(f, values))
-      : [];
+    return selected ? selected.config_schema.filter((f) => isVisible(f, values)) : [];
   }
 
   /** Config to send: only visible fields, so hidden defaults aren't included. */
   function visibleConfig(): ConnectionConfig {
-    return Object.fromEntries(
-      visibleFields().map((f) => [f.key, values[f.key]]),
-    );
+    return Object.fromEntries(visibleFields().map((f) => [f.key, values[f.key]]));
   }
 
   async function onTest() {
@@ -146,9 +131,7 @@ export function ConnectionForm({
     // Names must be unique across saved profiles (case-insensitive), so the
     // sidebar stays unambiguous. Skip the profile being edited.
     const clash = existing.some(
-      (c) =>
-        c.id !== initial?.id &&
-        c.name.trim().toLowerCase() === finalName.toLowerCase(),
+      (c) => c.id !== initial?.id && c.name.trim().toLowerCase() === finalName.toLowerCase(),
     );
     if (clash) {
       setMsg({
@@ -184,11 +167,7 @@ export function ConnectionForm({
         {/* The plugin type is fixed once a profile is saved — its config schema
          * (and the live connection mapping) is tied to it, so editing only
          * changes the connection's settings, not its backend. */}
-        <select
-          value={pluginId}
-          disabled={editing}
-          onChange={(e) => selectPlugin(e.target.value)}
-        >
+        <select value={pluginId} disabled={editing} onChange={(e) => selectPlugin(e.target.value)}>
           <option value="" disabled>
             Select a connection type…
           </option>
@@ -225,11 +204,7 @@ export function ConnectionForm({
             <button disabled={busy} onClick={onTest}>
               Test
             </button>
-            <button
-              className="primary"
-              disabled={busy}
-              onClick={onSaveAndConnectClick}
-            >
+            <button className="primary" disabled={busy} onClick={onSaveAndConnectClick}>
               Save &amp; Connect
             </button>
           </div>
@@ -264,10 +239,7 @@ function Field({
           onChange={(e) => onChange(e.target.checked)}
         />
       ) : t.kind === "select" ? (
-        <select
-          value={String(value ?? "")}
-          onChange={(e) => onChange(e.target.value)}
-        >
+        <select value={String(value ?? "")} onChange={(e) => onChange(e.target.value)}>
           {t.options.map((o) => (
             <option key={o} value={o}>
               {o}
@@ -299,13 +271,7 @@ function Field({
         />
       ) : (
         <input
-          type={
-            t.kind === "password"
-              ? "password"
-              : t.kind === "number"
-                ? "number"
-                : "text"
-          }
+          type={t.kind === "password" ? "password" : t.kind === "number" ? "number" : "text"}
           value={
             t.kind === "password"
               ? secretValue(value)
@@ -331,9 +297,7 @@ function KeyValueEditor({
   const entries = Object.entries(value);
   return (
     <div className="keyvalue-editor">
-      {entries.length === 0 && (
-        <p className="muted keyvalue-empty">No variables yet.</p>
-      )}
+      {entries.length === 0 && <p className="muted keyvalue-empty">No variables yet.</p>}
       {entries.map(([key, val]) => (
         <div key={key} className="keyvalue-row">
           <input

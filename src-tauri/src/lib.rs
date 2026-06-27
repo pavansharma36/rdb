@@ -99,7 +99,8 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 app.handle().plugin(tauri_plugin_process::init())?;
-                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
             }
             // #[cfg(debug_assertions)] // only include this code on debug builds
             // {
@@ -185,6 +186,9 @@ mod tests {
             "https://github.com/pavansharma36/rdb/releases/download/latest/latest.json"
         );
         // Unknown channels default to the nightly endpoint.
-        assert_eq!(updater_endpoint("", repo), updater_endpoint("nightly", repo));
+        assert_eq!(
+            updater_endpoint("", repo),
+            updater_endpoint("nightly", repo)
+        );
     }
 }

@@ -7,13 +7,14 @@
 // workspace components are unchanged.
 
 import { invoke } from "@tauri-apps/api/core";
-import {rdbms_api} from "./rdbms.ts";
-import {document_api} from "./document.ts";
-import {rabbitmq_api} from "./rabbitmq.ts";
-import {sftp_api} from "./sftp.ts";
-import {curlui_api} from "./curlui.ts";
+import { rdbms_api } from "./rdbms.ts";
+import { document_api } from "./document.ts";
+import { rabbitmq_api } from "./rabbitmq.ts";
+import { sftp_api } from "./sftp.ts";
+import { curlui_api } from "./curlui.ts";
 
-export type PluginKind = "rdbms" | "document" | "rabbitmq" | "cli" | "filemanager" | "http" | "other";
+export type PluginKind =
+  "rdbms" | "document" | "rabbitmq" | "cli" | "filemanager" | "http" | "other";
 
 export type ConfigFieldType =
   | { kind: "text" }
@@ -82,11 +83,7 @@ export interface GithubPreview {
 }
 
 /** Install/update state of an `AvailablePlugin` relative to what's installed. */
-export type PluginStatus =
-  | "not_installed"
-  | "up_to_date"
-  | "update_available"
-  | "unknown";
+export type PluginStatus = "not_installed" | "up_to_date" | "update_available" | "unknown";
 
 /** A plugin installable from the configured GitHub repo (see
  *  `list_github_plugins`). All plugins share one release tag (`plugins-latest`
@@ -118,7 +115,6 @@ export type ConnectionId = string;
 
 export type ConnectionConfig = Record<string, unknown>;
 
-
 // --- Commands -------------------------------------------------------------
 
 /** Forward an opaque capability call to the plugin owning the connection. */
@@ -144,8 +140,7 @@ export const api = {
     invoke<void>("close_connection", { connectionId }),
 
   // Plugin install (from GitHub releases)
-  listGithubPlugins: (repo: string) =>
-    invoke<AvailablePlugin[]>("list_github_plugins", { repo }),
+  listGithubPlugins: (repo: string) => invoke<AvailablePlugin[]>("list_github_plugins", { repo }),
 
   previewGithubPlugin: (repo: string, tag?: string | null, pluginId?: string | null) =>
     invoke<GithubPreview>("preview_github_plugin", {
@@ -159,8 +154,7 @@ export const api = {
 
   /** Uninstall a plugin (stops its process, deletes its files). Rejects if the
    *  plugin has open connections. */
-  uninstallPlugin: (pluginId: string) =>
-    invoke<void>("uninstall_plugin", { pluginId }),
+  uninstallPlugin: (pluginId: string) => invoke<void>("uninstall_plugin", { pluginId }),
 
   /** Cancel the in-flight plugin call for a connection (aborts it on the server). */
   cancelLastPluginCall: (connectionId: ConnectionId) =>
@@ -171,7 +165,6 @@ export const api = {
   ...rabbitmq_api,
   ...sftp_api,
   ...curlui_api,
-
 };
 
 /** Normalize a thrown Tauri command error into a string. */
@@ -194,27 +187,17 @@ export function errString(e: unknown): string {
  * asks the owning plugin how to launch it (`cli.spawn_spec`, routed by
  * `connectionId`), so no config is sent from here. Idempotent: a no-op if the
  * terminal's PTY is already running. */
-export function ptySpawn(
-  connectionId: ConnectionId,
-  terminalId: string,
-): Promise<void> {
+export function ptySpawn(connectionId: ConnectionId, terminalId: string): Promise<void> {
   return invoke("pty_spawn", { connectionId, terminalId });
 }
 
 /** Send raw bytes (keystrokes / paste) to a terminal's PTY. */
-export function ptyWrite(
-  terminalId: string,
-  data: number[],
-): Promise<void> {
+export function ptyWrite(terminalId: string, data: number[]): Promise<void> {
   return invoke("pty_write", { terminalId, data });
 }
 
 /** Notify a terminal's PTY of a resize. */
-export function ptyResize(
-  terminalId: string,
-  cols: number,
-  rows: number,
-): Promise<void> {
+export function ptyResize(terminalId: string, cols: number, rows: number): Promise<void> {
   return invoke("pty_resize", { terminalId, cols, rows });
 }
 
@@ -225,9 +208,7 @@ export function ptyClose(terminalId: string): Promise<void> {
 
 /** Close and drop every terminal PTY owned by a connection (teardown on
  * disconnect / delete). */
-export function ptyCloseConnection(
-  connectionId: ConnectionId,
-): Promise<void> {
+export function ptyCloseConnection(connectionId: ConnectionId): Promise<void> {
   return invoke("pty_close_connection", { connectionId });
 }
 

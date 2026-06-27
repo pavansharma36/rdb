@@ -10,5 +10,8 @@ use rdb_plugin_snowflake::SnowflakePlugin;
 use rdb_rdbms_common::RdbmsDispatcher;
 
 fn main() -> anyhow::Result<()> {
-    rdb_plugin_runtime::run(SnowflakePlugin::new(), RdbmsDispatcher(SnowflakePlugin::new()))
+    rdb_plugin_runtime::run(
+        SnowflakePlugin::new(),
+        RdbmsDispatcher(SnowflakePlugin::new()),
+    )
 }

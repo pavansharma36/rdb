@@ -42,10 +42,7 @@ export function saveConnections(connections: SavedConnection[]): Promise<void> {
 }
 
 /** Pure: insert or replace `conn` (matched by id). Returns the new list. */
-export function upsert(
-  list: SavedConnection[],
-  conn: SavedConnection,
-): SavedConnection[] {
+export function upsert(list: SavedConnection[], conn: SavedConnection): SavedConnection[] {
   const i = list.findIndex((c) => c.id === conn.id);
   return i >= 0 ? list.map((c) => (c.id === conn.id ? conn : c)) : [...list, conn];
 }
@@ -159,10 +156,7 @@ export interface DirEntry {
 }
 
 /** Read a single workspace file. Resolves to `null` when it doesn't exist. */
-export function readWorkspaceFile(
-  connectionId: string,
-  path: string,
-): Promise<string | null> {
+export function readWorkspaceFile(connectionId: string, path: string): Promise<string | null> {
   return invoke<string | null>("read_workspace_file", { connectionId, path });
 }
 
@@ -177,17 +171,11 @@ export function writeWorkspaceFileAt(
 
 /** List the immediate children of a workspace directory (sorted by name). Empty
  * when the directory doesn't exist. The caller recurses into subdirs itself. */
-export function listWorkspaceDir(
-  connectionId: string,
-  path: string,
-): Promise<DirEntry[]> {
+export function listWorkspaceDir(connectionId: string, path: string): Promise<DirEntry[]> {
   return invoke<DirEntry[]>("list_workspace_dir", { connectionId, path });
 }
 
 /** Delete the file or directory (recursively) at `path`. Missing = success. */
-export function deleteWorkspacePath(
-  connectionId: string,
-  path: string,
-): Promise<void> {
+export function deleteWorkspacePath(connectionId: string, path: string): Promise<void> {
   return invoke<void>("delete_workspace_path", { connectionId, path });
 }

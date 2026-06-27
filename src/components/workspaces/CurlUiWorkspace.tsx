@@ -48,13 +48,7 @@ import { KvEditor } from "../KvEditor";
 import { MultipartEditor } from "../MultipartEditor";
 import { ContentEditor } from "../ContentEditor";
 import { useLoader } from "../Loader";
-import {
-  useResizable,
-  TREE_MIN,
-  TREE_MAX,
-  EDITOR_MIN,
-  EDITOR_MAX,
-} from "../../useResizable";
+import { useResizable, TREE_MIN, TREE_MAX, EDITOR_MIN, EDITOR_MAX } from "../../useResizable";
 import { ConnScope, useConnectionState } from "../../connectionState";
 
 type RequestTab = "env" | "params" | "auth" | "headers" | "body";
@@ -63,10 +57,7 @@ type CollectionTab = "env" | "headers" | "auth";
 
 /** Case-insensitive header lookup (HTTP header names aren't case-sensitive,
  *  and servers vary the casing they return). */
-function headerValue(
-  headers: Record<string, string>,
-  name: string,
-): string | undefined {
+function headerValue(headers: Record<string, string>, name: string): string | undefined {
   const lower = name.toLowerCase();
   for (const [k, v] of Object.entries(headers)) {
     if (k.toLowerCase() === lower) return v;
@@ -109,17 +100,12 @@ function AuthEditor({
   onChange: (patch: Partial<Auth>) => void;
   allowInherit?: boolean;
 }) {
-  const kinds = allowInherit
-    ? AUTH_KINDS
-    : AUTH_KINDS.filter((k) => k.value !== "inherit");
+  const kinds = allowInherit ? AUTH_KINDS : AUTH_KINDS.filter((k) => k.value !== "inherit");
   return (
     <div className="curlui-auth">
       <label className="curlui-auth-field">
         <span className="field-label">Type</span>
-        <select
-          value={auth.kind}
-          onChange={(e) => onChange({ kind: e.target.value as AuthKind })}
-        >
+        <select value={auth.kind} onChange={(e) => onChange({ kind: e.target.value as AuthKind })}>
           {kinds.map((k) => (
             <option key={k.value} value={k.value}>
               {k.label}
@@ -129,9 +115,7 @@ function AuthEditor({
       </label>
 
       {auth.kind === "inherit" && (
-        <p className="muted">
-          This request uses the authorization set on its parent collection.
-        </p>
+        <p className="muted">This request uses the authorization set on its parent collection.</p>
       )}
 
       {auth.kind === "none" && (
@@ -246,40 +230,38 @@ function CollectionEditor({
           Delete
         </button>
       </div>
-      <div className="curlui-tabs">
+      <div className="tabs">
         <button
           type="button"
-          className={"curlui-tab" + (tab === "env" ? " active" : "")}
+          className={"tab" + (tab === "env" ? " active" : "")}
           onClick={() => onTabChange("env")}
         >
           Variables
-          {envCount > 0 && <span className="curlui-tab-badge">{envCount}</span>}
+          {envCount > 0 && <span className="tab-badge">{envCount}</span>}
         </button>
         <button
           type="button"
-          className={"curlui-tab" + (tab === "headers" ? " active" : "")}
+          className={"tab" + (tab === "headers" ? " active" : "")}
           onClick={() => onTabChange("headers")}
         >
           Headers
-          {headerCount > 0 && (
-            <span className="curlui-tab-badge">{headerCount}</span>
-          )}
+          {headerCount > 0 && <span className="tab-badge">{headerCount}</span>}
         </button>
         <button
           type="button"
-          className={"curlui-tab" + (tab === "auth" ? " active" : "")}
+          className={"tab" + (tab === "auth" ? " active" : "")}
           onClick={() => onTabChange("auth")}
         >
           Auth
-          {auth.kind !== "none" && <span className="curlui-tab-dot" />}
+          {auth.kind !== "none" && <span className="tab-dot" />}
         </button>
       </div>
       <div className="curlui-tab-panel">
         {tab === "env" && (
           <>
             <p className="muted curlui-collection-hint">
-              Overrides the active environment for requests in this collection.
-              Use as <code>{"{{NAME}}"}</code>.
+              Overrides the active environment for requests in this collection. Use as{" "}
+              <code>{"{{NAME}}"}</code>.
               {Object.keys(baseEnv).length > 0 &&
                 ` Environment: ${Object.keys(baseEnv).join(", ")}.`}
             </p>
@@ -298,10 +280,7 @@ function CollectionEditor({
           />
         )}
         {tab === "auth" && (
-          <AuthEditor
-            auth={auth}
-            onChange={(patch) => onPatch({ auth: { ...auth, ...patch } })}
-          />
+          <AuthEditor auth={auth} onChange={(patch) => onPatch({ auth: { ...auth, ...patch } })} />
         )}
       </div>
     </div>
@@ -324,9 +303,7 @@ type TreeTarget =
 /** A pending "name this new item" dialog. `target` is null for a new
  *  top-level collection; otherwise it's where the new folder is added. */
 type NamePrompt =
-  | { kind: "collection" }
-  | { kind: "environment" }
-  | { kind: "folder"; target: TreeTarget };
+  { kind: "collection" } | { kind: "environment" } | { kind: "folder"; target: TreeTarget };
 
 /** A pending delete confirmation: what to remove (with its display name). */
 type DeleteTarget =
@@ -360,9 +337,7 @@ const collectionIdFromTab = (key: string): string | null =>
 const FOL_TAB = "fol␟";
 const folderTabKey = (collectionId: string, folderId: string) =>
   FOL_TAB + collectionId + "␟" + folderId;
-const folderRefFromTab = (
-  key: string,
-): { collectionId: string; folderId: string } | null => {
+const folderRefFromTab = (key: string): { collectionId: string; folderId: string } | null => {
   if (!key.startsWith(FOL_TAB)) return null;
   const [collectionId, folderId] = key.slice(FOL_TAB.length).split("␟");
   return collectionId && folderId ? { collectionId, folderId } : null;
@@ -380,10 +355,7 @@ const tmpTabKey = (id: string) => TMP_TAB + id;
 const tmpIdFromTab = (key: string): string | null =>
   key.startsWith(TMP_TAB) ? key.slice(TMP_TAB.length) : null;
 
-function findRequest(
-  data: CollectionsFile,
-  sel: SelectedRequest,
-): HttpRequestItem | null {
+function findRequest(data: CollectionsFile, sel: SelectedRequest): HttpRequestItem | null {
   const col = data.collections.find((c) => c.id === sel.collectionId);
   if (!col) return null;
   if (!sel.folderId) {
@@ -548,32 +520,20 @@ export function CurlUiWorkspace({
   // Open request tabs, as `collectionId:folderId:requestId` keys (the same
   // shape as `selectedId`, which points at the active tab). App-state-backed so
   // open tabs survive connection switches / remounts.
-  const [openTabs, setOpenTabs] = useConnectionState<string[]>(
-    scope,
-    "openTabs",
-    [],
-  );
+  const [openTabs, setOpenTabs] = useConnectionState<string[]>(scope, "openTabs", []);
   // Collections open as tabs too (key `col␟<id>`). The active tab is the
   // collection editor when `selectedId` is a collection key.
   const [collectionTab, setCollectionTab] = useState<CollectionTab>("env");
 
-  const [collections, setCollections] = useState<CollectionsFile>(
-    defaultCollectionsFile(),
-  );
+  const [collections, setCollections] = useState<CollectionsFile>(defaultCollectionsFile());
   // All environments + the active selection (`environments.json`). The active
   // environment's variables are the base `{{VAR}}` map for every request.
-  const [envFile, setEnvFile] = useState<EnvironmentsFile>(
-    defaultEnvironmentsFile(),
-  );
+  const [envFile, setEnvFile] = useState<EnvironmentsFile>(defaultEnvironmentsFile());
   // Temporary ("scratch") requests created from the tab-strip `+`. App-state-
   // backed so they survive connection switches / remounts (session only — lost
   // on reload until saved into a collection). Keyed in `openTabs` as
   // `tmp␟<reqId>`.
-  const [scratch, setScratch] = useConnectionState<HttpRequestItem[]>(
-    scope,
-    "scratch",
-    [],
-  );
+  const [scratch, setScratch] = useConnectionState<HttpRequestItem[]>(scope, "scratch", []);
   const [loaded, setLoaded] = useState(false);
   const [headerRows, setHeaderRows] = useState<KvRow[]>([newKvRow()]);
   const [paramRows, setParamRows] = useState<KvRow[]>([newKvRow()]);
@@ -583,9 +543,11 @@ export function CurlUiWorkspace({
   // Last response per open tab, keyed by the tab's request key, so switching
   // tabs keeps each request's result on screen. App-state-backed so responses
   // survive connection switches / remounts.
-  const [responses, setResponses] = useConnectionState<
-    Record<string, HttpResponse>
-  >(scope, "responses", {});
+  const [responses, setResponses] = useConnectionState<Record<string, HttpResponse>>(
+    scope,
+    "responses",
+    {},
+  );
   const [error, setError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
@@ -671,15 +633,12 @@ export function CurlUiWorkspace({
     const folRef = folderRefFromTab(selectedId);
     if (folRef) {
       const fol = findFolder(collections, folRef.collectionId, folRef.folderId);
-      return fol
-        ? { kind: "folder", ...folRef, folder: fol }
-        : null;
+      return fol ? { kind: "folder", ...folRef, folder: fol } : null;
     }
     const sel = parseKey(selectedId);
     const req = sel ? findRequest(collections, sel) : null;
     if (!sel || !req) return null;
-    const collection =
-      collections.collections.find((c) => c.id === sel.collectionId) ?? null;
+    const collection = collections.collections.find((c) => c.id === sel.collectionId) ?? null;
     return { kind: "request", sel, request: req, collection, scratch: false };
   }, [collections, envFile, scratch, selectedId]);
 
@@ -688,8 +647,7 @@ export function CurlUiWorkspace({
   const activeIsScratch = activeTab?.kind === "request" && activeTab.scratch;
   // The collection that owns the active request — used to inherit env/headers/
   // auth when sending or copying as curl.
-  const activeRequestCollection =
-    activeTab?.kind === "request" ? activeTab.collection : null;
+  const activeRequestCollection = activeTab?.kind === "request" ? activeTab.collection : null;
 
   // Effective env for the active request: active-environment variables
   // overridden by the owning collection's variables (read-only; shown in the
@@ -738,21 +696,20 @@ export function CurlUiWorkspace({
         }
         const sel = parseKey(key);
         const req = sel ? findRequest(collections, sel) : null;
-        return req
-          ? { key, kind: "request", name: req.name, method: req.method }
-          : null;
+        return req ? { key, kind: "request", name: req.name, method: req.method } : null;
       })
       .filter((t): t is Tab => !!t);
   }, [openTabs, collections, envFile, scratch]);
 
-  const persist = useCallback((data: CollectionsFile) => {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      saveCurlFiles(savedId, collectionsToFiles(data)).catch((e) =>
-        setError(errString(e)),
-      );
-    }, 400);
-  }, [savedId]);
+  const persist = useCallback(
+    (data: CollectionsFile) => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(() => {
+        saveCurlFiles(savedId, collectionsToFiles(data)).catch((e) => setError(errString(e)));
+      }, 400);
+    },
+    [savedId],
+  );
 
   const setCollectionsAndSave = useCallback(
     (updater: (prev: CollectionsFile) => CollectionsFile) => {
@@ -811,9 +768,7 @@ export function CurlUiWorkspace({
     if (activeRequest) {
       setHeaderRows(headersToRows(activeRequest.headers));
       setParamRows(splitUrl(activeRequest.url).params);
-      setFormRows(
-        formToRows(activeRequest.body_kind === "form" ? activeRequest.body : ""),
-      );
+      setFormRows(formToRows(activeRequest.body_kind === "form" ? activeRequest.body : ""));
     }
   }, [activeRequest?.id]);
 
@@ -821,11 +776,7 @@ export function CurlUiWorkspace({
     setExpanded((e) => ({ ...e, [key]: !e[key] }));
   }
 
-  function selectRequest(
-    collectionId: string,
-    folderId: string | null,
-    requestId: string,
-  ) {
+  function selectRequest(collectionId: string, folderId: string | null, requestId: string) {
     const key = `${collectionId}:${folderId ?? ""}:${requestId}`;
     setOpenTabs((tabs) => (tabs.includes(key) ? tabs : [...tabs, key]));
     setSelectedId(key);
@@ -842,9 +793,7 @@ export function CurlUiWorkspace({
   function patchCollection(collectionId: string, patch: Partial<HttpCollection>) {
     setCollectionsAndSave((data) => ({
       ...data,
-      collections: data.collections.map((c) =>
-        c.id === collectionId ? { ...c, ...patch } : c,
-      ),
+      collections: data.collections.map((c) => (c.id === collectionId ? { ...c, ...patch } : c)),
     }));
   }
 
@@ -855,14 +804,8 @@ export function CurlUiWorkspace({
     setError(null);
   }
 
-  function patchFolder(
-    collectionId: string,
-    folderId: string,
-    patch: Partial<HttpFolder>,
-  ) {
-    setCollectionsAndSave((data) =>
-      updateFolder(data, collectionId, folderId, patch),
-    );
+  function patchFolder(collectionId: string, folderId: string, patch: Partial<HttpFolder>) {
+    setCollectionsAndSave((data) => updateFolder(data, collectionId, folderId, patch));
   }
 
   function selectEnvironment(environmentId: string) {
@@ -872,15 +815,10 @@ export function CurlUiWorkspace({
     setError(null);
   }
 
-  function patchEnvironment(
-    environmentId: string,
-    patch: Partial<HttpEnvironment>,
-  ) {
+  function patchEnvironment(environmentId: string, patch: Partial<HttpEnvironment>) {
     setEnvAndSave((data) => ({
       ...data,
-      environments: data.environments.map((e) =>
-        e.id === environmentId ? { ...e, ...patch } : e,
-      ),
+      environments: data.environments.map((e) => (e.id === environmentId ? { ...e, ...patch } : e)),
     }));
   }
 
@@ -948,9 +886,7 @@ export function CurlUiWorkspace({
   function patchActive(patch: Partial<HttpRequestItem>) {
     const tmpId = selectedId ? tmpIdFromTab(selectedId) : null;
     if (tmpId) {
-      setScratch((list) =>
-        list.map((r) => (r.id === tmpId ? { ...r, ...patch } : r)),
-      );
+      setScratch((list) => list.map((r) => (r.id === tmpId ? { ...r, ...patch } : r)));
       return;
     }
     if (!selected) return;
@@ -1125,12 +1061,7 @@ export function CurlUiWorkspace({
     try {
       const res = await api.httpSend(
         connectionId,
-        buildSendable(
-          activeRequest,
-          env,
-          activeRequestCollection ?? undefined,
-          pluginVersion,
-        ),
+        buildSendable(activeRequest, env, activeRequestCollection ?? undefined, pluginVersion),
       );
       setResponses((r) => ({ ...r, [key]: res }));
     } catch (e) {
@@ -1153,12 +1084,7 @@ export function CurlUiWorkspace({
     try {
       await navigator.clipboard.writeText(
         buildCurl(
-          buildSendable(
-            activeRequest,
-            env,
-            activeRequestCollection ?? undefined,
-            pluginVersion,
-          ),
+          buildSendable(activeRequest, env, activeRequestCollection ?? undefined, pluginVersion),
         ),
       );
       setCopiedCurl(true);
@@ -1189,9 +1115,7 @@ export function CurlUiWorkspace({
       });
       setHeaderRows(headersToRows(parsed.headers));
       setParamRows(splitUrl(parsed.url).params);
-      setFormRows(
-        formToRows(parsed.body_kind === "form" ? (parsed.body ?? "") : ""),
-      );
+      setFormRows(formToRows(parsed.body_kind === "form" ? (parsed.body ?? "") : ""));
     } catch (err) {
       setError(errString(err));
     } finally {
@@ -1213,8 +1137,7 @@ export function CurlUiWorkspace({
       req.body_kind = (parsed.body_kind as BodyKind) || "none";
       req.parts = parsed.parts;
       setCollectionsAndSave((data) => insertRequest(data, importTarget, req));
-      const folderId =
-        importTarget.kind === "folder" ? importTarget.folderId : null;
+      const folderId = importTarget.kind === "folder" ? importTarget.folderId : null;
       selectRequest(importTarget.collectionId, folderId, req.id);
       setImportOpen(false);
       setImportText("");
@@ -1311,11 +1234,7 @@ export function CurlUiWorkspace({
     });
   }
 
-  function renderFolder(
-    folder: HttpFolder,
-    collectionId: string,
-    depth: number,
-  ) {
+  function renderFolder(folder: HttpFolder, collectionId: string, depth: number) {
     const key = `folder:${folder.id}`;
     const isOpen = expanded[key] ?? false;
     return (
@@ -1323,17 +1242,11 @@ export function CurlUiWorkspace({
         <div
           className={
             "curlui-tree-row" +
-            (selectedId === folderTabKey(collectionId, folder.id)
-              ? " active"
-              : "")
+            (selectedId === folderTabKey(collectionId, folder.id) ? " active" : "")
           }
           style={{ paddingLeft: 22 + depth * 14 }}
         >
-          <button
-            type="button"
-            className="curlui-tree-toggle"
-            onClick={() => toggleExpanded(key)}
-          >
+          <button type="button" className="curlui-tree-toggle" onClick={() => toggleExpanded(key)}>
             {isOpen ? "▾" : "▸"}
           </button>
           <span className="curlui-tree-folder-icon">📁</span>
@@ -1349,9 +1262,7 @@ export function CurlUiWorkspace({
             <button
               type="button"
               title="Add request"
-              onClick={() =>
-                addRequest({ kind: "folder", collectionId, folderId: folder.id })
-              }
+              onClick={() => addRequest({ kind: "folder", collectionId, folderId: folder.id })}
             >
               +
             </button>
@@ -1397,9 +1308,7 @@ export function CurlUiWorkspace({
         style={{ paddingLeft: 38 + depth * 14 }}
         onClick={() => selectRequest(collectionId, folderId, req.id)}
       >
-        <span className={"curlui-req-method m-" + methodColor(req.method)}>
-          {req.method}
-        </span>
+        <span className={"curlui-req-method m-" + methodColor(req.method)}>{req.method}</span>
         <span className="curlui-req-name">{req.name}</span>
       </button>
     );
@@ -1503,9 +1412,7 @@ export function CurlUiWorkspace({
                       <button
                         type="button"
                         title="Add request"
-                        onClick={() =>
-                          addRequest({ kind: "collection", collectionId: col.id })
-                        }
+                        onClick={() => addRequest({ kind: "collection", collectionId: col.id })}
                       >
                         +
                       </button>
@@ -1561,9 +1468,7 @@ export function CurlUiWorkspace({
                 key={t.key}
                 role="tab"
                 aria-selected={t.key === selectedId}
-                className={
-                  "curlui-req-tab" + (t.key === selectedId ? " active" : "")
-                }
+                className={"curlui-req-tab" + (t.key === selectedId ? " active" : "")}
                 onClick={() => setSelectedId(t.key)}
                 onMouseDown={(e) => {
                   // Middle-click closes, like a browser tab.
@@ -1617,7 +1522,6 @@ export function CurlUiWorkspace({
             </button>
           </div>
 
-
           {activeTab?.kind === "collection" ? (
             <CollectionEditor
               collection={activeTab.collection}
@@ -1653,9 +1557,7 @@ export function CurlUiWorkspace({
                   <button
                     type="button"
                     title="Set as active environment"
-                    onClick={() =>
-                      setActiveEnvironment(activeTab.environment.id)
-                    }
+                    onClick={() => setActiveEnvironment(activeTab.environment.id)}
                   >
                     Set active
                   </button>
@@ -1676,9 +1578,8 @@ export function CurlUiWorkspace({
               </div>
               <div className="curlui-tab-panel">
                 <p className="muted curlui-collection-hint">
-                  Variables in this environment. Use them as{" "}
-                  <code>{"{{NAME}}"}</code> in any request when this environment
-                  is active.
+                  Variables in this environment. Use them as <code>{"{{NAME}}"}</code> in any
+                  request when this environment is active.
                 </p>
                 <KvEditor
                   rows={headersToRows(activeTab.environment.variables)}
@@ -1777,75 +1678,64 @@ export function CurlUiWorkspace({
                     Delete
                   </button>
                 )}
-                <button
-                  type="button"
-                  title="Copy as curl command"
-                  onClick={onCopyCurl}
-                >
+                <button type="button" title="Copy as curl command" onClick={onCopyCurl}>
                   {copiedCurl ? "Copied!" : "</>"}
                 </button>
               </div>
 
-              <div
-                className="curlui-editors"
-                style={{ height: editorHeight }}
-              >
-                <div className="curlui-tabs">
+              <div className="curlui-editors" style={{ height: editorHeight }}>
+                <div className="tabs">
                   <button
                     type="button"
-                    className={"curlui-tab" + (reqTab === "env" ? " active" : "")}
+                    className={"tab" + (reqTab === "env" ? " active" : "")}
                     onClick={() => setReqTab("env")}
                   >
                     Env
                     {Object.keys(effectiveEnv).length > 0 && (
-                      <span className="curlui-tab-badge">
-                        {Object.keys(effectiveEnv).length}
-                      </span>
+                      <span className="tab-badge">{Object.keys(effectiveEnv).length}</span>
                     )}
                   </button>
                   <button
                     type="button"
-                    className={"curlui-tab" + (reqTab === "params" ? " active" : "")}
+                    className={"tab" + (reqTab === "params" ? " active" : "")}
                     onClick={() => setReqTab("params")}
                   >
                     Params
                     {paramRows.some((r) => r.enabled && r.key.trim()) && (
-                      <span className="curlui-tab-badge">
+                      <span className="tab-badge">
                         {paramRows.filter((r) => r.enabled && r.key.trim()).length}
                       </span>
                     )}
                   </button>
                   <button
                     type="button"
-                    className={"curlui-tab" + (reqTab === "auth" ? " active" : "")}
+                    className={"tab" + (reqTab === "auth" ? " active" : "")}
                     onClick={() => setReqTab("auth")}
                   >
                     Auth
-                    {!["inherit", "none"].includes(
-                      activeRequest.auth?.kind ?? "inherit",
-                    ) && <span className="curlui-tab-dot" />}
+                    {!["inherit", "none"].includes(activeRequest.auth?.kind ?? "inherit") && (
+                      <span className="tab-dot" />
+                    )}
                   </button>
                   <button
                     type="button"
-                    className={"curlui-tab" + (reqTab === "headers" ? " active" : "")}
+                    className={"tab" + (reqTab === "headers" ? " active" : "")}
                     onClick={() => setReqTab("headers")}
                   >
                     Headers
                     {headerRows.some((r) => r.enabled && r.key.trim()) && (
-                      <span className="curlui-tab-badge">
+                      <span className="tab-badge">
                         {headerRows.filter((r) => r.enabled && r.key.trim()).length}
                       </span>
                     )}
                   </button>
                   <button
                     type="button"
-                    className={"curlui-tab" + (reqTab === "body" ? " active" : "")}
+                    className={"tab" + (reqTab === "body" ? " active" : "")}
                     onClick={() => setReqTab("body")}
                   >
                     Body
-                    {activeRequest.body_kind !== "none" && (
-                      <span className="curlui-tab-dot" />
-                    )}
+                    {activeRequest.body_kind !== "none" && <span className="tab-dot" />}
                   </button>
                 </div>
 
@@ -1854,9 +1744,8 @@ export function CurlUiWorkspace({
                     <div className="curlui-env-tab">
                       {Object.keys(effectiveEnv).length === 0 ? (
                         <p className="muted">
-                          No environment variables. Select or create an
-                          environment, or define variables in a collection’s
-                          Variables tab, then use them as{" "}
+                          No environment variables. Select or create an environment, or define
+                          variables in a collection’s Variables tab, then use them as{" "}
                           <code>{"{{NAME}}"}</code>.
                         </p>
                       ) : (
@@ -1890,9 +1779,7 @@ export function CurlUiWorkspace({
                         <input
                           type="checkbox"
                           checked={activeRequest.inheritHeaders !== false}
-                          onChange={(e) =>
-                            patchActive({ inheritHeaders: e.target.checked })
-                          }
+                          onChange={(e) => patchActive({ inheritHeaders: e.target.checked })}
                         />
                         Inherit headers from collection
                       </label>
@@ -1900,32 +1787,24 @@ export function CurlUiWorkspace({
                         activeRequestCollection?.headers &&
                         Object.keys(activeRequestCollection.headers).length > 0 && (
                           <div className="curlui-inherited-headers">
-                            {Object.entries(activeRequestCollection.headers).map(
-                              ([k, v]) => (
-                                <div key={k} className="curlui-inherited-row">
-                                  <span className="curlui-inherited-key">{k}</span>
-                                  <span className="curlui-inherited-val">{v}</span>
-                                </div>
-                              ),
-                            )}
+                            {Object.entries(activeRequestCollection.headers).map(([k, v]) => (
+                              <div key={k} className="curlui-inherited-row">
+                                <span className="curlui-inherited-key">{k}</span>
+                                <span className="curlui-inherited-val">{v}</span>
+                              </div>
+                            ))}
                           </div>
                         )}
-                      <div className="curlui-auto-headers-label">
-                        Auto-generated headers
-                      </div>
+                      <div className="curlui-auto-headers-label">Auto-generated headers</div>
                       <KvEditor
                         rows={autoHeaderRows(
-                          headerRows
-                            .filter((r) => r.enabled)
-                            .map((r) => r.key),
+                          headerRows.filter((r) => r.enabled).map((r) => r.key),
                           pluginVersion,
                         )}
                         onChange={() => {}}
                         disabled
                       />
-                      <div className="curlui-auto-headers-label">
-                        Custom headers
-                      </div>
+                      <div className="curlui-auto-headers-label">Custom headers</div>
                       <KvEditor
                         rows={headerRows}
                         onChange={onHeaderRowsChange}
@@ -2003,27 +1882,25 @@ export function CurlUiWorkspace({
                     <span className="muted">{response.elapsed_ms} ms</span>
                     <span className="muted">{byteSize(response.body)}</span>
                   </div>
-                  <div className="curlui-tabs">
+                  <div className="tabs">
                     <button
                       type="button"
-                      className={"curlui-tab" + (resTab === "body" ? " active" : "")}
+                      className={"tab" + (resTab === "body" ? " active" : "")}
                       onClick={() => setResTab("body")}
                     >
                       Body
                     </button>
                     <button
                       type="button"
-                      className={"curlui-tab" + (resTab === "headers" ? " active" : "")}
+                      className={"tab" + (resTab === "headers" ? " active" : "")}
                       onClick={() => setResTab("headers")}
                     >
                       Headers
-                      <span className="curlui-tab-badge">
-                        {Object.keys(response.headers).length}
-                      </span>
+                      <span className="tab-badge">{Object.keys(response.headers).length}</span>
                     </button>
                     <button
                       type="button"
-                      className={"curlui-tab" + (resTab === "curl" ? " active" : "")}
+                      className={"tab" + (resTab === "curl" ? " active" : "")}
                       onClick={() => setResTab("curl")}
                     >
                       cURL
@@ -2044,9 +1921,7 @@ export function CurlUiWorkspace({
                     )}
                     {resTab === "headers" && (
                       <KvEditor
-                        rows={Object.entries(response.headers).map(([k, v]) =>
-                          newKvRow(k, v),
-                        )}
+                        rows={Object.entries(response.headers).map(([k, v]) => newKvRow(k, v))}
                         onChange={() => {}}
                         disabled
                         disabledTitle=""
@@ -2061,8 +1936,8 @@ export function CurlUiWorkspace({
             </div>
           ) : (
             <div className="placeholder">
-              Select a request from the collections tree, or click{" "}
-              <strong>+</strong> above to start a new one.
+              Select a request from the collections tree, or click <strong>+</strong> above to start
+              a new one.
             </div>
           )}
         </main>
@@ -2081,7 +1956,9 @@ export function CurlUiWorkspace({
             rows={8}
             value={importText}
             onChange={(e) => setImportText(e.target.value)}
-            placeholder={"curl -X POST https://api.example.com -H 'Authorization: Bearer token' -d '{\"key\":\"value\"}'"}
+            placeholder={
+              "curl -X POST https://api.example.com -H 'Authorization: Bearer token' -d '{\"key\":\"value\"}'"
+            }
             autoFocus
           />
           <div className="form-actions">
@@ -2105,8 +1982,7 @@ export function CurlUiWorkspace({
         <ConfirmDialog
           title={`Delete ${deleteConfirm.kind}`}
           message={
-            deleteConfirm.kind === "request" ||
-            deleteConfirm.kind === "environment"
+            deleteConfirm.kind === "request" || deleteConfirm.kind === "environment"
               ? `Delete “${deleteConfirm.name}”?`
               : `Delete ${deleteConfirm.kind} “${deleteConfirm.name}” and everything inside it?`
           }
@@ -2175,24 +2051,17 @@ export function CurlUiWorkspace({
 
       {saveDialog &&
         (() => {
-          const col = collections.collections.find(
-            (c) => c.id === saveDialog.collectionId,
-          );
+          const col = collections.collections.find((c) => c.id === saveDialog.collectionId);
           const folders = col ? flattenFolders(col) : [];
           return (
-            <Modal
-              title="Save request to collection"
-              onClose={() => setSaveDialog(null)}
-            >
+            <Modal title="Save request to collection" onClose={() => setSaveDialog(null)}>
               <label className="curlui-save-field">
                 <span className="field-label">Name</span>
                 <input
                   type="text"
                   className="curlui-name-input"
                   value={saveDialog.name}
-                  onChange={(e) =>
-                    setSaveDialog((d) => d && { ...d, name: e.target.value })
-                  }
+                  onChange={(e) => setSaveDialog((d) => d && { ...d, name: e.target.value })}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") confirmSave();
                   }}
@@ -2205,15 +2074,10 @@ export function CurlUiWorkspace({
                 <select
                   value={saveDialog.collectionId}
                   onChange={(e) =>
-                    setSaveDialog(
-                      (d) =>
-                        d && { ...d, collectionId: e.target.value, folderId: "" },
-                    )
+                    setSaveDialog((d) => d && { ...d, collectionId: e.target.value, folderId: "" })
                   }
                 >
-                  {collections.collections.length === 0 && (
-                    <option value="">No collections</option>
-                  )}
+                  {collections.collections.length === 0 && <option value="">No collections</option>}
                   {collections.collections.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
@@ -2225,9 +2089,7 @@ export function CurlUiWorkspace({
                 <span className="field-label">Folder</span>
                 <select
                   value={saveDialog.folderId}
-                  onChange={(e) =>
-                    setSaveDialog((d) => d && { ...d, folderId: e.target.value })
-                  }
+                  onChange={(e) => setSaveDialog((d) => d && { ...d, folderId: e.target.value })}
                   disabled={folders.length === 0}
                 >
                   <option value="">(collection root)</option>

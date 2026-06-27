@@ -10,8 +10,8 @@ use rdb_rdbms_common::{
     TableDescription, TableKind,
 };
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
-use sqlx::{Column as _, Executor, Row, TypeInfo};
 use sqlx::{AssertSqlSafe, SqlSafeStr};
+use sqlx::{Column as _, Executor, Row, TypeInfo};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -485,12 +485,26 @@ impl RdbmsPlugin for PostgresPlugin {
         let columns = rows
             .into_iter()
             .map(
-                |(name, dtype, udt, nullable, char_len, precision, scale,
-                  pk, default_value, unique_flag, fk_table, fk_col)| {
+                |(
+                    name,
+                    dtype,
+                    udt,
+                    nullable,
+                    char_len,
+                    precision,
+                    scale,
+                    pk,
+                    default_value,
+                    unique_flag,
+                    fk_table,
+                    fk_col,
+                )| {
                     let u = udt.to_ascii_lowercase();
                     let json = u == "json" || u == "jsonb";
                     let large = json || dtype == "text" || dtype == "xml" || u == "citext";
-                    let foreign_key = fk_table.zip(fk_col).map(|(table, column)| ForeignKey { table, column });
+                    let foreign_key = fk_table
+                        .zip(fk_col)
+                        .map(|(table, column)| ForeignKey { table, column });
                     Column {
                         name,
                         data_type: dtype,
@@ -943,7 +957,11 @@ fn filter_expr(f: &BrowseFilter, params: &mut Vec<String>) -> Result<String> {
                 "gte" => ">=",
                 "like" => "LIKE",
                 "ilike" => "ILIKE",
-                _ => return Err(PluginError::Config(format!("invalid filter operator: {op}"))),
+                _ => {
+                    return Err(PluginError::Config(format!(
+                        "invalid filter operator: {op}"
+                    )))
+                }
             };
             // Reuse the edit path's value binding: CAST($n AS type). A null
             // value with a comparison operator never matches, which is the
@@ -969,8 +987,9 @@ fn quote_ident(s: &str) -> String {
 /// brackets (`character varying`, `numeric(10,2)`, `int[]`).
 fn validate_type(t: &str) -> Result<&str> {
     let ok = !t.is_empty()
-        && t.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '(' | ')' | '[' | ']' | ',' | '.'));
+        && t.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '(' | ')' | '[' | ']' | ',' | '.')
+        });
     if ok {
         Ok(t)
     } else {
@@ -1001,7 +1020,11 @@ fn build_where(key: &[ColumnValue], params: &mut Vec<String>) -> Result<String> 
         if cv.value.is_null() {
             parts.push(format!("{} IS NULL", quote_ident(&cv.column)));
         } else {
-            parts.push(format!("{} = {}", quote_ident(&cv.column), value_expr(cv, params)?));
+            parts.push(format!(
+                "{} = {}",
+                quote_ident(&cv.column),
+                value_expr(cv, params)?
+            ));
         }
     }
     Ok(parts.join(" AND "))
@@ -1238,18 +1261,21 @@ fn value_to_json(row: &PgRow, i: usize) -> serde_json::Value {
         "INT2" | "SMALLINT" | "SMALLSERIAL" => decode!(i16, |v: i16| Value::Number(v.into())),
         "INT4" | "INT" | "INTEGER" | "SERIAL" => decode!(i32, |v: i32| Value::Number(v.into())),
         "INT8" | "BIGINT" | "BIGSERIAL" => decode!(i64, |v: i64| Value::Number(v.into())),
-        "OID" => decode!(sqlx::postgres::types::Oid, |v: sqlx::postgres::types::Oid| {
-            Value::Number(v.0.into())
-        }),
+        "OID" => decode!(
+            sqlx::postgres::types::Oid,
+            |v: sqlx::postgres::types::Oid| { Value::Number(v.0.into()) }
+        ),
         "FLOAT4" | "REAL" => decode!(f32, |v: f32| num_f64(v as f64)),
         "FLOAT8" | "DOUBLE PRECISION" => decode!(f64, num_f64),
-        "NUMERIC" | "DECIMAL" | "MONEY" => decode!(BigDecimal, |v: BigDecimal| {
-            Value::String(v.to_string())
-        }),
+        "NUMERIC" | "DECIMAL" | "MONEY" => {
+            decode!(BigDecimal, |v: BigDecimal| { Value::String(v.to_string()) })
+        }
         "TIMESTAMPTZ" => decode!(DateTime<Utc>, |v: DateTime<Utc>| {
             Value::String(v.to_rfc3339())
         }),
-        "TIMESTAMP" => decode!(NaiveDateTime, |v: NaiveDateTime| Value::String(v.to_string())),
+        "TIMESTAMP" => decode!(NaiveDateTime, |v: NaiveDateTime| Value::String(
+            v.to_string()
+        )),
         "DATE" => decode!(NaiveDate, |v: NaiveDate| Value::String(v.to_string())),
         "TIME" | "TIMETZ" => decode!(NaiveTime, |v: NaiveTime| Value::String(v.to_string())),
         "UUID" => decode!(Uuid, |v: Uuid| Value::String(v.to_string())),
@@ -1258,9 +1284,15 @@ fn value_to_json(row: &PgRow, i: usize) -> serde_json::Value {
         // Array types are named `_int4`, `_text`, … (or `INT4[]`); decode the
         // common element types into a JSON array.
         "_BOOL" => decode!(Vec<bool>, |v: Vec<bool>| json_array(v, Value::Bool)),
-        "_INT2" => decode!(Vec<i16>, |v: Vec<i16>| json_array(v, |x: i16| Value::Number(x.into()))),
-        "_INT4" => decode!(Vec<i32>, |v: Vec<i32>| json_array(v, |x: i32| Value::Number(x.into()))),
-        "_INT8" => decode!(Vec<i64>, |v: Vec<i64>| json_array(v, |x: i64| Value::Number(x.into()))),
+        "_INT2" => decode!(Vec<i16>, |v: Vec<i16>| json_array(v, |x: i16| {
+            Value::Number(x.into())
+        })),
+        "_INT4" => decode!(Vec<i32>, |v: Vec<i32>| json_array(v, |x: i32| {
+            Value::Number(x.into())
+        })),
+        "_INT8" => decode!(Vec<i64>, |v: Vec<i64>| json_array(v, |x: i64| {
+            Value::Number(x.into())
+        })),
         "_FLOAT8" => decode!(Vec<f64>, |v: Vec<f64>| json_array(v, num_f64)),
         "_TEXT" | "_VARCHAR" => decode!(Vec<String>, |v: Vec<String>| json_array(v, to_str)),
         _ => {}
@@ -1291,10 +1323,7 @@ fn bytea_hex(bytes: &[u8]) -> String {
 }
 
 /// Map a decoded Postgres array into a JSON array via `conv`.
-fn json_array<T>(
-    items: Vec<T>,
-    conv: impl Fn(T) -> serde_json::Value,
-) -> serde_json::Value {
+fn json_array<T>(items: Vec<T>, conv: impl Fn(T) -> serde_json::Value) -> serde_json::Value {
     serde_json::Value::Array(items.into_iter().map(conv).collect())
 }
 

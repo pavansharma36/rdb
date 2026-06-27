@@ -4,7 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`rdb` is a cross-platform desktop database/message-broker client built with **Tauri 2** (Rust backend) and **React 18 + TypeScript + Vite** (frontend). One window connects to relational DBs, document stores, and queues through a **plugin architecture**. Ships with three plugins: PostgreSQL (`rdbms`, via `sqlx`), MongoDB (`document`), RabbitMQ (`rabbitmq`, via the HTTP Management API), and **SSH** (`cli`, PTY terminal + script runner).
+`rdb` is a cross-platform desktop database/message-broker/integration client built with **Tauri 2** (Rust backend) and **React 18 + TypeScript + Vite** (frontend). One window connects to relational DBs, document stores, queues, remote shells, file stores, and HTTP APIs through a **plugin architecture**. Ships with **10 bundled plugins**:
+
+| Plugin | `PluginKind` | Talks to |
+| --- | --- | --- |
+| `postgres` | `Rdbms` | PostgreSQL 12+ (via `sqlx`) |
+| `mysql` | `Rdbms` | MySQL & MariaDB |
+| `mssql` | `Rdbms` | Microsoft SQL Server (via Tiberius) |
+| `snowflake` | `Rdbms` | Snowflake warehouses |
+| `mongodb` | `Document` | MongoDB & Atlas |
+| `rabbitmq` | `Rabbitmq` | brokers via the HTTP Management API |
+| `ssh` | `Cli` | remote hosts via a PTY terminal + script runner |
+| `sftp` | `FileManager` | file transfer over SFTP |
+| `s3` | `FileManager` | S3 & S3-compatible buckets |
+| `curlui` | `Http` | REST APIs (collections + curl import/export) |
 
 ## Commands
 
@@ -13,7 +26,7 @@ npm install                              # frontend deps (Rust deps fetch on fir
 
 # Run the app end-to-end. Plugins are out-of-process executables the host
 # discovers at runtime, so build + install them first, then point the host at them:
-npm run plugins:dev                      # builds the 4 bundled plugins into dev-plugins/ (debug)
+npm run plugins:dev                      # builds the 10 bundled plugins into dev-plugins/ (debug)
 RDB_PLUGINS_DIR=$PWD/dev-plugins npm run tauri dev
 # Or use the convenience script:
 ./start-dev.sh              # uses dev-plugins/ as-is
@@ -43,16 +56,21 @@ React frontend  ──@tauri-apps/api invoke()──▶  Tauri host (src-tauri)
                                           line-delimited JSON-RPC over stdio
                                                      ▼
                                           plugin sidecar executables
-                                          (postgres / mongodb / rabbitmq)
+                                          (postgres / mysql / mssql / snowflake /
+                                           mongodb / rabbitmq / ssh / sftp / s3 / curlui)
 ```
 
 ### Three layers, three boundaries
 
-1. **Frontend → host** (`src/api.ts` ⇄ `src-tauri/src/commands.rs`): just **13 Tauri commands** —
-   `list_plugins`, `test_connection`, `open_connection`, `close_connection`, `plugin_call`,
-   `preview_github_plugin`, `install_github_plugin`, plus persistence (`load_connections`/`save_connections`),
-   and PTY commands for CLI workspaces (`pty_spawn`, `pty_write`, `pty_resize`, `pty_close`, `pty_snapshot`).
-   Every DB/queue/terminal capability funnels through `plugin_call` with an **opaque `op` string**
+1. **Frontend → host** (`src/api.ts` ⇄ `src-tauri/src/commands.rs`): ~**27 Tauri commands** —
+   plugin lifecycle (`list_plugins`, `test_connection`, `open_connection`, `close_connection`,
+   `plugin_call`, `cancel_last_plugin_call`), GitHub install (`list_github_plugins`,
+   `preview_github_plugin`, `install_github_plugin`, `uninstall_plugin`), app self-update
+   (`check_update`, `install_update`, `app_channel`), persistence (`load_connections`/`save_connections`,
+   `load_config`/`save_config`), per-connection workspace files (`read_workspace_file`,
+   `write_workspace_file_at`, `list_workspace_dir`, `delete_workspace_path`), and PTY commands for CLI
+   workspaces (`pty_spawn`, `pty_write`, `pty_resize`, `pty_close`, `pty_close_connection`, `pty_snapshot`).
+   Every DB/queue/terminal/file/HTTP capability funnels through `plugin_call` with an **opaque `op` string**
    (e.g. `"rdbms.execute"`, `"cli.spawn_spec"`) + JSON `params`. The host passes
    `op`/`params` through untouched.
 
@@ -85,10 +103,10 @@ serialize a pool/client across the pipe.
 
 | Crate | Role |
 | --- | --- |
-| `crates/rdb-core` | Backend-agnostic foundation: `Plugin`/`Connection` traits, `PluginKind` (`Rdbms`, `Document`, `Rabbitmq`, `Cli`, `Other`), config-schema types the UI builds forms from (`PluginInfo`, `ConfigField`, `ShowIf`, `ConfigFieldType` including `FilePath`), `ConnectionId`, `PluginError`, the wire `protocol`, and PTY contract types (`PtySpawnSpec`, `PtyPromptResponse`). |
+| `crates/rdb-core` | Backend-agnostic foundation: `Plugin`/`Connection` traits, `PluginKind` (`Rdbms`, `Document`, `Rabbitmq`, `Cli`, `FileManager`, `Http`, `Other`), config-schema types the UI builds forms from (`PluginInfo`, `ConfigField`, `ShowIf`, `ConfigFieldType` including `FilePath`), `ConnectionId`, `PluginError`, the wire `protocol`, and PTY contract types (`PtySpawnSpec`, `PtyPromptResponse`). |
 | `crates/rdb-plugin-runtime` | Plugin SDK: the stdio JSON-RPC server loop (`run`/`serve`) + the `Dispatcher` trait. |
 | `crates/rdb-rdbms-common` | `RdbmsPlugin` trait + shared relational types (`Schema`, `Table`, `Column`, `QueryResult`, `RowChanges`, `ApplyResult`), and `dispatch_rdbms`/`RdbmsDispatcher` mapping `"rdbms.*"` ops to trait methods. |
-| `crates/plugins/{postgres,mongodb,rabbitmq,ssh}` | One binary crate per backend. `lib.rs` = the `Plugin` impl; `main.rs` = `rdb_plugin_runtime::run(plugin, dispatcher)`. The `ssh` plugin uses `PluginKind::Cli` and returns a `PtySpawnSpec` from the `cli.spawn_spec` op; the PTY itself is managed by the host. |
+| `crates/plugins/{postgres,mysql,mssql,snowflake,mongodb,rabbitmq,ssh,sftp,s3,curlui}` | One binary crate per backend. `lib.rs` = the `Plugin` impl; `main.rs` = `rdb_plugin_runtime::run(plugin, dispatcher)`. The four relational plugins implement `RdbmsPlugin`; `ssh` is `PluginKind::Cli` (returns a `PtySpawnSpec` from `cli.spawn_spec`, PTY managed by the host); `sftp`/`s3` are `PluginKind::FileManager`; `curlui` is `PluginKind::Http`. |
 | `src-tauri` | The Tauri host: `lib.rs` (registry/commands), `commands.rs` (Tauri command surface), `plugin_manager.rs` (discovery + multiplexing), `pty.rs` (PTY lifecycle for CLI workspaces), `logging.rs` (log file setup), `github.rs` (release fetch/verify), `persistence.rs` (saved profiles). |
 
 ## The type contract is mirrored in two places
@@ -114,7 +132,7 @@ serde casing conventions to match:
 4. `main.rs` calls `rdb_plugin_runtime::run(plugin, dispatcher)`. For RDBMS use `RdbmsDispatcher(plugin)`.
 5. Add the crate to `scripts/dev-plugins.sh` (`PLUGINS`/`CRATES` arrays) so `npm run plugins:dev` builds it.
 
-Non-relational backends pick a different `PluginKind` (`Document`, `Rabbitmq`, `Cli`, `Other`); the frontend
+Non-relational backends pick a different `PluginKind` (`Document`, `Rabbitmq`, `Cli`, `FileManager`, `Http`, `Other`); the frontend
 renders the matching workspace component (`src/components/workspaces/`) based on `kind`/`ui_module`.
 `Cli`-kind plugins must handle the `cli.spawn_spec` op and return a `PtySpawnSpec`; the host spawns
 that process in a PTY and streams I/O to the `CliWorkspace` component via Tauri events.
@@ -150,4 +168,9 @@ is implemented yet.
 
 ## License
 
-Dual-licensed MIT OR Apache-2.0.
+Source-available under **Apache-2.0 with the Commons Clause** (see `LICENSE`):
+use/modify/distribute and internal commercial use are permitted, but Selling the
+software (incl. paid hosting/support whose value derives substantially from it)
+is not. Not an OSI open-source license. `Cargo.toml` uses `license-file = "LICENSE"`
+(the combination has no valid SPDX expression); all crates inherit via
+`license-file.workspace = true`.

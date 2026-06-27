@@ -2,7 +2,7 @@
 name = "rdb-plugin-mysql"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [[bin]]
 name = "rdb-plugin-mysql"

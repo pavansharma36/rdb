@@ -85,10 +85,7 @@ struct PluginProcess {
 }
 
 impl PluginProcess {
-    fn spawn(
-        executable: &Path,
-        log_path: Option<PathBuf>,
-    ) -> std::result::Result<Self, String> {
+    fn spawn(executable: &Path, log_path: Option<PathBuf>) -> std::result::Result<Self, String> {
         // In release builds we capture the plugin's stderr to a per-plugin log
         // file; in dev (`log_path == None`) we inherit it so it shows on the
         // console alongside the host's logs.
@@ -183,9 +180,7 @@ impl PluginProcess {
             let mut p = pending_r.lock().await;
             let dropped = p.len();
             if dropped > 0 {
-                tracing::warn!(
-                    "plugin process exited with {dropped} in-flight request(s) pending"
-                );
+                tracing::warn!("plugin process exited with {dropped} in-flight request(s) pending");
             } else {
                 tracing::info!("plugin process stdout closed (process exited)");
             }
@@ -347,10 +342,16 @@ impl PluginManager {
                     }
                     match load_manifest(&path) {
                         Ok(p) => {
-                            tracing::info!("discovered plugin '{}' ({})", p.info.id, path.display());
+                            tracing::info!(
+                                "discovered plugin '{}' ({})",
+                                p.info.id,
+                                path.display()
+                            );
                             plugins.insert(p.info.id.clone(), p);
                         }
-                        Err(e) => tracing::warn!("skipping plugin manifest {}: {e}", path.display()),
+                        Err(e) => {
+                            tracing::warn!("skipping plugin manifest {}: {e}", path.display())
+                        }
                     }
                 }
             }
@@ -465,7 +466,9 @@ impl PluginManager {
         // Record this call as the connection's cancellable in-flight request, so
         // `cancel` can target it; clear it once the call settles.
         let id = proc.reserve_id();
-        tracing::debug!("plugin_call '{op}' (plugin '{plugin_id}', conn {connection_id:?}, req {id})");
+        tracing::debug!(
+            "plugin_call '{op}' (plugin '{plugin_id}', conn {connection_id:?}, req {id})"
+        );
         self.in_flight
             .lock()
             .await
@@ -492,7 +495,9 @@ impl PluginManager {
         let Some((plugin_id, id)) = target else {
             return Ok(());
         };
-        tracing::info!("cancelling in-flight req {id} for connection {connection_id:?} (plugin '{plugin_id}')");
+        tracing::info!(
+            "cancelling in-flight req {id} for connection {connection_id:?} (plugin '{plugin_id}')"
+        );
         let proc = self.process(&plugin_id).await?;
         proc.request("cancel", json!({ "id": id })).await?;
         Ok(())
@@ -517,8 +522,10 @@ impl PluginManager {
         // execution — same safety class as the checksum fetch in preview_github),
         // building a tag -> (id -> metadata) cache. Best-effort: a missing or
         // malformed file just leaves names/descriptions empty.
-        let mut meta_by_tag: std::collections::HashMap<&str, std::collections::HashMap<String, github::PluginMeta>> =
-            std::collections::HashMap::new();
+        let mut meta_by_tag: std::collections::HashMap<
+            &str,
+            std::collections::HashMap<String, github::PluginMeta>,
+        > = std::collections::HashMap::new();
         for pr in &selected {
             if meta_by_tag.contains_key(pr.tag) {
                 continue;
@@ -556,8 +563,10 @@ impl PluginManager {
                 let description = meta.and_then(|m| m.description.clone());
                 // Tag carries the version for stable; fall back to plugin_info.json
                 // (the only version source for nightly).
-                let available_version =
-                    pr.version.clone().or_else(|| meta.and_then(|m| m.version.clone()));
+                let available_version = pr
+                    .version
+                    .clone()
+                    .or_else(|| meta.and_then(|m| m.version.clone()));
                 AvailablePlugin {
                     id: pr.id,
                     tag: pr.tag.to_string(),
@@ -661,20 +670,20 @@ impl PluginManager {
         // date, and the asset's updated_at) so the installer can later detect a
         // newer release. For nightly, asset_updated_at is the freshness signal.
         let asset_updated_at = asset.updated_at.clone();
-        let source = github::is_plugins_release(&release.tag_name).map(|(channel, _)| {
-            InstallSource {
+        let source =
+            github::is_plugins_release(&release.tag_name).map(|(channel, _)| InstallSource {
                 repo: repo.to_string(),
                 tag: release.tag_name.clone(),
                 channel: channel.as_str().to_string(),
                 version: info.version.clone(),
                 published_at: release.published_at.clone(),
                 asset_updated_at: asset_updated_at.clone(),
-            }
-        });
+            });
 
         let manifest_path = self.plugins_dir.join(format!("{}.plugin.json", info.id));
         let info_value = serde_json::to_value(&info).map_err(|e| e.to_string())?;
-        let mut manifest = json!({ "pluginInfo": info_value, "executable": format!("./{asset_name}") });
+        let mut manifest =
+            json!({ "pluginInfo": info_value, "executable": format!("./{asset_name}") });
         if let Some(src) = &source {
             manifest["source"] = serde_json::to_value(src).map_err(|e| e.to_string())?;
         }
@@ -717,20 +726,19 @@ impl PluginManager {
 
         // Refuse while connections route to this plugin — closing them is the
         // user's call, not a side effect of uninstall.
-        if self
-            .routes
-            .lock()
-            .await
-            .values()
-            .any(|p| p == plugin_id)
-        {
+        if self.routes.lock().await.values().any(|p| p == plugin_id) {
             return Err(format!(
                 "plugin '{plugin_id}' has open connections; close them first"
             ));
         }
 
         // Drop the registry entry; capture the executable path to delete it.
-        let executable = self.plugins.write().unwrap().remove(plugin_id).map(|p| p.executable);
+        let executable = self
+            .plugins
+            .write()
+            .unwrap()
+            .remove(plugin_id)
+            .map(|p| p.executable);
 
         // Kill the running process, if any (kill_on_drop fires when the last
         // Arc is dropped here).
@@ -806,7 +814,9 @@ fn set_executable(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(path).map_err(|e| e.to_string())?.permissions();
+        let mut perms = std::fs::metadata(path)
+            .map_err(|e| e.to_string())?
+            .permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(path, perms).map_err(|e| e.to_string())?;
     }
@@ -966,7 +976,10 @@ mod tests {
             asset_updated_at: None,
             asset: &asset,
         };
-        assert!(matches!(status_for(&stable, None), PluginStatus::NotInstalled));
+        assert!(matches!(
+            status_for(&stable, None),
+            PluginStatus::NotInstalled
+        ));
         // Stable: version compare.
         assert!(matches!(
             status_for(&stable, Some(("0.2.0", &none))),

@@ -328,10 +328,7 @@ impl FileBackend for S3Backend {
                     path: key.to_owned(),
                     is_dir: false,
                     size: obj.size().unwrap_or(0).max(0) as u64,
-                    modified: obj
-                        .last_modified()
-                        .map(|t| t.secs())
-                        .unwrap_or(0),
+                    modified: obj.last_modified().map(|t| t.secs()).unwrap_or(0),
                     permissions: 0,
                 });
             }
@@ -437,7 +434,9 @@ impl FileBackend for S3Backend {
     async fn delete(&self, path: &str) -> rdb_core::Result<()> {
         let key = to_key(path);
         if key.is_empty() {
-            return Err(PluginError::Backend("refusing to delete bucket root".into()));
+            return Err(PluginError::Backend(
+                "refusing to delete bucket root".into(),
+            ));
         }
         let st = self.stat(path).await?;
         if !st.is_dir {
@@ -687,9 +686,7 @@ impl S3Backend {
             .ok_or_else(|| PluginError::Backend("missing upload id".into()))?
             .to_owned();
 
-        let result = self
-            .multipart_parts(local, key, &upload_id, job)
-            .await;
+        let result = self.multipart_parts(local, key, &upload_id, job).await;
 
         match result {
             Ok(Some(parts)) => {

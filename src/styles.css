@@ -593,16 +593,6 @@ select option:hover {
   color: var(--accent);
 }
 
-.support-btn {
-  background: none;
-  border: none;
-  color: var(--muted);
-  font-size: 14px;
-  padding: 5px 4px;
-  cursor: pointer;
-  line-height: 1;
-}
-
 .support-btn:hover {
   color: #e05c7a;
 }
@@ -1758,6 +1748,208 @@ textarea.code {
 
 .code-editor-v2.doc-card > .cm-editor {
   height: auto;
+}
+
+/* Script tab: each statement's result is a card with a header (index + the
+   collection.method that ran + elapsed) above its document/reply cards. */
+.script-result {
+  margin: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-2);
+}
+
+.script-result-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.script-result-num {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.script-result-src {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+/* Inside a result card the doc cards have no extra outer border/background. */
+.script-result .code-editor-v2.doc-card {
+  margin: 6px;
+}
+
+/* "No documents." note for an empty cursor reply in a script result. */
+.script-empty {
+  margin: 8px;
+}
+
+/* Documents tab: each result document with a Compass-style hover toolbar
+   (edit / copy / delete) overlaid at the top-right of its card. */
+.doc-row {
+  position: relative;
+}
+
+.doc-actions {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 1;
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.doc-row .icon-btn {
+  font-size: 13px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--bg-2);
+}
+
+/* Reveal the toolbar on row hover (icon-btn is opacity:0 by default). */
+.doc-row:hover .icon-btn {
+  opacity: 1;
+}
+
+.doc-row .icon-btn.danger:hover {
+  color: var(--err);
+}
+
+/* While editing, the toolbar (Save/Cancel) sits below the editor, always shown. */
+.doc-row.editing .doc-actions {
+  position: static;
+  margin: 0 8px 8px;
+  justify-content: flex-end;
+}
+
+/* App-default tab strip: an underline-style view switcher. Originated as the
+   MongoDB per-collection tab bar; promoted here so any workspace can reuse it
+   (currently MongoDB collection views + curlui request/response sub-tabs). */
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: -1px;
+}
+.tab:hover {
+  color: var(--text);
+}
+.tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+/* Small count pill / accent dot some tabs show as a status hint. */
+.tab-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
+}
+.tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* MongoDB collection tab bar: the current "db / collection" label, pushed to
+   the right of the shared .tabs strip. */
+.mongo-tabs-coll {
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: auto;
+  order: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Aggregation builder: a vertical list of stages, each an operator dropdown
+   plus its own code editor. */
+.agg-stages {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 45%;
+  overflow: auto;
+}
+.agg-stage {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-2);
+}
+.agg-stage.disabled {
+  opacity: 0.55;
+}
+.agg-stage-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.agg-stage-num {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg-3);
+  border-radius: 50%;
+}
+.agg-stage-btn {
+  padding: 2px 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.agg-stage-btn:hover {
+  color: var(--text);
+}
+.agg-stage-editor {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Light/secondary button (Add stage, Refresh). */
+button.ghost {
+  background: transparent;
+  color: var(--muted);
+}
+button.ghost:hover {
+  color: var(--text);
+}
+
+/* Placeholder shown in the editor pane before a collection is selected. */
+.empty-hint {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 16px;
+  max-width: 480px;
 }
 
 /* Per-statement result tabs (multi-statement scripts). */
@@ -3035,7 +3227,10 @@ table.grid tr.new-row td {
   align-items: center;
   justify-content: center;
   opacity: 0.5;
-  transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+  transition:
+    opacity 0.12s,
+    color 0.12s,
+    border-color 0.12s;
 }
 
 .curlui-tree-fab:hover {
@@ -3353,50 +3548,6 @@ select.curlui-method {
 }
 
 /* Tab strip shared by the request editor and the response panel. */
-.curlui-tabs {
-  display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--border);
-}
-
-.curlui-tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  padding: 6px 12px;
-  font-size: 12px;
-  color: var(--muted);
-  margin-bottom: -1px;
-}
-
-.curlui-tab:hover {
-  color: var(--text);
-}
-
-.curlui-tab.active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-}
-
-.curlui-tab-badge {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  color: var(--text);
-}
-
-.curlui-tab-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-
 .curlui-tab-panel {
   flex: 1;
   min-height: 0;
@@ -3787,4 +3938,3 @@ select.curlui-method {
   word-break: break-word;
   resize: none;
 }
-

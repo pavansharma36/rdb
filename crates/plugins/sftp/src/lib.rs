@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use rdb_core::{cfg_secret, require_str, ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError, PluginInfo, PluginKind, Result, ShowIf};
+use rdb_core::{
+    cfg_secret, require_str, ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin,
+    PluginError, PluginInfo, PluginKind, Result, ShowIf,
+};
 use rdb_filemanager_common::{
     cap_entries, dispatch_filemanager, downcast_conn, stream_to_local_file, Cancelled, FileBackend,
     FileEntry, JobState, ListDirResult, ScannedFile, Stat, TRANSFER_CHUNK,
@@ -231,9 +234,7 @@ impl Plugin for SftpPlugin {
                 // auth request through the agent, until one succeeds.
                 let mut agent = russh::keys::agent::client::AgentClient::connect_env()
                     .await
-                    .map_err(|e| {
-                        PluginError::Connection(format!("cannot reach ssh-agent: {e}"))
-                    })?;
+                    .map_err(|e| PluginError::Connection(format!("cannot reach ssh-agent: {e}")))?;
                 let identities = agent
                     .request_identities()
                     .await
@@ -249,9 +250,7 @@ impl Plugin for SftpPlugin {
                     let result = handle
                         .authenticate_publickey_with(&user, public_key, None, &mut agent)
                         .await
-                        .map_err(|e| {
-                            PluginError::Connection(format!("agent auth failed: {e}"))
-                        })?;
+                        .map_err(|e| PluginError::Connection(format!("agent auth failed: {e}")))?;
                     if result.success() {
                         ok = true;
                         break;

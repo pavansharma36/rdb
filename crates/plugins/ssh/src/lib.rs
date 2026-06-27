@@ -150,9 +150,7 @@ impl Plugin for SshPlugin {
         let connect = tokio::net::TcpStream::connect(&addr);
         match tokio::time::timeout(std::time::Duration::from_secs(10), connect).await {
             Ok(Ok(_stream)) => Ok(()),
-            Ok(Err(e)) => Err(PluginError::Connection(format!(
-                "cannot reach {addr}: {e}"
-            ))),
+            Ok(Err(e)) => Err(PluginError::Connection(format!("cannot reach {addr}: {e}"))),
             Err(_) => Err(PluginError::Connection(format!(
                 "connection to {addr} timed out"
             ))),

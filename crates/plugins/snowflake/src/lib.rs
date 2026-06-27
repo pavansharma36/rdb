@@ -360,11 +360,8 @@ impl RdbmsPlugin for SnowflakePlugin {
                 let nullable = r.get(3).map(json_to_string).unwrap_or_default();
 
                 let default_value = match r.get(4) {
-                  Some(v) => match v {
-                      serde_json::Value::String(s) => Some(s.into()),
-                      _ => None,
-                  },
-                  _ => None
+                    Some(serde_json::Value::String(s)) => Some(s.into()),
+                    _ => None,
                 };
 
                 let primary_key = r.get(5).map(json_to_string).unwrap_or_default();
@@ -891,7 +888,10 @@ fn is_select(sql: &str) -> bool {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
-    matches!(head.as_str(), "select" | "with" | "show" | "explain" | "desc" | "describe")
+    matches!(
+        head.as_str(),
+        "select" | "with" | "show" | "explain" | "desc" | "describe"
+    )
 }
 
 fn add_limit_in_select(sql: &str) -> String {
@@ -901,7 +901,7 @@ fn add_limit_in_select(sql: &str) -> String {
             "SELECT * FROM ({}) q LIMIT {};",
             sql,
             DEFAULT_MAX_ROW_COUNT + 1
-        )
+        );
     }
     sql.into()
 }
@@ -1002,7 +1002,7 @@ fn dollar_tag_end(b: &[u8], start: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rdb_core::test_utils::{find_connection_config};
+    use rdb_core::test_utils::find_connection_config;
     use std::path::Path;
 
     /// Live integration test against a real Snowflake account.
@@ -1031,7 +1031,7 @@ mod tests {
         // Find the saved connection across all connections.json files and use
         // its config (a map of field-name -> JSON value, exactly what the host
         // hands the plugin's `connect`).
-        let cfg = find_connection_config(Path::new(&app_dir), &connection_id);
+        let cfg = find_connection_config(Path::new(&app_dir), connection_id);
 
         let plugin = SnowflakePlugin::new();
         let conn = plugin

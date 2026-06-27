@@ -124,7 +124,9 @@ where
                 .await
                 .get(&p.connection_id)
                 .cloned()
-                .ok_or_else(|| PluginError::NotFound(format!("connection {:?}", p.connection_id)))?;
+                .ok_or_else(|| {
+                    PluginError::NotFound(format!("connection {:?}", p.connection_id))
+                })?;
             tracing::debug!("dispatch '{op}' for {:?}", p.connection_id);
             let res = dispatcher.dispatch(&op, p.params, conn).await;
             if let Err(e) = &res {

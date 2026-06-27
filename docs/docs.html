@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Docs — rdb</title>
-  <meta name="description" content="Documentation for rdb: installing, plugins, using the app, building from source, and the plugin architecture." />
+  <title>Docs — rdb, the Swiss Army knife for backend developers</title>
+  <meta name="description" content="Documentation for rdb, the Swiss Army knife for backend developers: installing, plugins, using the app, building from source, and the plugin architecture." />
   <link rel="icon" href="assets/icon.png" />
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -71,7 +71,7 @@
 
       <h2 id="first-connection">First connection</h2>
       <ol>
-        <li>Click <b>+</b> in the sidebar to create a connection. Pick a plugin (PostgreSQL / MongoDB / RabbitMQ) — the form is generated from that plugin's declared config schema.</li>
+        <li>Click <b>+</b> in the sidebar to create a connection. Pick a plugin (PostgreSQL, MySQL, SQL Server, Snowflake, MongoDB, RabbitMQ, SSH, SFTP, S3, or HTTP) — the form is generated from that plugin's declared config schema.</li>
         <li>Click <b>Test</b> to validate the config, then <b>Save</b>. Profiles persist across restarts.</li>
         <li>Select a saved connection to <b>connect</b>. The workspace that opens depends on the plugin's kind.</li>
       </ol>
@@ -105,8 +105,15 @@
         <thead><tr><th>Plugin</th><th>Kind</th><th>Talks to</th></tr></thead>
         <tbody>
           <tr><td>PostgreSQL</td><td><span class="inline-code">rdbms</span></td><td>PostgreSQL 12+ (via sqlx)</td></tr>
+          <tr><td>MySQL</td><td><span class="inline-code">rdbms</span></td><td>MySQL &amp; MariaDB</td></tr>
+          <tr><td>SQL Server</td><td><span class="inline-code">rdbms</span></td><td>Microsoft SQL Server (via Tiberius)</td></tr>
+          <tr><td>Snowflake</td><td><span class="inline-code">rdbms</span></td><td>Snowflake warehouses</td></tr>
           <tr><td>MongoDB</td><td><span class="inline-code">document</span></td><td>MongoDB &amp; Atlas clusters</td></tr>
           <tr><td>RabbitMQ</td><td><span class="inline-code">rabbitmq</span></td><td>Brokers via the HTTP Management API</td></tr>
+          <tr><td>SSH</td><td><span class="inline-code">cli</span></td><td>Remote hosts via a PTY terminal</td></tr>
+          <tr><td>SFTP</td><td><span class="inline-code">filemanager</span></td><td>File transfer over SFTP</td></tr>
+          <tr><td>Amazon S3</td><td><span class="inline-code">filemanager</span></td><td>S3 &amp; S3-compatible buckets</td></tr>
+          <tr><td>HTTP client</td><td><span class="inline-code">http</span></td><td>REST APIs (collections + curl import)</td></tr>
         </tbody>
       </table>
       <p>
@@ -117,9 +124,12 @@
       <h2 id="workspaces">Workspaces</h2>
       <p>The workspace rendered for a connection depends on its plugin kind:</p>
       <ul>
-        <li><b>RDBMS</b> — schema/table tree, SQL editor, results grid, and inline cell editing with staged Save/Cancel that commits atomically in one transaction.</li>
+        <li><b>RDBMS</b> — schema/table tree, SQL editor, results grid, structured + raw filters and sorts, CSV export, and inline cell editing with staged Save/Cancel that commits atomically in one transaction.</li>
         <li><b>Document</b> — browse databases and collections and run <span class="inline-code">find</span> queries.</li>
         <li><b>RabbitMQ</b> — browse the broker overview, queues, exchanges, and connections; declare queues and publish / get / purge messages.</li>
+        <li><b>CLI</b> — a PTY terminal to a remote host, with saved shell scripts per connection.</li>
+        <li><b>File manager</b> — an SFTP / S3 file browser: upload, download, rename, delete, and mkdir.</li>
+        <li><b>HTTP</b> — a REST client with collections, environment variables, auth presets, and curl import/export.</li>
       </ul>
 
       <h2 id="saved">Saved connections</h2>
@@ -156,7 +166,7 @@
       <h3>Run in development</h3>
       <p>Plugins are out-of-process executables discovered at runtime, so build them first and point the host at the same directory:</p>
 <pre><code>npm install
-npm run plugins:dev                       # builds the 3 bundled plugins + manifests
+npm run plugins:dev                       # builds the 10 bundled plugins + manifests
 RDB_PLUGINS_DIR=$PWD/dev-plugins npm run tauri dev</code></pre>
       <p>Without any plugins installed the connection form will be empty.</p>
       <h3>Build a release bundle</h3>
@@ -187,7 +197,7 @@ RDB_PLUGINS_DIR=$PWD/dev-plugins npm run tauri dev</code></pre>
 Tauri host (src-tauri)  —  no DB drivers
       │  line-delimited JSON-RPC over stdio
       ▼
-Plugin sidecars  —  postgres / mongodb / rabbitmq</code></pre>
+Plugin sidecars  —  postgres / mysql / mssql / snowflake / mongodb / rabbitmq / ssh / sftp / s3 / http</code></pre>
       </div>
       <h3>Three boundaries</h3>
       <ul>
@@ -243,7 +253,7 @@ Plugin sidecars  —  postgres / mongodb / rabbitmq</code></pre>
 
   <footer>
     <div class="wrap footer-inner">
-      <div><strong style="color:var(--text)">rdb</strong> — dual-licensed MIT OR Apache-2.0</div>
+      <div><strong style="color:var(--text)">rdb</strong> — Apache-2.0 with the Commons Clause (source-available)</div>
       <div style="display:flex;gap:20px">
         <a href="https://github.com/pavansharma36/rdb" target="_blank" rel="noopener">GitHub</a>
         <a href="index.html">Home</a>

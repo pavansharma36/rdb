@@ -39,7 +39,10 @@ pub async fn test_connection(
     plugin_id: String,
     config: ConnectionConfig,
 ) -> Result<(), String> {
-    manager.test_connection(&plugin_id, config).await.map_err(err)
+    manager
+        .test_connection(&plugin_id, config)
+        .await
+        .map_err(err)
 }
 
 #[tauri::command]
@@ -48,7 +51,10 @@ pub async fn open_connection(
     plugin_id: String,
     config: ConnectionConfig,
 ) -> Result<ConnectionId, String> {
-    manager.open_connection(&plugin_id, config).await.map_err(err)
+    manager
+        .open_connection(&plugin_id, config)
+        .await
+        .map_err(err)
 }
 
 #[tauri::command]
@@ -105,7 +111,9 @@ pub async fn preview_github_plugin(
     tag: Option<String>,
     plugin_id: Option<String>,
 ) -> Result<GithubPreview, String> {
-    manager.preview_github(&repo, tag, plugin_id.as_deref()).await
+    manager
+        .preview_github(&repo, tag, plugin_id.as_deref())
+        .await
 }
 
 /// Download, checksum-verify, and install the plugin from the previewed release.
@@ -119,16 +127,15 @@ pub async fn install_github_plugin(
     plugin_id: String,
     expected_sha: Option<String>,
 ) -> Result<PluginInfo, String> {
-    manager.install_github(&repo, &tag, Some(&plugin_id), expected_sha).await
+    manager
+        .install_github(&repo, &tag, Some(&plugin_id), expected_sha)
+        .await
 }
 
 /// Uninstall a plugin: stop its process and delete its manifest + executable
 /// from the plugins dir. Fails if the plugin has open connections.
 #[tauri::command]
-pub async fn uninstall_plugin(
-    manager: Manager<'_>,
-    plugin_id: String,
-) -> Result<(), String> {
+pub async fn uninstall_plugin(manager: Manager<'_>, plugin_id: String) -> Result<(), String> {
     manager.uninstall(&plugin_id).await
 }
 
@@ -174,11 +181,7 @@ pub async fn pty_spawn(
 
 /// Write bytes to a terminal's PTY (keystrokes / paste from the terminal).
 #[tauri::command]
-pub async fn pty_write(
-    pty: Pty<'_>,
-    terminal_id: String,
-    data: Vec<u8>,
-) -> Result<(), String> {
+pub async fn pty_write(pty: Pty<'_>, terminal_id: String, data: Vec<u8>) -> Result<(), String> {
     crate::pty::write(pty.inner().clone(), terminal_id, data).await
 }
 
@@ -202,19 +205,13 @@ pub async fn pty_close(pty: Pty<'_>, terminal_id: String) -> Result<(), String> 
 /// Close and drop every terminal PTY owned by a connection (explicit teardown
 /// on disconnect / delete).
 #[tauri::command]
-pub async fn pty_close_connection(
-    pty: Pty<'_>,
-    connection_id: ConnectionId,
-) -> Result<(), String> {
+pub async fn pty_close_connection(pty: Pty<'_>, connection_id: ConnectionId) -> Result<(), String> {
     crate::pty::close_connection(pty.inner().clone(), connection_id).await
 }
 
 /// Retained scrollback (recent output) for a terminal's PTY, so a freshly
 /// (re)mounted terminal can repaint its history. Empty if no live PTY.
 #[tauri::command]
-pub async fn pty_snapshot(
-    pty: Pty<'_>,
-    terminal_id: String,
-) -> Result<Vec<u8>, String> {
+pub async fn pty_snapshot(pty: Pty<'_>, terminal_id: String) -> Result<Vec<u8>, String> {
     crate::pty::snapshot(pty.inner().clone(), terminal_id).await
 }

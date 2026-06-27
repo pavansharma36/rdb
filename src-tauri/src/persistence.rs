@@ -67,8 +67,7 @@ pub fn load_connections(
     manager: State<'_, Arc<PluginManager>>,
 ) -> Result<Vec<SavedConnection>, String> {
     let dir = connections_dir(&app)?;
-    let installed: HashSet<String> =
-        manager.list_plugins().into_iter().map(|p| p.id).collect();
+    let installed: HashSet<String> = manager.list_plugins().into_iter().map(|p| p.id).collect();
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -109,10 +108,7 @@ pub fn load_connections(
 /// plugin (`connections/<plugin_id>/connections.json`). Plugins whose profiles
 /// were all removed have their file deleted so stale entries don't linger.
 #[tauri::command]
-pub fn save_connections(
-    app: AppHandle,
-    connections: Vec<SavedConnection>,
-) -> Result<(), String> {
+pub fn save_connections(app: AppHandle, connections: Vec<SavedConnection>) -> Result<(), String> {
     let dir = connections_dir(&app)?;
 
     // Group incoming connections by their owning plugin (sorted by id).

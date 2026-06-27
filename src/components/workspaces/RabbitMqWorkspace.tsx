@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, errString } from "../../api/api.ts";
-import type {
-  ConnectionId
-} from "../../api/api.ts";
+import type { ConnectionId } from "../../api/api.ts";
 import { OverviewTab } from "./rabbitmq/OverviewTab";
 import { QueuesTab } from "./rabbitmq/QueuesTab";
 import { ExchangesTab } from "./rabbitmq/ExchangesTab";
 import { ConnectionsTab } from "./rabbitmq/ConnectionsTab";
 import { ConnScope, useConnectionState } from "../../connectionState";
-import {MqChannel, MqConnection, MqExchange, MqOverview, MqQueue} from "../../api/rabbitmq.ts";
+import { MqChannel, MqConnection, MqExchange, MqOverview, MqQueue } from "../../api/rabbitmq.ts";
 
 interface Props {
   connectionId: ConnectionId;
@@ -104,10 +102,7 @@ export function RabbitMqWorkspace({ connectionId, savedId }: Props) {
         {loading && <span className="mq-spin">…</span>}
         <label className="mq-refresh">
           refresh
-          <select
-            value={refreshMs}
-            onChange={(e) => setRefreshMs(Number(e.target.value))}
-          >
+          <select value={refreshMs} onChange={(e) => setRefreshMs(Number(e.target.value))}>
             {REFRESH_OPTIONS.map((o) => (
               <option key={o.ms} value={o.ms}>
                 {o.label}
@@ -133,15 +128,9 @@ export function RabbitMqWorkspace({ connectionId, savedId }: Props) {
           />
         )}
         {tab === "exchanges" && (
-          <ExchangesTab
-            connectionId={connectionId}
-            exchanges={exchanges}
-            onError={setError}
-          />
+          <ExchangesTab connectionId={connectionId} exchanges={exchanges} onError={setError} />
         )}
-        {tab === "connections" && (
-          <ConnectionsTab connections={connections} channels={channels} />
-        )}
+        {tab === "connections" && <ConnectionsTab connections={connections} channels={channels} />}
       </div>
     </div>
   );

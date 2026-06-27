@@ -28,11 +28,7 @@ fn workspace_dir(app: &AppHandle, connection_id: &str) -> Result<PathBuf, String
 /// Reject ids/segments that could escape the intended folder; they're used
 /// verbatim as path segments.
 fn validate_segment(value: &str, what: &str) -> Result<(), String> {
-    if value.is_empty()
-        || value == ".."
-        || value.contains('/')
-        || value.contains('\\')
-    {
+    if value.is_empty() || value == ".." || value.contains('/') || value.contains('\\') {
         return Err(format!("invalid {what}: {value:?}"));
     }
     Ok(())

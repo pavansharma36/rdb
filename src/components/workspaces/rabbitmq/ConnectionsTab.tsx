@@ -97,12 +97,7 @@ export function ConnectionsTab({
         empty="No open connections."
       />
       <h3>Channels</h3>
-      <DataTable
-        cols={chanCols}
-        rows={channels}
-        rowKey={(r) => r.name}
-        empty="No open channels."
-      />
+      <DataTable cols={chanCols} rows={channels} rowKey={(r) => r.name} empty="No open channels." />
     </div>
   );
 }
