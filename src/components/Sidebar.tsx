@@ -241,13 +241,6 @@ export function Sidebar({
         <button className="install-btn" onClick={onInstallPlugin}>
           ⤓ Install plugin
         </button>
-        {/*<button*/}
-        {/*  className="support-btn"*/}
-        {/*  title="Support / Donate"*/}
-        {/*  onClick={() => open("https://github.com/sponsors/pavansharma36")}*/}
-        {/*>*/}
-        {/*  ♥*/}
-        {/*</button>*/}
         <div className="footer-menu" ref={menuRef}>
           <button className="icon-btn" title="More" onClick={() => setMenuOpen((o) => !o)}>
             ⋮
@@ -282,10 +275,17 @@ export function Sidebar({
                 Check for updates
               </button>
               <button
+                  className="footer-menu-item support-btn"
+                  title="Support / Donate"
+                  onClick={() => open("https://github.com/sponsors/pavansharma36")}
+              >
+                ♥ Support
+              </button>
+              <button
                 className="footer-menu-item"
                 onClick={() => {
                   setMenuOpen(false);
-                  openExternal(REPO_URL).catch(() => {});
+                  openExternal(REPO_URL + "/discussions").catch(() => {});
                 }}
               >
                 ? Help

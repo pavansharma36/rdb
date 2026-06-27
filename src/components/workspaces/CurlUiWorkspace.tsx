@@ -230,30 +230,30 @@ function CollectionEditor({
           Delete
         </button>
       </div>
-      <div className="curlui-tabs">
+      <div className="tabs">
         <button
           type="button"
-          className={"curlui-tab" + (tab === "env" ? " active" : "")}
+          className={"tab" + (tab === "env" ? " active" : "")}
           onClick={() => onTabChange("env")}
         >
           Variables
-          {envCount > 0 && <span className="curlui-tab-badge">{envCount}</span>}
+          {envCount > 0 && <span className="tab-badge">{envCount}</span>}
         </button>
         <button
           type="button"
-          className={"curlui-tab" + (tab === "headers" ? " active" : "")}
+          className={"tab" + (tab === "headers" ? " active" : "")}
           onClick={() => onTabChange("headers")}
         >
           Headers
-          {headerCount > 0 && <span className="curlui-tab-badge">{headerCount}</span>}
+          {headerCount > 0 && <span className="tab-badge">{headerCount}</span>}
         </button>
         <button
           type="button"
-          className={"curlui-tab" + (tab === "auth" ? " active" : "")}
+          className={"tab" + (tab === "auth" ? " active" : "")}
           onClick={() => onTabChange("auth")}
         >
           Auth
-          {auth.kind !== "none" && <span className="curlui-tab-dot" />}
+          {auth.kind !== "none" && <span className="tab-dot" />}
         </button>
       </div>
       <div className="curlui-tab-panel">
@@ -1684,58 +1684,58 @@ export function CurlUiWorkspace({
               </div>
 
               <div className="curlui-editors" style={{ height: editorHeight }}>
-                <div className="curlui-tabs">
+                <div className="tabs">
                   <button
                     type="button"
-                    className={"curlui-tab" + (reqTab === "env" ? " active" : "")}
+                    className={"tab" + (reqTab === "env" ? " active" : "")}
                     onClick={() => setReqTab("env")}
                   >
                     Env
                     {Object.keys(effectiveEnv).length > 0 && (
-                      <span className="curlui-tab-badge">{Object.keys(effectiveEnv).length}</span>
+                      <span className="tab-badge">{Object.keys(effectiveEnv).length}</span>
                     )}
                   </button>
                   <button
                     type="button"
-                    className={"curlui-tab" + (reqTab === "params" ? " active" : "")}
+                    className={"tab" + (reqTab === "params" ? " active" : "")}
                     onClick={() => setReqTab("params")}
                   >
                     Params
                     {paramRows.some((r) => r.enabled && r.key.trim()) && (
-                      <span className="curlui-tab-badge">
+                      <span className="tab-badge">
                         {paramRows.filter((r) => r.enabled && r.key.trim()).length}
                       </span>
                     )}
                   </button>
                   <button
                     type="button"
-                    className={"curlui-tab" + (reqTab === "auth" ? " active" : "")}
+                    className={"tab" + (reqTab === "auth" ? " active" : "")}
                     onClick={() => setReqTab("auth")}
                   >
                     Auth
                     {!["inherit", "none"].includes(activeRequest.auth?.kind ?? "inherit") && (
-                      <span className="curlui-tab-dot" />
+                      <span className="tab-dot" />
                     )}
                   </button>
                   <button
                     type="button"
-                    className={"curlui-tab" + (reqTab === "headers" ? " active" : "")}
+                    className={"tab" + (reqTab === "headers" ? " active" : "")}
                     onClick={() => setReqTab("headers")}
                   >
                     Headers
                     {headerRows.some((r) => r.enabled && r.key.trim()) && (
-                      <span className="curlui-tab-badge">
+                      <span className="tab-badge">
                         {headerRows.filter((r) => r.enabled && r.key.trim()).length}
                       </span>
                     )}
                   </button>
                   <button
                     type="button"
-                    className={"curlui-tab" + (reqTab === "body" ? " active" : "")}
+                    className={"tab" + (reqTab === "body" ? " active" : "")}
                     onClick={() => setReqTab("body")}
                   >
                     Body
-                    {activeRequest.body_kind !== "none" && <span className="curlui-tab-dot" />}
+                    {activeRequest.body_kind !== "none" && <span className="tab-dot" />}
                   </button>
                 </div>
 
@@ -1882,27 +1882,27 @@ export function CurlUiWorkspace({
                     <span className="muted">{response.elapsed_ms} ms</span>
                     <span className="muted">{byteSize(response.body)}</span>
                   </div>
-                  <div className="curlui-tabs">
+                  <div className="tabs">
                     <button
                       type="button"
-                      className={"curlui-tab" + (resTab === "body" ? " active" : "")}
+                      className={"tab" + (resTab === "body" ? " active" : "")}
                       onClick={() => setResTab("body")}
                     >
                       Body
                     </button>
                     <button
                       type="button"
-                      className={"curlui-tab" + (resTab === "headers" ? " active" : "")}
+                      className={"tab" + (resTab === "headers" ? " active" : "")}
                       onClick={() => setResTab("headers")}
                     >
                       Headers
-                      <span className="curlui-tab-badge">
+                      <span className="tab-badge">
                         {Object.keys(response.headers).length}
                       </span>
                     </button>
                     <button
                       type="button"
-                      className={"curlui-tab" + (resTab === "curl" ? " active" : "")}
+                      className={"tab" + (resTab === "curl" ? " active" : "")}
                       onClick={() => setResTab("curl")}
                     >
                       cURL

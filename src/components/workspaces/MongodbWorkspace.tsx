@@ -594,24 +594,24 @@ export function MongodbWorkspace({
       <div className="tree-resizer" onMouseDown={treeResize.onMouseDown} title="Drag to resize" />
       <div className="editor-pane">
         {active && tab !== "script" && (
-          <div className="mongo-tabs">
+          <div className="tabs">
             <span className="mongo-tabs-coll">
               {currentDatabase} / {active}
             </span>
             <button
-              className={"mongo-tab" + (tab === "documents" ? " active" : "")}
+              className={"tab" + (tab === "documents" ? " active" : "")}
               onClick={() => setTab("documents")}
             >
               Documents
             </button>
             <button
-              className={"mongo-tab" + (tab === "aggregation" ? " active" : "")}
+              className={"tab" + (tab === "aggregation" ? " active" : "")}
               onClick={() => setTab("aggregation")}
             >
               Aggregation
             </button>
             <button
-              className={"mongo-tab" + (tab === "indexes" ? " active" : "")}
+              className={"tab" + (tab === "indexes" ? " active" : "")}
               onClick={() => setTab("indexes")}
             >
               Indexes

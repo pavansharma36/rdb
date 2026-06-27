@@ -593,16 +593,6 @@ select option:hover {
   color: var(--accent);
 }
 
-.support-btn {
-  background: none;
-  border: none;
-  color: var(--muted);
-  font-size: 14px;
-  padding: 5px 4px;
-  cursor: pointer;
-  line-height: 1;
-}
-
 .support-btn:hover {
   color: #e05c7a;
 }
@@ -1840,23 +1830,20 @@ textarea.code {
   justify-content: flex-end;
 }
 
-/* MongoDB workspace: per-collection tab bar (Documents / Aggregation / Indexes),
-   styled like the curlui tab strip. */
-.mongo-tabs {
+/* App-default tab strip: an underline-style view switcher. Originated as the
+   MongoDB per-collection tab bar; promoted here so any workspace can reuse it
+   (currently MongoDB collection views + curlui request/response sub-tabs). */
+.tabs {
   display: flex;
   align-items: center;
   gap: 2px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-.mongo-tabs-coll {
-  font-size: 12px;
-  color: var(--muted);
-  margin-left: auto;
-  order: 1;
-  font-variant-numeric: tabular-nums;
-}
-.mongo-tab {
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
@@ -1866,9 +1853,37 @@ textarea.code {
   color: var(--muted);
   margin-bottom: -1px;
 }
-.mongo-tab.active {
+.tab:hover {
+  color: var(--text);
+}
+.tab.active {
   color: var(--text);
   border-bottom-color: var(--accent);
+}
+/* Small count pill / accent dot some tabs show as a status hint. */
+.tab-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
+}
+.tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* MongoDB collection tab bar: the current "db / collection" label, pushed to
+   the right of the shared .tabs strip. */
+.mongo-tabs-coll {
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: auto;
+  order: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Aggregation builder: a vertical list of stages, each an operator dropdown
@@ -3533,50 +3548,6 @@ select.curlui-method {
 }
 
 /* Tab strip shared by the request editor and the response panel. */
-.curlui-tabs {
-  display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--border);
-}
-
-.curlui-tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  padding: 6px 12px;
-  font-size: 12px;
-  color: var(--muted);
-  margin-bottom: -1px;
-}
-
-.curlui-tab:hover {
-  color: var(--text);
-}
-
-.curlui-tab.active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-}
-
-.curlui-tab-badge {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  color: var(--text);
-}
-
-.curlui-tab-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-
 .curlui-tab-panel {
   flex: 1;
   min-height: 0;
