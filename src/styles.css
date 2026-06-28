@@ -784,6 +784,7 @@ select option:hover {
   padding: 6px 8px;
   border-radius: 6px;
   cursor: pointer;
+  user-select: none;
 }
 
 .conn-item:hover {
