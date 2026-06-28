@@ -29,6 +29,8 @@ interface SidebarProps {
   onThemeChange: (theme: string) => void;
   onToggleCollapsible: () => void;
   onSelect: (profile: SavedConnection) => void;
+  /** Reorder the saved list: receives profile ids in the new display order. */
+  onReorder: (orderedIds: string[]) => void;
   onNew: () => void;
   onEdit: (id: string) => void;
   onClone: (id: string) => void;
@@ -51,6 +53,7 @@ export function Sidebar({
   onThemeChange,
   onToggleCollapsible,
   onSelect,
+  onReorder,
   onNew,
   onEdit,
   onClone,
@@ -77,6 +80,76 @@ export function Sidebar({
   const [version, setVersion] = useState("");
   // When true, the About dialog is shown.
   const [aboutOpen, setAboutOpen] = useState(false);
+
+  // Pointer-driven reordering of the connection list: id of the row being
+  // dragged and of the row it's currently hovering over (for visual feedback).
+  // We use pointer events rather than the HTML5 drag-and-drop API because the
+  // latter is broken on WebKitGTK (the Linux webview), where native drag
+  // events never fire reliably.
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  // Live drag bookkeeping kept in a ref so pointermove doesn't thrash renders.
+  // `dragging` flips true only once the pointer moves past a small threshold,
+  // so a plain click still selects the row. `suppressClickRef` swallows the
+  // click event that fires after a drag completes.
+  const dragRef = useRef<{
+    id: string;
+    startX: number;
+    startY: number;
+    dragging: boolean;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
+
+  /** Saved-profile id of the `.conn-item` under the given viewport point. */
+  function connIdAt(x: number, y: number): string | null {
+    const el = document.elementFromPoint(x, y) as HTMLElement | null;
+    return el?.closest<HTMLElement>(".conn-item")?.dataset.connId ?? null;
+  }
+
+  /** Move `fromId` to `toId`'s slot (after when dragging down, before when up)
+   * and report the new id order. */
+  function reorder(fromId: string, toId: string) {
+    const ids = saved.map((s) => s.id);
+    const from = ids.indexOf(fromId);
+    const to = ids.indexOf(toId);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = ids.filter((id) => id !== fromId);
+    next.splice(next.indexOf(toId) + (from < to ? 1 : 0), 0, fromId);
+    onReorder(next);
+  }
+
+  function onItemPointerDown(e: React.PointerEvent, id: string) {
+    // Left button only; ignore presses that land on the action buttons/menu.
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest("button, .conn-menu")) return;
+    dragRef.current = { id, startX: e.clientX, startY: e.clientY, dragging: false };
+  }
+
+  function onItemPointerMove(e: React.PointerEvent) {
+    const st = dragRef.current;
+    if (!st) return;
+    if (!st.dragging) {
+      if (Math.abs(e.clientX - st.startX) < 5 && Math.abs(e.clientY - st.startY) < 5) return;
+      st.dragging = true;
+      setDragId(st.id);
+      // Route the rest of the gesture to this row even if the pointer strays.
+      e.currentTarget.setPointerCapture(e.pointerId);
+    }
+    const over = connIdAt(e.clientX, e.clientY);
+    setOverId(over && over !== st.id ? over : null);
+  }
+
+  function onItemPointerUp(e: React.PointerEvent) {
+    const st = dragRef.current;
+    dragRef.current = null;
+    if (st?.dragging) {
+      const target = connIdAt(e.clientX, e.clientY);
+      if (target && target !== st.id) reorder(st.id, target);
+      suppressClickRef.current = true; // don't let this gesture select a row
+    }
+    setDragId(null);
+    setOverId(null);
+  }
 
   useEffect(() => {
     // getVersion returns a Promise <string>
@@ -142,14 +215,31 @@ export function Sidebar({
           return (
             <div
               key={s.id}
-              className={"conn-item" + (isActive ? " active" : "") + (live ? " connected" : "")}
-              onClick={() => onSelect(s)}
+              data-conn-id={s.id}
+              className={
+                "conn-item" +
+                (isActive ? " active" : "") +
+                (live ? " connected" : "") +
+                (dragId === s.id ? " dragging" : "") +
+                (overId === s.id && dragId !== s.id ? " drag-over" : "")
+              }
+              onClick={() => {
+                if (suppressClickRef.current) {
+                  suppressClickRef.current = false;
+                  return;
+                }
+                onSelect(s);
+              }}
+              onPointerDown={(e) => onItemPointerDown(e, s.id)}
+              onPointerMove={onItemPointerMove}
+              onPointerUp={onItemPointerUp}
             >
               {logo ? (
                 <img
                   className={"plugin-logo" + (live ? " connected" : "")}
                   src={logo}
                   alt=""
+                  draggable={false}
                   title={live ? "Connected" : "Not connected"}
                 />
               ) : (
@@ -277,7 +367,9 @@ export function Sidebar({
               <button
                 className="footer-menu-item support-btn"
                 title="Support / Donate"
-                onClick={() => open("https://github.com/sponsors/pavansharma36")}
+                onClick={() =>
+                  openExternal("https://github.com/sponsors/pavansharma36").catch(() => {})
+                }
               >
                 ♥ Support
               </button>

@@ -18,6 +18,9 @@ export interface SavedConnection {
   name: string;
   pluginId: string;
   config: ConnectionConfig;
+  /** Sidebar sort position (ascending). Defaults to 0; only set when the user
+   * reorders the list via drag-and-drop. */
+  order?: number;
   /** Per-connection UI preferences (e.g. `treeWidth`, `editorHeight`), stored
    * alongside the connection. Free-form so future prefs need no schema change. */
   settings?: Record<string, unknown>;
