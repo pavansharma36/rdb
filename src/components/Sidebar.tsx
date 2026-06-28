@@ -277,7 +277,9 @@ export function Sidebar({
               <button
                 className="footer-menu-item support-btn"
                 title="Support / Donate"
-                onClick={() => open("https://github.com/sponsors/pavansharma36")}
+                onClick={() =>
+                  openExternal("https://github.com/sponsors/pavansharma36").catch(() => {})
+                }
               >
                 ♥ Support
               </button>
