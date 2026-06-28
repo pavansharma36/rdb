@@ -29,6 +29,8 @@ interface SidebarProps {
   onThemeChange: (theme: string) => void;
   onToggleCollapsible: () => void;
   onSelect: (profile: SavedConnection) => void;
+  /** Reorder the saved list: receives profile ids in the new display order. */
+  onReorder: (orderedIds: string[]) => void;
   onNew: () => void;
   onEdit: (id: string) => void;
   onClone: (id: string) => void;
@@ -51,6 +53,7 @@ export function Sidebar({
   onThemeChange,
   onToggleCollapsible,
   onSelect,
+  onReorder,
   onNew,
   onEdit,
   onClone,
@@ -77,6 +80,23 @@ export function Sidebar({
   const [version, setVersion] = useState("");
   // When true, the About dialog is shown.
   const [aboutOpen, setAboutOpen] = useState(false);
+
+  // Drag-and-drop reordering of the connection list: id of the row being
+  // dragged and of the row it's currently hovering over (for visual feedback).
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+
+  /** Move `fromId` to `toId`'s slot (after when dragging down, before when up)
+   * and report the new id order. */
+  function reorder(fromId: string, toId: string) {
+    const ids = saved.map((s) => s.id);
+    const from = ids.indexOf(fromId);
+    const to = ids.indexOf(toId);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = ids.filter((id) => id !== fromId);
+    next.splice(next.indexOf(toId) + (from < to ? 1 : 0), 0, fromId);
+    onReorder(next);
+  }
 
   useEffect(() => {
     // getVersion returns a Promise <string>
@@ -142,14 +162,42 @@ export function Sidebar({
           return (
             <div
               key={s.id}
-              className={"conn-item" + (isActive ? " active" : "") + (live ? " connected" : "")}
+              className={
+                "conn-item" +
+                (isActive ? " active" : "") +
+                (live ? " connected" : "") +
+                (dragId === s.id ? " dragging" : "") +
+                (overId === s.id && dragId !== s.id ? " drag-over" : "")
+              }
               onClick={() => onSelect(s)}
+              draggable
+              onDragStart={(e) => {
+                setDragId(s.id);
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onDragOver={(e) => {
+                if (dragId && dragId !== s.id) {
+                  e.preventDefault();
+                  setOverId(s.id);
+                }
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragId && dragId !== s.id) reorder(dragId, s.id);
+                setDragId(null);
+                setOverId(null);
+              }}
+              onDragEnd={() => {
+                setDragId(null);
+                setOverId(null);
+              }}
             >
               {logo ? (
                 <img
                   className={"plugin-logo" + (live ? " connected" : "")}
                   src={logo}
                   alt=""
+                  draggable={false}
                   title={live ? "Connected" : "Not connected"}
                 />
               ) : (

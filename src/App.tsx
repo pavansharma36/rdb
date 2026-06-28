@@ -154,6 +154,17 @@ export function App() {
   }
 
   const active = open.find((c) => c.id === activeId) ?? null;
+  // Saved profiles in sidebar display order: ascending `order`, stable on ties
+  // (so equal-order items keep their load order). `saved` stays the canonical
+  // list everywhere else.
+  const orderedSaved = useMemo(
+    () =>
+      saved
+        .map((c, i) => [c, i] as const)
+        .sort((a, b) => (a[0].order ?? 0) - (b[0].order ?? 0) || a[1] - b[1])
+        .map(([c]) => c),
+    [saved],
+  );
   const editingProfile = useMemo(
     () => saved.find((s) => s.id === editingId) ?? null,
     [saved, editingId],
@@ -165,6 +176,12 @@ export function App() {
   function persist(next: SavedConnection[]) {
     setSaved(next);
     saveConnections(next).catch((e) => setConnectError(errString(e)));
+  }
+
+  /** Re-stamp `order` on every profile to match the new sidebar sequence and
+   * persist. The only place `order` is written — so it changes only on drag. */
+  function reorderConnections(orderedIds: string[]) {
+    persist(saved.map((c) => ({ ...c, order: orderedIds.indexOf(c.id) })));
   }
 
   /** Build a live OpenConnection record from a saved profile + backend id. */
@@ -453,7 +470,7 @@ export function App() {
   return (
     <div className="app">
       <Sidebar
-        saved={saved}
+        saved={orderedSaved}
         plugins={plugins}
         channel={channel}
         width={sidebarWidth}
@@ -465,6 +482,7 @@ export function App() {
         onThemeChange={changeTheme}
         onToggleCollapsible={toggleSidebarCollapsible}
         onSelect={connectSaved}
+        onReorder={reorderConnections}
         onNew={() => {
           setCreating(true);
           setEditingId(null);
