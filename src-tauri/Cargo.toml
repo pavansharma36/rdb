@@ -16,6 +16,12 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
+# HTTP requests for the `curlui` workspace are issued from the frontend via this
+# plugin (not the sidecar). `unsafe-headers` lets the client set otherwise
+# "forbidden" headers like User-Agent/Cookie, which an HTTP client legitimately
+# needs. `tauri-plugin-fs` reads local files for multipart uploads.
+tauri-plugin-http = { version = "2", features = ["unsafe-headers"] }
+tauri-plugin-fs = "2"
 portable-pty = "0.8"
 serde.workspace = true
 serde_json.workspace = true

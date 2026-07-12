@@ -11,7 +11,6 @@ import { rdbms_api } from "./rdbms.ts";
 import { document_api } from "./document.ts";
 import { rabbitmq_api } from "./rabbitmq.ts";
 import { sftp_api } from "./sftp.ts";
-import { curlui_api } from "./curlui.ts";
 
 export type PluginKind =
   "rdbms" | "document" | "rabbitmq" | "cli" | "filemanager" | "http" | "other";
@@ -164,7 +163,6 @@ export const api = {
   ...document_api,
   ...rabbitmq_api,
   ...sftp_api,
-  ...curlui_api,
 };
 
 /** Normalize a thrown Tauri command error into a string. */
