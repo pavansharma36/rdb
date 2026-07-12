@@ -11,11 +11,7 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { readFile } from "@tauri-apps/plugin-fs";
 import type { ConnectionConfig } from "./api.ts";
-import {
-  encodeFormComponent,
-  type HttpRequest,
-  type HttpResponse,
-} from "./curlui.ts";
+import { encodeFormComponent, type HttpRequest, type HttpResponse } from "./curlui.ts";
 
 /** Transport settings derived from the connection config. Mirrors the plugin's
  *  `SessionSettings` (`crates/plugins/curlui/src/lib.rs`). */
@@ -133,12 +129,8 @@ async function buildFormData(parts: HttpRequest["parts"]): Promise<FormData> {
     if (!p.name.trim()) continue;
     if (p.kind === "file") {
       const bytes = await readFile(p.value);
-      const filename =
-        p.filename && p.filename.trim() ? p.filename : basename(p.value);
-      const type =
-        p.content_type && p.content_type.trim()
-          ? p.content_type
-          : guessMime(filename);
+      const filename = p.filename && p.filename.trim() ? p.filename : basename(p.value);
+      const type = p.content_type && p.content_type.trim() ? p.content_type : guessMime(filename);
       fd.append(p.name, new File([bytes], filename, { type }), filename);
     } else if (p.content_type && p.content_type.trim()) {
       // Preserve an explicit Content-Type on a text field via a Blob (the

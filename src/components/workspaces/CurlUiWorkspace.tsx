@@ -106,7 +106,8 @@ function ScriptEditor({
     kind === "pre" ? (
       <>
         Runs before the request in a sandbox. Use <code>client.environment.set(k, v)</code>,{" "}
-        <code>client.variables.get(k)</code>, <code>client.request.headers.add(&#123;key, value&#125;)</code>.
+        <code>client.variables.get(k)</code>,{" "}
+        <code>client.request.headers.add(&#123;key, value&#125;)</code>.
       </>
     ) : (
       <>
@@ -989,7 +990,14 @@ export function CurlUiWorkspace({
         if (tmpId) {
           const req = drafts[key];
           return req
-            ? { key, kind: "request", name: req.name, method: req.method, scratch: true, dirty: true }
+            ? {
+                key,
+                kind: "request",
+                name: req.name,
+                method: req.method,
+                scratch: true,
+                dirty: true,
+              }
             : null;
         }
         const folRef = folderRefFromTab(key);
@@ -1081,9 +1089,7 @@ export function CurlUiWorkspace({
         const request = draftsRef.current[key];
         if (!request) return;
         const kind = tmpIdFromTab(key) ? "scratch" : "collection";
-        saveDraft(savedId, { version: 1, key, kind, request }).catch((e) =>
-          setError(errString(e)),
-        );
+        saveDraft(savedId, { version: 1, key, kind, request }).catch((e) => setError(errString(e)));
       }, 300);
     },
     [savedId],
@@ -1514,7 +1520,6 @@ export function CurlUiWorkspace({
     }
   }
 
-
   function persistScriptVars(
     environment: Record<string, string>,
     collection: HttpCollection | null,
@@ -1901,11 +1906,17 @@ export function CurlUiWorkspace({
       if (tId === st.id) return null;
       if (frac < 0.25) {
         if (cyclic(tParent)) return null;
-        return { over: { id: tId, zone: "before" }, op: { destFolderId: tParent, siblingId: tId, after: false } };
+        return {
+          over: { id: tId, zone: "before" },
+          op: { destFolderId: tParent, siblingId: tId, after: false },
+        };
       }
       if (frac > 0.75) {
         if (cyclic(tParent)) return null;
-        return { over: { id: tId, zone: "after" }, op: { destFolderId: tParent, siblingId: tId, after: true } };
+        return {
+          over: { id: tId, zone: "after" },
+          op: { destFolderId: tParent, siblingId: tId, after: true },
+        };
       }
       if (cyclic(tId)) return null; // middle zone: into the target folder
       return { over: { id: tId, zone: "into" }, op: { destFolderId: tId } };
@@ -1931,7 +1942,15 @@ export function CurlUiWorkspace({
     suppressClickRef.current = false;
     // Don't start a drag from the expand toggle or the row's action buttons.
     if ((e.target as HTMLElement).closest(".curlui-tree-toggle, .curlui-tree-actions")) return;
-    dragRef.current = { kind, id, colId, folderId, startX: e.clientX, startY: e.clientY, dragging: false };
+    dragRef.current = {
+      kind,
+      id,
+      colId,
+      folderId,
+      startX: e.clientX,
+      startY: e.clientY,
+      dragging: false,
+    };
   }
 
   function onTreePointerMove(e: ReactPointerEvent) {
@@ -2034,7 +2053,12 @@ export function CurlUiWorkspace({
   /** Drop-indicator class for a tree row/request given the current hover. */
   const overClass = (id: string) => (overRow?.id === id ? " drag-over-" + overRow.zone : "");
 
-  function renderFolder(folder: HttpFolder, collectionId: string, parentFolderId: string | null, depth: number) {
+  function renderFolder(
+    folder: HttpFolder,
+    collectionId: string,
+    parentFolderId: string | null,
+    depth: number,
+  ) {
     const key = `folder:${folder.id}`;
     const isOpen = expanded[key] ?? false;
     return (
@@ -2051,7 +2075,9 @@ export function CurlUiWorkspace({
             overClass(folder.id)
           }
           style={{ paddingLeft: 22 + depth * 14 }}
-          onPointerDown={(e) => onTreePointerDown(e, "folder", folder.id, collectionId, parentFolderId)}
+          onPointerDown={(e) =>
+            onTreePointerDown(e, "folder", folder.id, collectionId, parentFolderId)
+          }
           onPointerMove={onTreePointerMove}
           onPointerUp={onTreePointerUp}
         >
@@ -2820,7 +2846,9 @@ export function CurlUiWorkspace({
                             {testRun.tests.filter((t) => t.passed).length}/{testRun.tests.length}
                           </span>
                         )}
-                        {testRun.tests.length === 0 && testRun.error && <span className="tab-dot" />}
+                        {testRun.tests.length === 0 && testRun.error && (
+                          <span className="tab-dot" />
+                        )}
                       </button>
                     )}
                   </div>

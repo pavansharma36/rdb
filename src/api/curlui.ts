@@ -376,7 +376,10 @@ function wireAuthValue(arr: WireAuthAttr[] | undefined, key: string): string {
 function authToWire(auth: Auth | undefined): WireAuth | undefined {
   switch (auth?.kind) {
     case "bearer":
-      return { type: "bearer", bearer: [{ key: "token", value: auth.token ?? "", type: "string" }] };
+      return {
+        type: "bearer",
+        bearer: [{ key: "token", value: auth.token ?? "", type: "string" }],
+      };
     case "basic":
       return {
         type: "basic",
@@ -492,7 +495,9 @@ function bodyToWire(req: HttpRequestItem): WireBody | undefined {
 }
 
 /** Wire `request.body` -> the in-memory body fields. */
-function wireToBody(body: WireBody | undefined): Pick<HttpRequestItem, "body" | "body_kind" | "parts"> {
+function wireToBody(
+  body: WireBody | undefined,
+): Pick<HttpRequestItem, "body" | "body_kind" | "parts"> {
   switch (body?.mode) {
     case "raw": {
       const raw = body.raw ?? "";
@@ -738,7 +743,10 @@ export function collectionToJson(c: HttpCollection): string {
 /** A filesystem-safe default filename for exporting a collection, e.g.
  *  `My API.postman_collection.json`. */
 export function collectionFileName(c: HttpCollection): string {
-  const base = c.name.trim().replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "");
+  const base = c.name
+    .trim()
+    .replace(/[^\w.-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
   return `${base || "collection"}${COLLECTION_SUFFIX}`;
 }
 
@@ -987,7 +995,6 @@ export async function loadCurlSession(savedId: string): Promise<CurlSession | nu
 export function saveCurlSession(savedId: string, session: CurlSession): Promise<void> {
   return writeWorkspaceFileAt(savedId, SESSION_FILE, JSON.stringify(session, null, 2));
 }
-
 
 export function methodColor(method: string): string {
   switch (method.toUpperCase()) {
