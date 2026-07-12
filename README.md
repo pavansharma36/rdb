@@ -134,6 +134,8 @@ rdb/
 │       └── ssh/            SSH plugin (cli kind; PTY spawned by host)
 ├── scripts/
 │   └── dev-plugins.sh      Build bundled plugins + manifests into dev-plugins/
+├── docs/                   Marketing/docs site (GitHub Pages) + install.sh
+│   └── install.sh          Install the released desktop app (macOS/Linux)
 ├── src/                    React + TypeScript frontend
 │   ├── App.tsx             Top-level app shell + connection lifecycle
 │   ├── api.ts              Typed bridge to Tauri commands
@@ -160,7 +162,42 @@ rdb/
 
 ---
 
+## Install
+
+The quickest way to get the desktop app on **macOS or Linux** is the install
+script — it downloads the release build matching your OS/arch and installs it
+(macOS: copies `rdb.app` into `/Applications`; Linux: places the AppImage at
+`~/.local/bin/rdb`):
+
+```bash
+curl -fsSL https://erpavan.in/rdb/install.sh | bash
+
+# rolling nightly build instead of the latest stable release:
+curl -fsSL https://erpavan.in/rdb/install.sh | bash -s -- --nightly
+```
+
+Flags: `--nightly` (rolling prerelease), `--tag v0.1.2` (a specific release),
+`--dir <path>` (install location). Prefer to read before you pipe to a shell?
+Download [`docs/install.sh`](docs/install.sh) and run it directly.
+
+**Windows**, or **Linux on arm64**, aren't covered by the script — grab an
+installer from the [latest release](https://github.com/pavansharma36/rdb/releases/latest)
+(`.msi`/`.exe` on Windows, `.AppImage`/`.deb`/`.rpm` on Linux).
+
+The script installs only the app. Once it's running, add database/queue plugins
+from the sidebar's **⤓ Install plugin** dialog — see [Plugins](#plugins). The app
+auto-updates from GitHub releases.
+
+> ⚠️ On macOS the build is unsigned; the script clears the Gatekeeper quarantine
+> flag after copying so it launches, but you may still need to right-click →
+> **Open** the first time.
+
+---
+
 ## Getting started
+
+> The steps below are for **building and running from source** (contributors).
+> To just use the app, see [Install](#install) above.
 
 ### Prerequisites
 

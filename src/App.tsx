@@ -371,8 +371,8 @@ export function App() {
         return (
           <CurlUiWorkspace
             key={conn.id}
-            connectionId={conn.id}
             savedId={conn.savedId}
+            config={saved.find((s) => s.id === conn.savedId)?.config ?? {}}
             treeWidth={treeWidthFor(conn.savedId, TREE_DEFAULT)}
             onTreeWidthChange={(w) => commitTreeWidth(conn.savedId, w)}
             pluginVersion={plugins.find((p) => p.id === conn.pluginId)?.version ?? ""}

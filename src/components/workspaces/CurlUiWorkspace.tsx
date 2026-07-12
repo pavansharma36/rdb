@@ -2,23 +2,32 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ClipboardEvent as ReactClipboardEvent,
   KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
 } from "react";
-import { api, errString } from "../../api/api.ts";
-import type { ConnectionId } from "../../api/api.ts";
+import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { errString } from "../../api/api.ts";
+import type { ConnectionConfig } from "../../api/api.ts";
 import {
   buildCurl,
   buildSendable,
+  collectionFileName,
+  collectionFromJson,
+  collectionToJson,
   collectionsToFiles,
   defaultAuth,
   defaultCollectionAuth,
   defaultCollectionsFile,
   defaultEnvironmentsFile,
+  deleteDraft,
   filesToCollections,
   formToRows,
   headersToRows,
   HTTP_METHODS,
   joinUrl,
   loadCurlFiles,
+  loadCurlSession,
+  loadDrafts,
   loadEnvironments,
   methodColor,
   newEnvironment,
@@ -28,6 +37,8 @@ import {
   rowsToForm,
   rowsToHeaders,
   saveCurlFiles,
+  saveCurlSession,
+  saveDraft,
   saveEnvironments,
   splitUrl,
   type Auth,
@@ -42,18 +53,122 @@ import {
   type HttpResponse,
   type KvRow,
 } from "../../api/curlui.ts";
+import { sendHttpRequest, parseHttpSettings } from "../../api/curlHttp.ts";
+import { parseCurl } from "../../api/curlParser.ts";
+import {
+  runScript,
+  type ScriptRequest,
+  type ScriptResponse,
+  type TestResult,
+  type LogLine,
+} from "../../api/scriptRunner.ts";
 import { genId } from "../../api/store.ts";
 import { ConfirmDialog, Modal } from "../Modal";
 import { KvEditor } from "../KvEditor";
 import { MultipartEditor } from "../MultipartEditor";
 import { ContentEditor } from "../ContentEditor";
+import { CodeEditorV2 } from "../CodeEditorV2";
 import { useLoader } from "../Loader";
 import { useResizable, TREE_MIN, TREE_MAX, EDITOR_MIN, EDITOR_MAX } from "../../useResizable";
 import { ConnScope, useConnectionState } from "../../connectionState";
 
-type RequestTab = "env" | "params" | "auth" | "headers" | "body";
-type ResponseTab = "body" | "headers" | "curl";
-type CollectionTab = "env" | "headers" | "auth";
+type RequestTab = "env" | "params" | "auth" | "headers" | "body" | "prescript" | "tests";
+type ResponseTab = "body" | "headers" | "tests";
+type CollectionTab = "env" | "headers" | "auth" | "prescript" | "tests";
+
+/** Aggregated output of the pre/post scripts for one send: assertion results,
+ *  console logs, and a top-level script error (compile/throw/timeout). */
+interface TestRun {
+  tests: TestResult[];
+  logs: LogLine[];
+  error?: string;
+}
+
+/** Shallow equality of two string maps (same keys, same values). */
+function sameRecord(a: Record<string, string>, b: Record<string, string>): boolean {
+  const ak = Object.keys(a);
+  if (ak.length !== Object.keys(b).length) return false;
+  return ak.every((k) => a[k] === b[k]);
+}
+
+/** A JavaScript editor for a pre-request or test script, with a short hint about
+ *  the `client` API available in the sandbox. */
+function ScriptEditor({
+  value,
+  onChange,
+  kind,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  kind: "pre" | "post";
+}) {
+  const hint =
+    kind === "pre" ? (
+      <>
+        Runs before the request in a sandbox. Use <code>client.environment.set(k, v)</code>,{" "}
+        <code>client.variables.get(k)</code>,{" "}
+        <code>client.request.headers.add(&#123;key, value&#125;)</code>.
+      </>
+    ) : (
+      <>
+        Runs after the response. Use <code>client.test(name, fn)</code>,{" "}
+        <code>client.expect(client.response.code).to.equal(200)</code>,{" "}
+        <code>client.environment.set(k, client.response.json().x)</code>.
+      </>
+    );
+  return (
+    <div className="curlui-script">
+      <p className="muted curlui-collection-hint">{hint}</p>
+      <CodeEditorV2
+        className="curlui-script-editor"
+        language="javascript"
+        value={value}
+        onChange={onChange}
+        lineWrapping
+        placeholder={kind === "pre" ? "// pre-request script" : "// test script"}
+      />
+    </div>
+  );
+}
+
+/** Renders a send's test assertions + console output in the response pane. */
+function TestResultsView({ run }: { run: TestRun }) {
+  const passed = run.tests.filter((t) => t.passed).length;
+  const failed = run.tests.length - passed;
+  return (
+    <div className="curlui-tests">
+      {run.error && <div className="curlui-test-error">Script error: {run.error}</div>}
+      {run.tests.length > 0 && (
+        <div className="curlui-test-summary">
+          <span className="curlui-test-pass">{passed} passed</span>
+          {failed > 0 && <span className="curlui-test-fail">{failed} failed</span>}
+        </div>
+      )}
+      <ul className="curlui-test-list">
+        {run.tests.map((t, i) => (
+          <li key={i} className={t.passed ? "curlui-test-ok" : "curlui-test-bad"}>
+            <span className="curlui-test-badge">{t.passed ? "PASS" : "FAIL"}</span>
+            <span className="curlui-test-name">{t.name}</span>
+            {!t.passed && t.error && <div className="curlui-test-msg">{t.error}</div>}
+          </li>
+        ))}
+      </ul>
+      {run.logs.length > 0 && (
+        <div className="curlui-console">
+          <div className="curlui-console-title">Console</div>
+          {run.logs.map((l, i) => (
+            <div key={i} className={"curlui-log curlui-log-" + l.level}>
+              {l.text}
+            </div>
+          ))}
+        </div>
+      )}
+      {run.tests.length === 0 && run.logs.length === 0 && !run.error && (
+        <p className="muted">No test results.</p>
+      )}
+    </div>
+  );
+}
 
 /** Case-insensitive header lookup (HTTP header names aren't case-sensitive,
  *  and servers vary the casing they return). */
@@ -205,6 +320,7 @@ function CollectionEditor({
   onTabChange,
   onPatch,
   onDelete,
+  onExport,
 }: {
   collection: HttpCollection;
   baseEnv: Record<string, string>;
@@ -212,6 +328,7 @@ function CollectionEditor({
   onTabChange: (t: CollectionTab) => void;
   onPatch: (patch: Partial<HttpCollection>) => void;
   onDelete: () => void;
+  onExport: () => void;
 }) {
   const envCount = Object.keys(collection.env ?? {}).length;
   const headerCount = Object.keys(collection.headers ?? {}).length;
@@ -226,6 +343,9 @@ function CollectionEditor({
           value={collection.name}
           onChange={(e) => onPatch({ name: e.target.value })}
         />
+        <button type="button" title="Export collection" onClick={onExport}>
+          Export
+        </button>
         <button type="button" title="Delete collection" onClick={onDelete}>
           Delete
         </button>
@@ -255,6 +375,22 @@ function CollectionEditor({
           Auth
           {auth.kind !== "none" && <span className="tab-dot" />}
         </button>
+        <button
+          type="button"
+          className={"tab" + (tab === "prescript" ? " active" : "")}
+          onClick={() => onTabChange("prescript")}
+        >
+          Pre-request
+          {collection.preScript?.trim() && <span className="tab-dot" />}
+        </button>
+        <button
+          type="button"
+          className={"tab" + (tab === "tests" ? " active" : "")}
+          onClick={() => onTabChange("tests")}
+        >
+          Tests
+          {collection.postScript?.trim() && <span className="tab-dot" />}
+        </button>
       </div>
       <div className="curlui-tab-panel">
         {tab === "env" && (
@@ -282,14 +418,30 @@ function CollectionEditor({
         {tab === "auth" && (
           <AuthEditor auth={auth} onChange={(patch) => onPatch({ auth: { ...auth, ...patch } })} />
         )}
+        {tab === "prescript" && (
+          <ScriptEditor
+            kind="pre"
+            value={collection.preScript ?? ""}
+            onChange={(v) => onPatch({ preScript: v })}
+          />
+        )}
+        {tab === "tests" && (
+          <ScriptEditor
+            kind="post"
+            value={collection.postScript ?? ""}
+            onChange={(v) => onPatch({ postScript: v })}
+          />
+        )}
       </div>
     </div>
   );
 }
 
 interface Props {
-  connectionId: ConnectionId;
   savedId: string;
+  /** The saved connection's config, supplying the transport settings
+   *  (verify_tls / follow_redirects / timeout_secs) for frontend requests. */
+  config: ConnectionConfig;
   treeWidth: number;
   onTreeWidthChange: (width: number) => void;
   /** The running curlui plugin's version, used for the default User-Agent. */
@@ -488,6 +640,96 @@ function updateFolder(
   return next;
 }
 
+// --- Drag-and-drop move/reorder helpers (collection-scoped) -----------------
+//
+// Moves are restricted to within a single collection, so every helper below
+// operates on one `HttpCollection` (the colId is fixed and never changes). They
+// mutate the passed node in place (callers pass a structuredClone), mirroring
+// the recursive `walk` shape used by findFolder/updateFolder/deleteFolder.
+
+/** Remove a request by id from the collection root or any nested folder,
+ *  returning the removed node (or null when not found). */
+function detachRequestFromCol(col: HttpCollection, reqId: string): HttpRequestItem | null {
+  const pull = (reqs: HttpRequestItem[]): HttpRequestItem | null => {
+    const i = reqs.findIndex((r) => r.id === reqId);
+    return i >= 0 ? reqs.splice(i, 1)[0] : null;
+  };
+  const top = pull(col.requests);
+  if (top) return top;
+  const walk = (folders: HttpFolder[]): HttpRequestItem | null => {
+    for (const f of folders) {
+      const hit = pull(f.requests);
+      if (hit) return hit;
+      const nested = walk(f.folders);
+      if (nested) return nested;
+    }
+    return null;
+  };
+  return walk(col.folders);
+}
+
+/** Remove a folder by id from the collection root or any nested folder,
+ *  returning the removed node (or null when not found). */
+function detachFolderFromCol(col: HttpCollection, folderId: string): HttpFolder | null {
+  const pull = (folders: HttpFolder[]): HttpFolder | null => {
+    const i = folders.findIndex((f) => f.id === folderId);
+    return i >= 0 ? folders.splice(i, 1)[0] : null;
+  };
+  const top = pull(col.folders);
+  if (top) return top;
+  const walk = (folders: HttpFolder[]): HttpFolder | null => {
+    for (const f of folders) {
+      const hit = pull(f.folders);
+      if (hit) return hit;
+      const nested = walk(f.folders);
+      if (nested) return nested;
+    }
+    return null;
+  };
+  return walk(col.folders);
+}
+
+/** Find a folder by id within a single collection. */
+function folderInCol(col: HttpCollection, folderId: string): HttpFolder | null {
+  const walk = (folders: HttpFolder[]): HttpFolder | null => {
+    for (const f of folders) {
+      if (f.id === folderId) return f;
+      const nested = walk(f.folders);
+      if (nested) return nested;
+    }
+    return null;
+  };
+  return walk(col.folders);
+}
+
+/** The destination `requests` array for a folder id (null = collection root). */
+function requestsContainer(col: HttpCollection, folderId: string | null): HttpRequestItem[] | null {
+  if (!folderId) return col.requests;
+  return folderInCol(col, folderId)?.requests ?? null;
+}
+
+/** The destination `folders` array for a folder id (null = collection root). */
+function foldersContainer(col: HttpCollection, folderId: string | null): HttpFolder[] | null {
+  if (!folderId) return col.folders;
+  return folderInCol(col, folderId)?.folders ?? null;
+}
+
+/** All descendant folder ids of a folder (excluding the folder itself), used to
+ *  reject dropping a folder into itself or one of its own descendants. */
+function folderDescendantIds(col: HttpCollection, folderId: string): Set<string> {
+  const out = new Set<string>();
+  const root = folderInCol(col, folderId);
+  if (!root) return out;
+  const walk = (folders: HttpFolder[]) => {
+    for (const f of folders) {
+      out.add(f.id);
+      walk(f.folders);
+    }
+  };
+  walk(root.folders);
+  return out;
+}
+
 function requestNameFromUrl(url: string): string {
   try {
     const u = new URL(url.includes("{{") ? "https://example.com" : url);
@@ -499,13 +741,14 @@ function requestNameFromUrl(url: string): string {
 }
 
 export function CurlUiWorkspace({
-  connectionId,
   savedId,
+  config,
   treeWidth,
   onTreeWidthChange,
   pluginVersion,
 }: Props) {
   const loader = useLoader();
+  const settings = useMemo(() => parseHttpSettings(config), [config]);
   const scope = ConnScope(savedId, "curlui");
   const [selectedId, setSelectedId] = useConnectionState<string | null>(
     scope,
@@ -529,11 +772,19 @@ export function CurlUiWorkspace({
   // All environments + the active selection (`environments.json`). The active
   // environment's variables are the base `{{VAR}}` map for every request.
   const [envFile, setEnvFile] = useState<EnvironmentsFile>(defaultEnvironmentsFile());
-  // Temporary ("scratch") requests created from the tab-strip `+`. App-state-
-  // backed so they survive connection switches / remounts (session only — lost
-  // on reload until saved into a collection). Keyed in `openTabs` as
-  // `tmp␟<reqId>`.
-  const [scratch, setScratch] = useConnectionState<HttpRequestItem[]>(scope, "scratch", []);
+  // Per-open-request unsaved edits ("drafts"), keyed by tab key. Holds the
+  // edited state of any request tab with pending changes AND every scratch
+  // request (a scratch request is always a draft with a `tmp␟` key until it is
+  // explicitly saved into a collection). A key present here means the tab is
+  // dirty. Autosaved to one temp file per request under `.rdb-drafts/`; the
+  // owning collection file is never touched until an explicit Save. App-state-
+  // backed so drafts survive connection switches; disk-backed so they survive
+  // restart (see the hydrate/persist effects below).
+  const [drafts, setDrafts] = useConnectionState<Record<string, HttpRequestItem>>(
+    scope,
+    "drafts",
+    {},
+  );
   const [loaded, setLoaded] = useState(false);
   const [headerRows, setHeaderRows] = useState<KvRow[]>([newKvRow()]);
   const [paramRows, setParamRows] = useState<KvRow[]>([newKvRow()]);
@@ -548,32 +799,74 @@ export function CurlUiWorkspace({
     "responses",
     {},
   );
+  // Script test results + console logs per open tab, keyed like `responses`.
+  const [testResults, setTestResults] = useConnectionState<Record<string, TestRun>>(
+    scope,
+    "testResults",
+    {},
+  );
   const [error, setError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
   const [importTarget, setImportTarget] = useState<TreeTarget | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteTarget | null>(null);
-  // A pending confirmation to close an unsaved scratch tab (its key + name).
+  // A pending confirmation to close a tab with unsaved edits (its key + name +
+  // whether it is a scratch request, which needs the Save-As picker to commit).
   const [closeConfirm, setCloseConfirm] = useState<{
     key: string;
     name: string;
+    kind: "scratch" | "collection";
   } | null>(null);
   const [namePrompt, setNamePrompt] = useState<NamePrompt | null>(null);
   const [nameDraft, setNameDraft] = useState("");
-  // Save-scratch-to-collection dialog: which scratch request, and the chosen
-  // target collection / folder / name.
+  // Save-scratch-to-collection dialog: which scratch request, the chosen
+  // target collection / folder / name, and whether to close the tab after.
   const [saveDialog, setSaveDialog] = useState<{
     reqId: string;
     name: string;
     collectionId: string;
     folderId: string;
+    closeAfterSave?: boolean;
   } | null>(null);
   const [copiedCurl, setCopiedCurl] = useState(false);
   const [panelWidth, setPanelWidth] = useState(treeWidth);
   const [editorHeight, setEditorHeight] = useState(220);
 
+  // Drag-and-drop tree state (pointer-event based, like the connection list in
+  // Sidebar.tsx — native HTML5 DnD is unreliable on WebKitGTK). `dragId` is the
+  // item being dragged; `overRow` is the current drop target + which zone of it
+  // (before/into/after) the pointer is in. `dragRef` holds live gesture
+  // bookkeeping (kept in a ref so pointermove doesn't re-render every frame);
+  // `dragging` only flips true past a 5px threshold so a plain click still
+  // selects. `suppressClickRef` swallows the click that trails a completed drag.
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overRow, setOverRow] = useState<{ id: string; zone: "before" | "into" | "after" } | null>(
+    null,
+  );
+  const dragRef = useRef<{
+    kind: "request" | "folder";
+    id: string;
+    colId: string;
+    // The dragged request's parent folder, or the dragged folder's own parent
+    // (null = collection root).
+    folderId: string | null;
+    startX: number;
+    startY: number;
+    dragging: boolean;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
+
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const envSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Per-draft debounce timers (keyed by tab key), a live mirror of `drafts` the
+  // debounced writers read, and the session-save debounce.
+  const draftSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const draftsRef = useRef(drafts);
+  const sessionSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Flips true once the open-tabs session has been hydrated (or hydration was
+  // skipped because tabs are already live in-session), gating the session-save
+  // effect so an empty pre-hydration state can't overwrite the saved session.
+  const [sessionReady, setSessionReady] = useState(false);
   const treeResize = useResizable({
     width: panelWidth,
     min: TREE_MIN,
@@ -625,7 +918,8 @@ export function CurlUiWorkspace({
     }
     const tmpId = tmpIdFromTab(selectedId);
     if (tmpId) {
-      const req = scratch.find((r) => r.id === tmpId);
+      // A scratch request lives only as a draft (keyed by its `tmp␟` tab key).
+      const req = drafts[selectedId];
       return req
         ? { kind: "request", sel: null, request: req, collection: null, scratch: true }
         : null;
@@ -636,11 +930,13 @@ export function CurlUiWorkspace({
       return fol ? { kind: "folder", ...folRef, folder: fol } : null;
     }
     const sel = parseKey(selectedId);
-    const req = sel ? findRequest(collections, sel) : null;
-    if (!sel || !req) return null;
+    const committed = sel ? findRequest(collections, sel) : null;
+    if (!sel || !committed) return null;
+    // Prefer the draft (unsaved edits) over the committed request when present.
+    const req = drafts[selectedId] ?? committed;
     const collection = collections.collections.find((c) => c.id === sel.collectionId) ?? null;
     return { kind: "request", sel, request: req, collection, scratch: false };
-  }, [collections, envFile, scratch, selectedId]);
+  }, [collections, envFile, drafts, selectedId]);
 
   const selected = activeTab?.kind === "request" ? activeTab.sel : null;
   const activeRequest = activeTab?.kind === "request" ? activeTab.request : null;
@@ -661,12 +957,20 @@ export function CurlUiWorkspace({
   );
 
   const response = selectedId ? (responses[selectedId] ?? null) : null;
+  const testRun = selectedId ? (testResults[selectedId] ?? null) : null;
 
   // Resolve open tab keys to live requests/collections, dropping any whose
   // target was deleted. Keeps the rendered strip in sync with the tree.
   const tabs = useMemo(() => {
     type Tab =
-      | { key: string; kind: "request"; name: string; method: string; scratch?: boolean }
+      | {
+          key: string;
+          kind: "request";
+          name: string;
+          method: string;
+          scratch?: boolean;
+          dirty?: boolean;
+        }
       | { key: string; kind: "collection"; name: string }
       | { key: string; kind: "folder"; name: string }
       | { key: string; kind: "environment"; name: string };
@@ -684,9 +988,16 @@ export function CurlUiWorkspace({
         }
         const tmpId = tmpIdFromTab(key);
         if (tmpId) {
-          const req = scratch.find((r) => r.id === tmpId);
+          const req = drafts[key];
           return req
-            ? { key, kind: "request", name: req.name, method: req.method, scratch: true }
+            ? {
+                key,
+                kind: "request",
+                name: req.name,
+                method: req.method,
+                scratch: true,
+                dirty: true,
+              }
             : null;
         }
         const folRef = folderRefFromTab(key);
@@ -695,11 +1006,14 @@ export function CurlUiWorkspace({
           return fol ? { key, kind: "folder", name: fol.name } : null;
         }
         const sel = parseKey(key);
-        const req = sel ? findRequest(collections, sel) : null;
-        return req ? { key, kind: "request", name: req.name, method: req.method } : null;
+        const committed = sel ? findRequest(collections, sel) : null;
+        if (!committed) return null;
+        // Show the draft's name/method when the tab has unsaved edits.
+        const req = drafts[key] ?? committed;
+        return { key, kind: "request", name: req.name, method: req.method, dirty: key in drafts };
       })
       .filter((t): t is Tab => !!t);
-  }, [openTabs, collections, envFile, scratch]);
+  }, [openTabs, collections, envFile, drafts]);
 
   const persist = useCallback(
     (data: CollectionsFile) => {
@@ -743,6 +1057,44 @@ export function CurlUiWorkspace({
     [persistEnv],
   );
 
+  // Keep a live mirror of `drafts` for the debounced draft writers to read.
+  useEffect(() => {
+    draftsRef.current = drafts;
+  }, [drafts]);
+
+  // Flush any pending debounced draft writes on unmount / profile switch, so an
+  // edit made just before closing the workspace isn't lost inside the debounce.
+  useEffect(() => {
+    const timers = draftSaveTimers.current;
+    return () => {
+      for (const key of Object.keys(timers)) {
+        clearTimeout(timers[key]);
+        delete timers[key];
+        const request = draftsRef.current[key];
+        if (!request) continue;
+        const kind = tmpIdFromTab(key) ? "scratch" : "collection";
+        saveDraft(savedId, { version: 1, key, kind, request }).catch(() => {});
+      }
+    };
+  }, [savedId]);
+
+  // Debounced autosave of a single request's draft file. Reads the current
+  // draft from `draftsRef` at fire time so bursts of edits collapse to one write.
+  const scheduleDraftSave = useCallback(
+    (key: string) => {
+      const timers = draftSaveTimers.current;
+      if (timers[key]) clearTimeout(timers[key]);
+      timers[key] = setTimeout(() => {
+        delete timers[key];
+        const request = draftsRef.current[key];
+        if (!request) return;
+        const kind = tmpIdFromTab(key) ? "scratch" : "collection";
+        saveDraft(savedId, { version: 1, key, kind, request }).catch((e) => setError(errString(e)));
+      }, 300);
+    },
+    [savedId],
+  );
+
   useEffect(() => {
     loadCurlFiles(savedId)
       .then((files) => {
@@ -763,6 +1115,57 @@ export function CurlUiWorkspace({
       .then(setEnvFile)
       .catch((e) => setError(errString(e)));
   }, [savedId]);
+
+  // Hydrate open tabs + per-request drafts from disk so open requests survive a
+  // restart. Runs once per profile, and only when there are no live in-session
+  // tabs (a connection re-open within the same app session keeps its tabs) so
+  // it never clobbers unsaved in-memory work.
+  useEffect(() => {
+    setSessionReady(false);
+    if (openTabs.length > 0) {
+      setSessionReady(true);
+      return;
+    }
+    let cancelled = false;
+    Promise.all([loadDrafts(savedId), loadCurlSession(savedId)])
+      .then(([draftList, session]) => {
+        if (cancelled) return;
+        if (draftList.length > 0) {
+          const map: Record<string, HttpRequestItem> = {};
+          for (const d of draftList) map[d.key] = d.request;
+          setDrafts(map);
+        }
+        if (session) {
+          setOpenTabs(session.openTabs);
+          setSelectedId(session.selectedId);
+          setExpanded(session.expanded);
+        }
+      })
+      .catch((e) => setError(errString(e)))
+      .finally(() => {
+        if (!cancelled) setSessionReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedId]);
+
+  // Debounced persistence of the open-tabs session. Persists only resolvable
+  // tab keys (mirroring the render-time filter in `tabs`), gated on hydration +
+  // collections load so a transient empty state can't wipe the saved session.
+  useEffect(() => {
+    if (!sessionReady || !loaded) return;
+    if (sessionSaveTimer.current) clearTimeout(sessionSaveTimer.current);
+    sessionSaveTimer.current = setTimeout(() => {
+      saveCurlSession(savedId, {
+        version: 1,
+        openTabs: tabs.map((t) => t.key),
+        selectedId,
+        expanded,
+      }).catch((e) => setError(errString(e)));
+    }, 300);
+  }, [tabs, selectedId, expanded, sessionReady, loaded, savedId]);
 
   useEffect(() => {
     if (activeRequest) {
@@ -863,34 +1266,47 @@ export function CurlUiWorkspace({
       delete next[key];
       return next;
     });
-    // A scratch request only lives in memory — drop it when its tab closes.
-    const tmpId = tmpIdFromTab(key);
-    if (tmpId) {
-      setScratch((list) => list.filter((r) => r.id !== tmpId));
+    // Drop any unsaved draft for the closed tab (covers discard-on-close and
+    // closing a scratch request, whose only home is its draft).
+    const draft = drafts[key];
+    if (draft) {
+      deleteDraft(savedId, draft.id).catch((e) => setError(errString(e)));
+      setDrafts((d) => {
+        if (!(key in d)) return d;
+        const next = { ...d };
+        delete next[key];
+        return next;
+      });
     }
   }
 
-  /** User-initiated close (✕ / middle-click): confirm first for an unsaved
-   *  scratch tab, since closing it discards the request. Other tabs close
-   *  immediately. */
+  /** User-initiated close (✕ / middle-click): if the tab has unsaved edits,
+   *  prompt to save first (closing would otherwise discard them). Clean tabs
+   *  close immediately. */
   function requestCloseTab(key: string) {
-    const tmpId = tmpIdFromTab(key);
-    const req = tmpId ? scratch.find((r) => r.id === tmpId) : null;
-    if (req) {
-      setCloseConfirm({ key, name: req.name });
+    const draft = drafts[key];
+    if (draft) {
+      setCloseConfirm({
+        key,
+        name: draft.name,
+        kind: tmpIdFromTab(key) ? "scratch" : "collection",
+      });
     } else {
       closeTab(key);
     }
   }
 
   function patchActive(patch: Partial<HttpRequestItem>) {
-    const tmpId = selectedId ? tmpIdFromTab(selectedId) : null;
-    if (tmpId) {
-      setScratch((list) => list.map((r) => (r.id === tmpId ? { ...r, ...patch } : r)));
-      return;
-    }
-    if (!selected) return;
-    setCollectionsAndSave((data) => updateRequest(data, selected, patch));
+    if (!selectedId) return;
+    const key = selectedId;
+    setDrafts((d) => {
+      // Seed the draft from the committed request on the first edit; scratch
+      // requests always already have a draft entry.
+      const base = d[key] ?? (selected ? findRequest(collections, selected) : null);
+      if (!base) return d;
+      return { ...d, [key]: { ...base, ...patch } };
+    });
+    scheduleDraftSave(key);
   }
 
   function onHeaderRowsChange(rows: KvRow[]) {
@@ -983,7 +1399,12 @@ export function CurlUiWorkspace({
       }
       return next;
     });
-    setExpanded((e) => ({ ...e, [`folder:${folder.id}`]: true }));
+    // Expand the new folder and, when nesting, its parent so it's visible.
+    setExpanded((e) => ({
+      ...e,
+      [`folder:${folder.id}`]: true,
+      ...(target.kind === "folder" ? { [`folder:${target.folderId}`]: true } : {}),
+    }));
   }
 
   function addRequest(target: TreeTarget) {
@@ -993,35 +1414,44 @@ export function CurlUiWorkspace({
     selectRequest(target.collectionId, folderId, req.id);
   }
 
-  /** Open a new in-memory scratch request as a tab (not in any collection). */
+  /** Open a new scratch request as a tab (a draft, not in any collection). */
   function addScratchRequest() {
     const req = newRequest("Untitled");
     const key = tmpTabKey(req.id);
-    setScratch((list) => [...list, req]);
+    setDrafts((d) => ({ ...d, [key]: req }));
+    saveDraft(savedId, { version: 1, key, kind: "scratch", request: req }).catch((e) =>
+      setError(errString(e)),
+    );
     setOpenTabs((tabs) => [...tabs, key]);
     setSelectedId(key);
     setError(null);
   }
 
   /** Open the "save scratch request to a collection" dialog, defaulting the
-   *  target to the first collection and the name to the request's own. */
-  function openSaveDialog(req: HttpRequestItem) {
+   *  target to the first collection and the name to the request's own. When
+   *  `closeAfterSave` is set the tab is closed once the save completes (used by
+   *  the close-with-unsaved-changes prompt). */
+  function openSaveDialog(req: HttpRequestItem, closeAfterSave = false) {
     setSaveDialog({
       reqId: req.id,
       name: req.name === "Untitled" ? "" : req.name,
       collectionId: collections.collections[0]?.id ?? "",
       folderId: "",
+      closeAfterSave,
     });
   }
 
-  /** Move the scratch request into the chosen collection/folder, re-keying its
-   *  open tab from `tmp␟<id>` to the real request key (response preserved). */
+  /** Commit the scratch request into the chosen collection/folder (an explicit
+   *  save — the only place a scratch draft reaches a collection file), re-keying
+   *  its open tab from `tmp␟<id>` to the real request key (response preserved)
+   *  and dropping its now-committed draft. */
   function confirmSave() {
     if (!saveDialog) return;
-    const { reqId, collectionId, folderId } = saveDialog;
+    const { reqId, collectionId, folderId, closeAfterSave } = saveDialog;
     const name = saveDialog.name.trim();
     if (!collectionId || !name) return;
-    const req = scratch.find((r) => r.id === reqId);
+    const oldKey = tmpTabKey(reqId);
+    const req = drafts[oldKey];
     if (!req) return;
 
     const saved = { ...req, name };
@@ -1030,7 +1460,6 @@ export function CurlUiWorkspace({
       : { kind: "collection", collectionId };
     setCollectionsAndSave((data) => insertRequest(data, target, saved));
 
-    const oldKey = tmpTabKey(reqId);
     const newKey = `${collectionId}:${folderId}:${reqId}`;
     setOpenTabs((tabs) => tabs.map((k) => (k === oldKey ? newKey : k)));
     setResponses((r) => {
@@ -1041,7 +1470,14 @@ export function CurlUiWorkspace({
       return next;
     });
     setSelectedId(newKey);
-    setScratch((list) => list.filter((r) => r.id !== reqId));
+    // The committed request now backs the tab: drop the draft (file + entry).
+    deleteDraft(savedId, reqId).catch((e) => setError(errString(e)));
+    setDrafts((d) => {
+      if (!(oldKey in d)) return d;
+      const next = { ...d };
+      delete next[oldKey];
+      return next;
+    });
 
     // Reveal the saved request in the tree.
     setExpanded((e) => ({
@@ -1050,20 +1486,156 @@ export function CurlUiWorkspace({
       ...(folderId ? { [`folder:${folderId}`]: true } : {}),
     }));
     setSaveDialog(null);
+    if (closeAfterSave) closeTab(newKey);
+  }
+
+  /** Commit a specific tab's draft to its collection file and clear the draft.
+   *  Returns "needs-dialog" for a scratch draft (which must go through the
+   *  Save-As picker to pick a collection/name), "noop" when there is nothing to
+   *  save, else "saved". */
+  function saveDraftForKey(key: string): "saved" | "needs-dialog" | "noop" {
+    const draft = drafts[key];
+    if (!draft) return "noop";
+    if (tmpIdFromTab(key)) return "needs-dialog";
+    const sel = parseKey(key);
+    if (!sel) return "noop";
+    setCollectionsAndSave((data) => updateRequest(data, sel, draft));
+    deleteDraft(savedId, draft.id).catch((e) => setError(errString(e)));
+    setDrafts((d) => {
+      if (!(key in d)) return d;
+      const next = { ...d };
+      delete next[key];
+      return next;
+    });
+    return "saved";
+  }
+
+  /** Explicit save of the active request (Save button / Cmd+S). A scratch
+   *  request opens the Save-As picker; otherwise the draft is committed
+   *  in place. No-op when there are no unsaved edits. */
+  function saveActive() {
+    if (!selectedId) return;
+    if (saveDraftForKey(selectedId) === "needs-dialog" && activeRequest) {
+      openSaveDialog(activeRequest);
+    }
+  }
+
+  function persistScriptVars(
+    environment: Record<string, string>,
+    collection: HttpCollection | null,
+    collectionVariables: Record<string, string>,
+  ) {
+    if (activeEnv && !sameRecord(environment, activeEnv.variables)) {
+      patchEnvironment(activeEnv.id, { variables: environment });
+    }
+    if (collection && !sameRecord(collectionVariables, collection.env ?? {})) {
+      patchCollection(collection.id, { env: collectionVariables });
+    }
   }
 
   async function onSend() {
     if (!activeRequest || !selectedId) return;
     const key = selectedId;
+    const collection = activeRequestCollection;
     setError(null);
     setResTab("body");
     loader.show({ scope: "workspace", message: "Sending…" });
+
+    // State threaded across every script phase (a script's writes are visible
+    // to later phases and, for the request, to the send itself).
+    let environment: Record<string, string> = { ...(activeEnv?.variables ?? {}) };
+    let collectionVariables: Record<string, string> = { ...(collection?.env ?? {}) };
+    let variables: Record<string, string> = {};
+    let scriptReq: ScriptRequest = {
+      method: activeRequest.method,
+      url: activeRequest.url,
+      headers: { ...activeRequest.headers },
+      body: activeRequest.body ?? null,
+    };
+    const tests: TestResult[] = [];
+    const logs: LogLine[] = [];
+    let scriptError: string | undefined;
+
+    const runPhase = async (source: string | undefined, response?: ScriptResponse) => {
+      if (!source || !source.trim()) return;
+      const outcome = await runScript(source, {
+        request: scriptReq,
+        response,
+        environment,
+        collectionVariables,
+        variables,
+      });
+      environment = outcome.environment;
+      collectionVariables = outcome.collectionVariables;
+      variables = outcome.variables;
+      scriptReq = outcome.request;
+      tests.push(...outcome.tests);
+      logs.push(...outcome.logs);
+      if (outcome.error) scriptError = outcome.error;
+    };
+
+    const storeRun = () => {
+      if (tests.length || logs.length || scriptError) {
+        setTestResults((t) => ({ ...t, [key]: { tests, logs, error: scriptError } }));
+      } else {
+        setTestResults((t) => {
+          if (!(key in t)) return t;
+          const next = { ...t };
+          delete next[key];
+          return next;
+        });
+      }
+    };
+
     try {
-      const res = await api.httpSend(
-        connectionId,
-        buildSendable(activeRequest, env, activeRequestCollection ?? undefined, pluginVersion),
+      // Pre-request scripts: collection then request.
+      await runPhase(collection?.preScript);
+      await runPhase(activeRequest.preScript);
+      persistScriptVars(environment, collection, collectionVariables);
+
+      // A pre-request script error aborts the send.
+      if (scriptError) {
+        setError(`Pre-request script: ${scriptError}`);
+        storeRun();
+        if (tests.length) setResTab("tests");
+        return;
+      }
+
+      // Apply pre-request request mutations onto a clone, then interpolate with
+      // an env that includes script-set vars (local > collection > environment)
+      // so `interpolate` resolves anything a script just set. The collection's
+      // own env is folded in here, so pass it stripped to buildSendable.
+      const mutated: HttpRequestItem = {
+        ...activeRequest,
+        method: scriptReq.method,
+        url: scriptReq.url,
+        headers: scriptReq.headers,
+        body: scriptReq.body,
+      };
+      const finalEnv = { ...environment, ...collectionVariables, ...variables };
+      const effCollection = collection ? { ...collection, env: undefined } : undefined;
+      const res = await sendHttpRequest(
+        buildSendable(mutated, finalEnv, effCollection, pluginVersion),
+        settings,
       );
       setResponses((r) => ({ ...r, [key]: res }));
+
+      // Post-response (test) scripts: request then collection.
+      const scriptResponse: ScriptResponse = {
+        code: res.status,
+        status: res.status_text,
+        headers: res.headers,
+        body: res.body,
+        responseTime: res.elapsed_ms,
+      };
+      scriptError = undefined;
+      await runPhase(activeRequest.postScript, scriptResponse);
+      await runPhase(collection?.postScript, scriptResponse);
+      persistScriptVars(environment, collection, collectionVariables);
+
+      storeRun();
+      if (scriptError) setError(`Test script: ${scriptError}`);
+      if (tests.length) setResTab("tests");
     } catch (e) {
       setError(errString(e));
     } finally {
@@ -1076,6 +1648,11 @@ export function CurlUiWorkspace({
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
       onSend();
+    }
+    // Ctrl/Cmd+S saves the active request's unsaved edits to its collection.
+    if ((e.metaKey || e.ctrlKey) && (e.key === "s" || e.key === "S")) {
+      e.preventDefault();
+      saveActive();
     }
   }
 
@@ -1104,7 +1681,7 @@ export function CurlUiWorkspace({
     setError(null);
     loader.show({ scope: "workspace", message: "Parsing curl…" });
     try {
-      const parsed = await api.httpParseCurl(connectionId, text.trim());
+      const parsed = parseCurl(text.trim());
       patchActive({
         method: parsed.method,
         url: parsed.url,
@@ -1128,7 +1705,7 @@ export function CurlUiWorkspace({
     setError(null);
     loader.show({ scope: "workspace", message: "Parsing curl…" });
     try {
-      const parsed = await api.httpParseCurl(connectionId, importText.trim());
+      const parsed = parseCurl(importText.trim());
       const req = newRequest(requestNameFromUrl(parsed.url));
       req.method = parsed.method;
       req.url = parsed.url;
@@ -1145,6 +1722,45 @@ export function CurlUiWorkspace({
       setError(errString(e));
     } finally {
       loader.hide();
+    }
+  }
+
+  /** Export a collection to a user-chosen file as v2.1 collection JSON (the same
+   *  format the workspace stores internally, so it re-imports cleanly here and
+   *  in other v2.1-compatible tools). */
+  async function onExportCollection(collectionId: string) {
+    const col = collections.collections.find((c) => c.id === collectionId);
+    if (!col) return;
+    setError(null);
+    try {
+      const path = await saveFileDialog({
+        defaultPath: collectionFileName(col),
+        filters: [{ name: "Collection", extensions: ["json"] }],
+      });
+      if (!path) return; // user cancelled the save dialog
+      await writeTextFile(path, collectionToJson(col));
+    } catch (e) {
+      setError(errString(e));
+    }
+  }
+
+  /** Import a v2.1 collection file as a new top-level collection. */
+  async function onImportCollection() {
+    setError(null);
+    try {
+      const path = await openFileDialog({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Collection", extensions: ["json"] }],
+      });
+      if (typeof path !== "string") return; // user cancelled
+      const text = await readTextFile(path);
+      const col = collectionFromJson(text);
+      setCollectionsAndSave((data) => ({ ...data, collections: [...data.collections, col] }));
+      setExpanded((e) => ({ ...e, [`col:${col.id}`]: true }));
+      selectCollection(col.id);
+    } catch (e) {
+      setError(errString(e));
     }
   }
 
@@ -1234,17 +1850,236 @@ export function CurlUiWorkspace({
     });
   }
 
-  function renderFolder(folder: HttpFolder, collectionId: string, depth: number) {
+  // --- Drag-and-drop: hit-testing, drop resolution, and the move itself ------
+
+  /** A resolved drop: which container array to land in (`destFolderId` null =
+   *  collection root), and — when reordering — the sibling to splice relative to
+   *  (`after` chooses before/after). No `siblingId` means append. */
+  type DropOp = { destFolderId: string | null; siblingId?: string; after?: boolean };
+  type DragState = NonNullable<typeof dragRef.current>;
+
+  /** The nearest draggable/droppable tree row under a viewport point. */
+  function treeRowAt(x: number, y: number): HTMLElement | null {
+    const el = document.elementFromPoint(x, y) as HTMLElement | null;
+    return el?.closest<HTMLElement>(".curlui-tree-request, .curlui-tree-row") ?? null;
+  }
+
+  /** Resolve the drop under the pointer for the given drag, or null when the
+   *  drop is not allowed (cross-collection, onto itself, or a folder cycle). */
+  function resolveDrop(
+    st: DragState,
+    x: number,
+    y: number,
+  ): { over: { id: string; zone: "before" | "into" | "after" }; op: DropOp } | null {
+    const row = treeRowAt(x, y);
+    if (!row) return null;
+    const d = row.dataset;
+    // Same-collection guard: reject any drop outside the drag's own collection.
+    if (d.colId !== st.colId) return null;
+    const tKind = d.treeKind;
+    const tId = d.treeId;
+    if (!tKind || !tId) return null;
+    const tParent = d.parentFolderId || null;
+    const rect = row.getBoundingClientRect();
+    const frac = rect.height > 0 ? (y - rect.top) / rect.height : 0.5;
+
+    if (st.kind === "request") {
+      if (tKind === "request") {
+        if (tId === st.id) return null; // onto itself — no-op
+        const after = frac >= 0.5; // 2-zone before/after among the target's siblings
+        return {
+          over: { id: tId, zone: after ? "after" : "before" },
+          op: { destFolderId: tParent, siblingId: tId, after },
+        };
+      }
+      if (tKind === "folder") return { over: { id: tId, zone: "into" }, op: { destFolderId: tId } };
+      // collection row
+      return { over: { id: tId, zone: "into" }, op: { destFolderId: null } };
+    }
+
+    // Dragging a folder: reject dropping into itself or a descendant.
+    const col = collections.collections.find((c) => c.id === st.colId);
+    const desc = col ? folderDescendantIds(col, st.id) : new Set<string>();
+    const cyclic = (dest: string | null) => dest !== null && (dest === st.id || desc.has(dest));
+
+    if (tKind === "folder") {
+      if (tId === st.id) return null;
+      if (frac < 0.25) {
+        if (cyclic(tParent)) return null;
+        return {
+          over: { id: tId, zone: "before" },
+          op: { destFolderId: tParent, siblingId: tId, after: false },
+        };
+      }
+      if (frac > 0.75) {
+        if (cyclic(tParent)) return null;
+        return {
+          over: { id: tId, zone: "after" },
+          op: { destFolderId: tParent, siblingId: tId, after: true },
+        };
+      }
+      if (cyclic(tId)) return null; // middle zone: into the target folder
+      return { over: { id: tId, zone: "into" }, op: { destFolderId: tId } };
+    }
+    if (tKind === "request") {
+      if (cyclic(tParent)) return null;
+      return { over: { id: tId, zone: "into" }, op: { destFolderId: tParent } };
+    }
+    // collection row
+    return { over: { id: tId, zone: "into" }, op: { destFolderId: null } };
+  }
+
+  function onTreePointerDown(
+    e: ReactPointerEvent,
+    kind: "request" | "folder",
+    id: string,
+    colId: string,
+    folderId: string | null,
+  ) {
+    if (e.button !== 0) return; // left button only
+    // Clear any stale suppress flag from a prior drag whose trailing click
+    // didn't land on a row's click handler (so a later plain click isn't eaten).
+    suppressClickRef.current = false;
+    // Don't start a drag from the expand toggle or the row's action buttons.
+    if ((e.target as HTMLElement).closest(".curlui-tree-toggle, .curlui-tree-actions")) return;
+    dragRef.current = {
+      kind,
+      id,
+      colId,
+      folderId,
+      startX: e.clientX,
+      startY: e.clientY,
+      dragging: false,
+    };
+  }
+
+  function onTreePointerMove(e: ReactPointerEvent) {
+    const st = dragRef.current;
+    if (!st) return;
+    if (!st.dragging) {
+      if (Math.abs(e.clientX - st.startX) < 5 && Math.abs(e.clientY - st.startY) < 5) return;
+      st.dragging = true;
+      setDragId(st.id);
+      // Route the rest of the gesture to this row even if the pointer strays.
+      e.currentTarget.setPointerCapture(e.pointerId);
+    }
+    const r = resolveDrop(st, e.clientX, e.clientY);
+    setOverRow(r ? r.over : null);
+  }
+
+  function onTreePointerUp(e: ReactPointerEvent) {
+    const st = dragRef.current;
+    dragRef.current = null;
+    if (st?.dragging) {
+      const r = resolveDrop(st, e.clientX, e.clientY);
+      if (r) applyDrop(st, r.op);
+      suppressClickRef.current = true; // don't let this gesture also select the row
+    }
+    setDragId(null);
+    setOverRow(null);
+  }
+
+  /** Perform a resolved move: mutate the tree, then (for a request whose parent
+   *  folder changed) re-key its open tab / response / test-run / draft state. */
+  function applyDrop(st: DragState, op: DropOp) {
+    setCollectionsAndSave((data) => {
+      const next = structuredClone(data);
+      const col = next.collections.find((c) => c.id === st.colId);
+      if (!col) return data;
+      if (st.kind === "request") {
+        const node = detachRequestFromCol(col, st.id);
+        if (!node) return data;
+        const arr = requestsContainer(col, op.destFolderId);
+        if (!arr) return data;
+        if (op.siblingId == null) {
+          arr.push(node);
+        } else {
+          const i = arr.findIndex((r) => r.id === op.siblingId);
+          if (i < 0) arr.push(node);
+          else arr.splice(i + (op.after ? 1 : 0), 0, node);
+        }
+      } else {
+        const node = detachFolderFromCol(col, st.id);
+        if (!node) return data;
+        const arr = foldersContainer(col, op.destFolderId);
+        if (!arr) return data;
+        if (op.siblingId == null) {
+          arr.push(node);
+        } else {
+          const i = arr.findIndex((f) => f.id === op.siblingId);
+          if (i < 0) arr.push(node);
+          else arr.splice(i + (op.after ? 1 : 0), 0, node);
+        }
+      }
+      return next;
+    });
+
+    // A folder move within a collection changes no tab keys (keys encode
+    // immediate-parent ids + colId, none of which change). A request move can
+    // change its parent folder, so re-key its single tab across all state maps.
+    if (st.kind === "request") {
+      const oldKey = `${st.colId}:${st.folderId ?? ""}:${st.id}`;
+      const newKey = `${st.colId}:${op.destFolderId ?? ""}:${st.id}`;
+      if (oldKey !== newKey) {
+        setOpenTabs((tabs) => tabs.map((k) => (k === oldKey ? newKey : k)));
+        const remap = <T,>(m: Record<string, T>): Record<string, T> => {
+          if (!(oldKey in m)) return m;
+          const nextMap = { ...m };
+          nextMap[newKey] = nextMap[oldKey];
+          delete nextMap[oldKey];
+          return nextMap;
+        };
+        setResponses(remap);
+        setTestResults(remap);
+        setDrafts((d) => {
+          if (!(oldKey in d)) return d;
+          const nextMap = { ...d };
+          const request = nextMap[oldKey];
+          nextMap[newKey] = request;
+          delete nextMap[oldKey];
+          // The draft file is named by request.id (unchanged), but stores its
+          // tab key; rewrite it so a restart restores the draft at the new spot.
+          saveDraft(savedId, { version: 1, key: newKey, kind: "collection", request }).catch((e) =>
+            setError(errString(e)),
+          );
+          return nextMap;
+        });
+        setSelectedId((cur) => (cur === oldKey ? newKey : cur));
+      }
+      if (op.destFolderId) setExpanded((e) => ({ ...e, [`folder:${op.destFolderId}`]: true }));
+    }
+  }
+
+  /** Drop-indicator class for a tree row/request given the current hover. */
+  const overClass = (id: string) => (overRow?.id === id ? " drag-over-" + overRow.zone : "");
+
+  function renderFolder(
+    folder: HttpFolder,
+    collectionId: string,
+    parentFolderId: string | null,
+    depth: number,
+  ) {
     const key = `folder:${folder.id}`;
     const isOpen = expanded[key] ?? false;
     return (
       <div key={folder.id} className="curlui-tree-node">
         <div
+          data-tree-kind="folder"
+          data-tree-id={folder.id}
+          data-col-id={collectionId}
+          data-parent-folder-id={parentFolderId ?? ""}
           className={
             "curlui-tree-row" +
-            (selectedId === folderTabKey(collectionId, folder.id) ? " active" : "")
+            (selectedId === folderTabKey(collectionId, folder.id) ? " active" : "") +
+            (dragId === folder.id ? " dragging" : "") +
+            overClass(folder.id)
           }
           style={{ paddingLeft: 22 + depth * 14 }}
+          onPointerDown={(e) =>
+            onTreePointerDown(e, "folder", folder.id, collectionId, parentFolderId)
+          }
+          onPointerMove={onTreePointerMove}
+          onPointerUp={onTreePointerUp}
         >
           <button type="button" className="curlui-tree-toggle" onClick={() => toggleExpanded(key)}>
             {isOpen ? "▾" : "▸"}
@@ -1254,11 +2089,29 @@ export function CurlUiWorkspace({
             type="button"
             className="curlui-tree-label curlui-tree-col-label"
             title="Open folder settings"
-            onClick={() => selectFolder(collectionId, folder.id)}
+            onClick={() => {
+              if (suppressClickRef.current) {
+                suppressClickRef.current = false;
+                return;
+              }
+              selectFolder(collectionId, folder.id);
+            }}
           >
             {folder.name}
           </button>
           <span className="curlui-tree-actions">
+            <button
+              type="button"
+              title="Add folder"
+              onClick={() =>
+                openNamePrompt({
+                  kind: "folder",
+                  target: { kind: "folder", collectionId, folderId: folder.id },
+                })
+              }
+            >
+              📁
+            </button>
             <button
               type="button"
               title="Add request"
@@ -1285,7 +2138,7 @@ export function CurlUiWorkspace({
         {isOpen && (
           <div className="curlui-tree-children">
             {folder.requests.map((r) => renderRequest(r, collectionId, folder.id, depth + 1))}
-            {folder.folders.map((f) => renderFolder(f, collectionId, depth + 1))}
+            {folder.folders.map((f) => renderFolder(f, collectionId, folder.id, depth + 1))}
           </div>
         )}
       </div>
@@ -1304,9 +2157,27 @@ export function CurlUiWorkspace({
       <button
         key={req.id}
         type="button"
-        className={"curlui-tree-request" + (active ? " active" : "")}
+        data-tree-kind="request"
+        data-tree-id={req.id}
+        data-col-id={collectionId}
+        data-parent-folder-id={folderId ?? ""}
+        className={
+          "curlui-tree-request" +
+          (active ? " active" : "") +
+          (dragId === req.id ? " dragging" : "") +
+          overClass(req.id)
+        }
         style={{ paddingLeft: 38 + depth * 14 }}
-        onClick={() => selectRequest(collectionId, folderId, req.id)}
+        onClick={() => {
+          if (suppressClickRef.current) {
+            suppressClickRef.current = false;
+            return;
+          }
+          selectRequest(collectionId, folderId, req.id);
+        }}
+        onPointerDown={(e) => onTreePointerDown(e, "request", req.id, collectionId, folderId)}
+        onPointerMove={onTreePointerMove}
+        onPointerUp={onTreePointerUp}
       >
         <span className={"curlui-req-method m-" + methodColor(req.method)}>{req.method}</span>
         <span className="curlui-req-name">{req.name}</span>
@@ -1375,9 +2246,13 @@ export function CurlUiWorkspace({
               return (
                 <div key={col.id} className="curlui-tree-node">
                   <div
+                    data-tree-kind="collection"
+                    data-tree-id={col.id}
+                    data-col-id={col.id}
                     className={
                       "curlui-tree-row curlui-tree-col" +
-                      (selectedId === collectionTabKey(col.id) ? " active" : "")
+                      (selectedId === collectionTabKey(col.id) ? " active" : "") +
+                      overClass(col.id)
                     }
                     style={{ paddingLeft: 8 }}
                   >
@@ -1429,27 +2304,45 @@ export function CurlUiWorkspace({
                       >
                         curl
                       </button>
+                      <button
+                        type="button"
+                        title="Export collection"
+                        onClick={() => onExportCollection(col.id)}
+                      >
+                        ⤓
+                      </button>
                     </span>
                   </div>
                   {isOpen && (
                     <div className="curlui-tree-children">
                       {col.requests.map((r) => renderRequest(r, col.id, null, 0))}
-                      {col.folders.map((f) => renderFolder(f, col.id, 0))}
+                      {col.folders.map((f) => renderFolder(f, col.id, null, 0))}
                     </div>
                   )}
                 </div>
               );
             })
           )}
-          <button
-            type="button"
-            className="curlui-tree-fab"
-            title="New collection"
-            aria-label="New collection"
-            onClick={() => openNamePrompt({ kind: "collection" })}
-          >
-            +
-          </button>
+          <div className="curlui-tree-fabs">
+            <button
+              type="button"
+              className="curlui-tree-fab"
+              title="Import collection"
+              aria-label="Import collection"
+              onClick={onImportCollection}
+            >
+              ⤒
+            </button>
+            <button
+              type="button"
+              className="curlui-tree-fab"
+              title="New collection"
+              aria-label="New collection"
+              onClick={() => openNamePrompt({ kind: "collection" })}
+            >
+              +
+            </button>
+          </div>
         </aside>
 
         <div
@@ -1491,10 +2384,14 @@ export function CurlUiWorkspace({
                   </span>
                 )}
                 <span className="curlui-req-tab-name">{t.name}</span>
-                {t.kind === "request" && t.scratch && (
+                {t.kind === "request" && t.dirty && (
                   <span
                     className="curlui-req-tab-unsaved"
-                    title="Unsaved — Save to add it to a collection"
+                    title={
+                      t.scratch
+                        ? "Unsaved — Save to add it to a collection"
+                        : "Unsaved changes — ⌘/Ctrl+S to save"
+                    }
                   />
                 )}
                 <button
@@ -1529,6 +2426,7 @@ export function CurlUiWorkspace({
               tab={collectionTab}
               onTabChange={setCollectionTab}
               onPatch={(patch) => patchCollection(activeTab.collection.id, patch)}
+              onExport={() => onExportCollection(activeTab.collection.id)}
               onDelete={() =>
                 setDeleteConfirm({
                   kind: "collection",
@@ -1656,15 +2554,19 @@ export function CurlUiWorkspace({
                 <button type="button" className="primary" onClick={onSend}>
                   Send
                 </button>
-                {activeIsScratch ? (
-                  <button
-                    type="button"
-                    title="Save to a collection"
-                    onClick={() => openSaveDialog(activeRequest)}
-                  >
-                    Save
-                  </button>
-                ) : (
+                <button
+                  type="button"
+                  title={
+                    activeIsScratch
+                      ? "Save to a collection"
+                      : "Save changes to the collection (⌘/Ctrl+S)"
+                  }
+                  disabled={selectedId ? !(selectedId in drafts) : true}
+                  onClick={saveActive}
+                >
+                  Save
+                </button>
+                {!activeIsScratch && (
                   <button
                     type="button"
                     title="Delete request"
@@ -1736,6 +2638,22 @@ export function CurlUiWorkspace({
                   >
                     Body
                     {activeRequest.body_kind !== "none" && <span className="tab-dot" />}
+                  </button>
+                  <button
+                    type="button"
+                    className={"tab" + (reqTab === "prescript" ? " active" : "")}
+                    onClick={() => setReqTab("prescript")}
+                  >
+                    Pre-request
+                    {activeRequest.preScript?.trim() && <span className="tab-dot" />}
+                  </button>
+                  <button
+                    type="button"
+                    className={"tab" + (reqTab === "tests" ? " active" : "")}
+                    onClick={() => setReqTab("tests")}
+                  >
+                    Tests
+                    {activeRequest.postScript?.trim() && <span className="tab-dot" />}
                   </button>
                 </div>
 
@@ -1863,6 +2781,20 @@ export function CurlUiWorkspace({
                         ))}
                     </div>
                   )}
+                  {reqTab === "prescript" && (
+                    <ScriptEditor
+                      kind="pre"
+                      value={activeRequest.preScript ?? ""}
+                      onChange={(v) => patchActive({ preScript: v })}
+                    />
+                  )}
+                  {reqTab === "tests" && (
+                    <ScriptEditor
+                      kind="post"
+                      value={activeRequest.postScript ?? ""}
+                      onChange={(v) => patchActive({ postScript: v })}
+                    />
+                  )}
                 </div>
               </div>
 
@@ -1898,13 +2830,27 @@ export function CurlUiWorkspace({
                       Headers
                       <span className="tab-badge">{Object.keys(response.headers).length}</span>
                     </button>
-                    <button
-                      type="button"
-                      className={"tab" + (resTab === "curl" ? " active" : "")}
-                      onClick={() => setResTab("curl")}
-                    >
-                      cURL
-                    </button>
+                    {testRun && (
+                      <button
+                        type="button"
+                        className={"tab" + (resTab === "tests" ? " active" : "")}
+                        onClick={() => setResTab("tests")}
+                      >
+                        Test Results
+                        {testRun.tests.length > 0 && (
+                          <span
+                            className={
+                              "tab-badge" + (testRun.tests.some((t) => !t.passed) ? " bad" : "")
+                            }
+                          >
+                            {testRun.tests.filter((t) => t.passed).length}/{testRun.tests.length}
+                          </span>
+                        )}
+                        {testRun.tests.length === 0 && testRun.error && (
+                          <span className="tab-dot" />
+                        )}
+                      </button>
+                    )}
                   </div>
                   <div className="curlui-tab-panel">
                     {resTab === "body" && (
@@ -1927,9 +2873,7 @@ export function CurlUiWorkspace({
                         disabledTitle=""
                       />
                     )}
-                    {resTab === "curl" && (
-                      <pre className="curlui-curl">{response.curl_command}</pre>
-                    )}
+                    {resTab === "tests" && testRun && <TestResultsView run={testRun} />}
                   </div>
                 </div>
               )}
@@ -1993,16 +2937,43 @@ export function CurlUiWorkspace({
       )}
 
       {closeConfirm && (
-        <ConfirmDialog
-          title="Close unsaved request"
-          message={`“${closeConfirm.name || "Untitled"}” hasn’t been saved to a collection. Close and discard it?`}
-          confirmLabel="Discard"
-          onConfirm={() => {
-            closeTab(closeConfirm.key);
-            setCloseConfirm(null);
-          }}
-          onCancel={() => setCloseConfirm(null)}
-        />
+        <Modal title="Save changes?" onClose={() => setCloseConfirm(null)}>
+          <p>
+            “{closeConfirm.name || "Untitled"}” has unsaved changes.
+            {closeConfirm.kind === "scratch"
+              ? " Save it to a collection before closing?"
+              : " Save them to the collection before closing?"}
+          </p>
+          <div className="form-actions">
+            <button onClick={() => setCloseConfirm(null)}>Cancel</button>
+            <button
+              className="danger"
+              onClick={() => {
+                closeTab(closeConfirm.key);
+                setCloseConfirm(null);
+              }}
+            >
+              Don’t Save
+            </button>
+            <button
+              className="primary"
+              onClick={() => {
+                const { key, kind } = closeConfirm;
+                setCloseConfirm(null);
+                if (kind === "scratch") {
+                  // Route through the Save-As picker, then close on confirm.
+                  const draft = drafts[key];
+                  if (draft) openSaveDialog(draft, true);
+                } else {
+                  saveDraftForKey(key);
+                  closeTab(key);
+                }
+              }}
+            >
+              Save
+            </button>
+          </div>
+        </Modal>
       )}
 
       {namePrompt && (

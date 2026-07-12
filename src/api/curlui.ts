@@ -1,4 +1,3 @@
-import { ConnectionId, pluginCall } from "./api.ts";
 import {
   genId,
   listWorkspaceDir,
@@ -42,7 +41,6 @@ export interface HttpResponse {
   body: string;
   body_encoding: string;
   elapsed_ms: number;
-  curl_command: string;
 }
 
 export interface HttpFolder {
@@ -66,6 +64,12 @@ export interface HttpRequestItem {
   /** Whether to merge the parent collection's headers (default true when
    *  unset). When false, only the request's own headers are sent. */
   inheritHeaders?: boolean;
+  /** JavaScript run in a sandbox before the request is sent (a pre-request
+   *  script). Has access to the `client` API (variables, request). */
+  preScript?: string;
+  /** JavaScript run in a sandbox after the response arrives. Runs `client.test`
+   *  assertions and can save values from the response into variables. */
+  postScript?: string;
 }
 
 export type AuthKind = "inherit" | "none" | "bearer" | "basic" | "apikey";
@@ -73,7 +77,7 @@ export type AuthKind = "inherit" | "none" | "bearer" | "basic" | "apikey";
 /** Where an API-key credential is sent. */
 export type ApiKeyIn = "header" | "query";
 
-/** Per-request authorization config, Postman-style. All fields optional so
+/** Per-request authorization config. All fields optional so
  *  partially-filled forms round-trip through persistence cleanly. `inherit`
  *  means "use the parent collection's auth"; `none` means explicitly no auth. */
 export interface Auth {
@@ -112,8 +116,14 @@ export interface HttpCollection {
    *  header with the same name overrides the inherited one. */
   headers?: Record<string, string>;
   /** Default auth for requests in this collection whose own auth is
-   *  `none`/unset (Postman-style "inherit from parent"). */
+   *  `none`/unset (inherit from parent). */
   auth?: Auth;
+  /** Pre-request script run before every request in this collection (before the
+   *  request's own pre-script). */
+  preScript?: string;
+  /** Test script run after every request in this collection (after the
+   *  request's own test script). */
+  postScript?: string;
 }
 
 export interface CollectionsFile {
@@ -176,21 +186,22 @@ export function newRequest(name = "New request"): HttpRequestItem {
   };
 }
 
-// --- On-disk tree serialization ---------------------------------------------
+// --- On-disk collection v2.1 serialization ----------------------------------
 //
-// The curl workspace persists as a tree of JSON files directly under its
-// connection profile's workspace dir (`workspace/<connId>/`): `collections.json`
-// holds the tree SHAPE (each collection's id/name/env/headers/auth + its folder
-// tree of id/name, plus an ordered `requestIds` list per bucket so authored
-// order survives), and each request lives in its own file at a path mirroring
-// its position:
-//   <colId>/requests/<reqId>.json
-//   <colId>/folders/<folderId>/[folders/<subId>/]*requests/<reqId>.json
-// The files are stored via the generic per-connection path primitives in
-// store.ts (the host knows nothing about this layout). The in-memory model stays
-// fully nested with embedded requests; the pure functions below translate
-// to/from the flat path->content file list, and loadCurlFiles/saveCurlFiles do
-// the actual disk IO over the generic primitives.
+// The curl workspace persists as a set of collection-v2.1 JSON files directly
+// under its connection profile's workspace dir (`workspace/<connId>/`), one file
+// per collection and one per environment:
+//   <collectionId>.postman_collection.json   Collection v2.1 (requests
+//                                             embedded in the nested `item[]`)
+//   <envId>.postman_environment.json          environment
+//   .rdb-env-meta.json                         sidecar: which env is active
+// The in-memory model (HttpCollection/HttpFolder/HttpRequestItem/...) stays
+// unchanged; the pure functions below map to/from the wire shape, and
+// loadCurlFiles/saveCurlFiles do the actual disk IO over the generic
+// per-connection path primitives in store.ts (the host knows nothing about this
+// layout). Fields the v2.1 format has no home for (collection-level default
+// headers, per-request header inheritance, authored order) are preserved in a
+// namespaced `_rdb` extension object, which other tools ignore on import.
 
 /** One stored curl file: path relative to the connection root + its contents. */
 export interface CurlFile {
@@ -198,236 +209,793 @@ export interface CurlFile {
   content: string;
 }
 
-/** The shape file at the root of the curl workspace tree. */
-export const COLLECTIONS_SHAPE_FILE = "collections.json";
+/** Filename suffixes / sidecar for the collection-format workspace files. */
+export const COLLECTION_SUFFIX = ".postman_collection.json";
+export const ENV_SUFFIX = ".postman_environment.json";
+export const ENV_META_FILE = ".rdb-env-meta.json";
 
-/** Shape of a folder on disk: tree metadata + ordered request ids (bodies live
- *  in their own files). */
-interface FolderShape {
-  id: string;
-  name: string;
-  folders: FolderShape[];
-  requestIds: string[];
+/** Temp directory (under the connection root) holding one autosaved draft file
+ *  per open request with unsaved edits, plus the open-tabs session sidecar.
+ *  These are rdb-private: the collection loaders/pruners key off the suffixes
+ *  above and skip directories, so drafts never round-trip into a collection. */
+export const DRAFTS_DIR = ".rdb-drafts";
+export const SESSION_FILE = ".rdb-curl-session.json";
+
+/** The collection v2.1 schema URL, written into every collection file. */
+const SCHEMA_URL = "https://schema.getpostman.com/json/collection/v2.1.0/collection.json";
+
+/** Namespace for fields the v2.1 format has no home for. Other tools ignore
+ *  unknown properties on import, so this round-trips losslessly for us while
+ *  keeping the files importable elsewhere. */
+const RDB_EXT = "_rdb" as const;
+
+// --- Collection v2.1 wire shapes (only the subset we read/write) ------------
+
+interface WireVariable {
+  key: string;
+  value?: string;
+  disabled?: boolean;
 }
 
-interface CollectionShape {
-  id: string;
+interface WireHeader {
+  key: string;
+  value: string;
+  disabled?: boolean;
+}
+
+interface WireQueryParam {
+  key: string;
+  value?: string;
+  disabled?: boolean;
+}
+
+interface WireUrl {
+  raw?: string;
+  protocol?: string;
+  host?: string | string[];
+  path?: string | string[];
+  query?: WireQueryParam[];
+}
+
+interface WireFormData {
+  key: string;
+  type?: "text" | "file";
+  value?: string;
+  /** File-part source path (the format puts the path here, not in `value`). May
+   *  be a string, array, or null in foreign files. */
+  src?: string | string[] | null;
+  fileName?: string;
+  contentType?: string;
+  disabled?: boolean;
+}
+
+interface WireUrlEncoded {
+  key: string;
+  value?: string;
+  disabled?: boolean;
+}
+
+interface WireBody {
+  mode?: "raw" | "urlencoded" | "formdata" | "file" | "graphql";
+  raw?: string;
+  urlencoded?: WireUrlEncoded[];
+  formdata?: WireFormData[];
+  options?: { raw?: { language?: string } };
+}
+
+interface WireAuthAttr {
+  key: string;
+  value?: string;
+  type?: string;
+}
+
+interface WireAuth {
+  type: string;
+  bearer?: WireAuthAttr[];
+  basic?: WireAuthAttr[];
+  apikey?: WireAuthAttr[];
+}
+
+interface WireScript {
+  type?: string;
+  /** One line per element, or a single string (both are schema-legal). */
+  exec?: string[] | string;
+}
+
+interface WireEvent {
+  listen: string;
+  script?: WireScript;
+}
+
+interface WireRequest {
+  method: string;
+  header?: WireHeader[];
+  url?: string | WireUrl;
+  body?: WireBody;
+  auth?: WireAuth;
+}
+
+interface RdbItemExt {
+  inheritHeaders?: boolean;
+}
+
+interface WireRequestItem {
   name: string;
-  folders: FolderShape[];
-  requestIds: string[];
-  env?: Record<string, string>;
+  _postman_id?: string;
+  event?: WireEvent[];
+  request: WireRequest;
+  [RDB_EXT]?: RdbItemExt;
+}
+
+interface WireFolderItem {
+  name: string;
+  _postman_id?: string;
+  item: WireItem[];
+}
+
+type WireItem = WireFolderItem | WireRequestItem;
+
+interface RdbCollectionExt {
   headers?: Record<string, string>;
-  auth?: Auth;
+  order?: number;
 }
 
-interface CollectionsShapeFile {
-  version: 1;
-  collections: CollectionShape[];
+interface WireCollection {
+  info: { name?: string; _postman_id?: string; description?: string; schema?: string };
+  variable?: WireVariable[];
+  auth?: WireAuth;
+  event?: WireEvent[];
+  item?: WireItem[];
+  [RDB_EXT]?: RdbCollectionExt;
 }
 
-function stripFolder(f: HttpFolder): FolderShape {
+interface WireEnvValue {
+  key: string;
+  value?: string;
+  enabled?: boolean;
+  type?: string;
+}
+
+interface WireEnvironment {
+  id?: string;
+  name?: string;
+  values?: WireEnvValue[];
+  _postman_variable_scope?: string;
+  [RDB_EXT]?: { order?: number };
+}
+
+// --- Small mapping helpers --------------------------------------------------
+
+/** Value of a wire auth attribute by key ("token"/"username"/...). */
+function wireAuthValue(arr: WireAuthAttr[] | undefined, key: string): string {
+  return (arr?.find((a) => a.key === key)?.value ?? "").toString();
+}
+
+/** in-memory Auth -> wire auth. `inherit` (and a collection's `none`/unset)
+ *  map to *absence* of the field, which is the format's "inherit from parent". */
+function authToWire(auth: Auth | undefined): WireAuth | undefined {
+  switch (auth?.kind) {
+    case "bearer":
+      return {
+        type: "bearer",
+        bearer: [{ key: "token", value: auth.token ?? "", type: "string" }],
+      };
+    case "basic":
+      return {
+        type: "basic",
+        basic: [
+          { key: "username", value: auth.username ?? "", type: "string" },
+          { key: "password", value: auth.password ?? "", type: "string" },
+        ],
+      };
+    case "apikey":
+      return {
+        type: "apikey",
+        apikey: [
+          { key: "key", value: auth.key ?? "", type: "string" },
+          { key: "value", value: auth.value ?? "", type: "string" },
+          { key: "in", value: auth.in ?? "header", type: "string" },
+        ],
+      };
+    case "none":
+      return { type: "noauth" };
+    case "inherit":
+    default:
+      return undefined;
+  }
+}
+
+/** Wire auth -> in-memory Auth. Absent auth is `inherit`; unsupported types
+ *  (oauth2/digest/awsv4/...) degrade to `none` (credentials dropped). */
+function wireToAuth(wire: WireAuth | undefined): Auth {
+  if (!wire) return { kind: "inherit", in: "header" };
+  switch (wire.type) {
+    case "noauth":
+      return { kind: "none", in: "header" };
+    case "bearer":
+      return { kind: "bearer", token: wireAuthValue(wire.bearer, "token"), in: "header" };
+    case "basic":
+      return {
+        kind: "basic",
+        username: wireAuthValue(wire.basic, "username"),
+        password: wireAuthValue(wire.basic, "password"),
+        in: "header",
+      };
+    case "apikey":
+      return {
+        kind: "apikey",
+        key: wireAuthValue(wire.apikey, "key"),
+        value: wireAuthValue(wire.apikey, "value"),
+        in: wireAuthValue(wire.apikey, "in") === "query" ? "query" : "header",
+      };
+    default:
+      return { kind: "none", in: "header" };
+  }
+}
+
+/** Non-empty pre/post scripts -> wire `event[]` (one line per exec element). */
+function scriptsToEvents(preScript?: string, postScript?: string): WireEvent[] {
+  const events: WireEvent[] = [];
+  if (preScript && preScript.length) {
+    events.push({
+      listen: "prerequest",
+      script: { type: "text/javascript", exec: preScript.split("\n") },
+    });
+  }
+  if (postScript && postScript.length) {
+    events.push({
+      listen: "test",
+      script: { type: "text/javascript", exec: postScript.split("\n") },
+    });
+  }
+  return events;
+}
+
+/** Rewrite the imported `pm.` script namespace to the sandbox's `client.` so
+ *  scripts from imported collections run against our runner's API
+ *  (`pm.test` -> `client.test`, `pm.environment.set` -> `client.environment.set`,
+ *  etc.). Matches `pm` only as a standalone identifier — the preceding char must
+ *  be the string start or a non-identifier that isn't `.` — so it never touches
+ *  a property access like `foo.pm.bar` or a longer name like `warmup`. Applied
+ *  only on collection import (see {@link collectionFromJson}), never on the
+ *  internal wire-format round-trip. */
+function rewriteScriptNamespace(script: string): string {
+  return script.replace(/(^|[^\w$.])pm\./g, "$1client.");
+}
+
+/** Read one script string out of an `event[]` by its `listen` name. */
+function eventScript(events: WireEvent[] | undefined, listen: string): string | undefined {
+  const exec = events?.find((e) => e.listen === listen)?.script?.exec;
+  const text = Array.isArray(exec) ? exec.join("\n") : (exec ?? "");
+  return text.trim() ? text : undefined;
+}
+
+/** in-memory body (`body` + `body_kind` + `parts`) -> wire `request.body`.
+ *  Returns undefined for `none` (the format omits the field). */
+function bodyToWire(req: HttpRequestItem): WireBody | undefined {
+  switch (req.body_kind) {
+    case "json":
+      return { mode: "raw", raw: req.body ?? "", options: { raw: { language: "json" } } };
+    case "text":
+      return { mode: "raw", raw: req.body ?? "", options: { raw: { language: "text" } } };
+    case "form": {
+      // Reuse the form split/collapse logic so the verbatim `a=b&c=d` string
+      // maps to the format's structured pairs (dropping the trailing blank row).
+      const urlencoded = formToRows(req.body ?? "")
+        .filter((r) => r.key.trim())
+        .map((r) => ({ key: r.key, value: r.value }));
+      return { mode: "urlencoded", urlencoded };
+    }
+    case "multipart":
+      return { mode: "formdata", formdata: (req.parts ?? []).map(partToFormData) };
+    case "none":
+    default:
+      return undefined;
+  }
+}
+
+/** Wire `request.body` -> the in-memory body fields. */
+function wireToBody(
+  body: WireBody | undefined,
+): Pick<HttpRequestItem, "body" | "body_kind" | "parts"> {
+  switch (body?.mode) {
+    case "raw": {
+      const raw = body.raw ?? "";
+      const lang = body.options?.raw?.language;
+      const isJson = lang === "json" || (!lang && isProbablyJson(raw));
+      return { body: raw, body_kind: isJson ? "json" : "text" };
+    }
+    case "urlencoded": {
+      const bodyStr = (body.urlencoded ?? [])
+        .filter((p) => p.disabled !== true && p.key.trim())
+        .map((p) => `${p.key}=${p.value ?? ""}`)
+        .join("&");
+      return { body: bodyStr, body_kind: "form" };
+    }
+    case "formdata":
+      return { body: "", body_kind: "multipart", parts: (body.formdata ?? []).map(formDataToPart) };
+    // "file"/"graphql"/"none"/absent have no in-memory equivalent -> none.
+    default:
+      return { body: "", body_kind: "none" };
+  }
+}
+
+/** Best-effort JSON detection for a raw body that carries no `language` hint. */
+function isProbablyJson(raw: string): boolean {
+  const t = raw.trim();
+  if (!t || (t[0] !== "{" && t[0] !== "[")) return false;
+  try {
+    JSON.parse(t);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** MultipartPart -> wire formdata entry. Our model always keeps the file path
+ *  in `value`; the format keeps it in `src` for file parts. */
+function partToFormData(p: MultipartPart): WireFormData {
+  const out: WireFormData = { key: p.name, type: p.kind };
+  if (p.kind === "file") out.src = p.value;
+  else out.value = p.value;
+  if (p.filename) out.fileName = p.filename;
+  if (p.content_type) out.contentType = p.content_type;
+  return out;
+}
+
+/** Wire formdata entry -> MultipartPart. Coerces a string[]/null `src`. */
+function formDataToPart(fd: WireFormData): MultipartPart {
+  const kind = fd.type === "file" ? "file" : "text";
+  const src = Array.isArray(fd.src) ? (fd.src[0] ?? "") : (fd.src ?? "");
+  const part: MultipartPart = {
+    name: fd.key,
+    kind,
+    value: kind === "file" ? src : (fd.value ?? ""),
+  };
+  if (fd.fileName) part.filename = fd.fileName;
+  if (fd.contentType) part.content_type = fd.contentType;
+  return part;
+}
+
+/** Resolve a wire `url` (string or object) to our single raw-string form. */
+function wireUrlToString(url: string | WireUrl | undefined): string {
+  if (url == null) return "";
+  if (typeof url === "string") return url;
+  if (url.raw != null) return url.raw;
+  // Reconstruct a best-effort raw URL from a foreign file that omitted `raw`.
+  const host = Array.isArray(url.host) ? url.host.join(".") : (url.host ?? "");
+  const path = Array.isArray(url.path) ? url.path.join("/") : (url.path ?? "");
+  const scheme = url.protocol ? `${url.protocol}://` : "";
+  const base = `${scheme}${host}${path ? "/" + path.replace(/^\//, "") : ""}`;
+  const query = (url.query ?? [])
+    .filter((q) => q.disabled !== true && q.key.trim())
+    .map((q) => `${q.key}=${q.value ?? ""}`)
+    .join("&");
+  return query ? `${base}?${query}` : base;
+}
+
+// --- Collection tree mappers ------------------------------------------------
+
+function requestToWireItem(r: HttpRequestItem): WireRequestItem {
+  const request: WireRequest = {
+    method: r.method,
+    header: Object.entries(r.headers).map(([key, value]) => ({ key, value })),
+    url: { raw: r.url },
+  };
+  const body = bodyToWire(r);
+  if (body) request.body = body;
+  const auth = authToWire(r.auth ?? { kind: "inherit" });
+  if (auth) request.auth = auth;
+
+  const item: WireRequestItem = { name: r.name, _postman_id: r.id, request };
+  const events = scriptsToEvents(r.preScript, r.postScript);
+  if (events.length) item.event = events;
+  if (r.inheritHeaders === false) item[RDB_EXT] = { inheritHeaders: false };
+  return item;
+}
+
+function folderToWireItem(f: HttpFolder): WireFolderItem {
   return {
-    id: f.id,
     name: f.name,
-    folders: f.folders.map(stripFolder),
-    requestIds: f.requests.map((r) => r.id),
+    _postman_id: f.id,
+    // Folders first, then requests (the relative order across the two arrays is
+    // not representable in the in-memory model).
+    item: [...f.folders.map(folderToWireItem), ...f.requests.map(requestToWireItem)],
   };
 }
 
-function stripCollection(c: HttpCollection): CollectionShape {
-  return {
-    id: c.id,
-    name: c.name,
-    folders: c.folders.map(stripFolder),
-    requestIds: c.requests.map((r) => r.id),
-    ...(c.env ? { env: c.env } : {}),
-    ...(c.headers ? { headers: c.headers } : {}),
-    ...(c.auth ? { auth: c.auth } : {}),
+function collectionToWire(c: HttpCollection, order: number): WireCollection {
+  const wire: WireCollection = {
+    info: { name: c.name, _postman_id: c.id, schema: SCHEMA_URL },
+    item: [...c.folders.map(folderToWireItem), ...c.requests.map(requestToWireItem)],
   };
+  const variable = Object.entries(c.env ?? {}).map(([key, value]) => ({ key, value }));
+  if (variable.length) wire.variable = variable;
+  const auth = authToWire(c.auth ?? { kind: "none" });
+  if (auth) wire.auth = auth;
+  const events = scriptsToEvents(c.preScript, c.postScript);
+  if (events.length) wire.event = events;
+
+  const ext: RdbCollectionExt = { order };
+  if (c.headers && Object.keys(c.headers).length) ext.headers = c.headers;
+  wire[RDB_EXT] = ext;
+  return wire;
 }
 
-/** Serialize the in-memory tree into the flat on-disk file list: one shape file
- *  plus one file per request, keyed by its hierarchy path. */
+function wireItemToRequest(item: WireRequestItem): HttpRequestItem {
+  const req = item.request;
+  const headers: Record<string, string> = {};
+  for (const h of req.header ?? []) {
+    if (h.disabled === true || !h.key.trim()) continue;
+    headers[h.key] = h.value ?? "";
+  }
+  const out: HttpRequestItem = {
+    id: item._postman_id || genId(),
+    name: item.name || "New request",
+    method: req.method || "GET",
+    url: wireUrlToString(req.url),
+    headers,
+    auth: wireToAuth(req.auth),
+    inheritHeaders: item[RDB_EXT]?.inheritHeaders ?? true,
+    ...wireToBody(req.body),
+  };
+  const pre = eventScript(item.event, "prerequest");
+  const post = eventScript(item.event, "test");
+  if (pre) out.preScript = pre;
+  if (post) out.postScript = post;
+  return out;
+}
+
+function wireItemToFolder(item: WireFolderItem): HttpFolder {
+  const { folders, requests } = splitItems(item.item ?? []);
+  return { id: item._postman_id || genId(), name: item.name || "Folder", folders, requests };
+}
+
+/** Partition a wire `item[]` into our two arrays by discriminator: an item
+ *  with `item` is a folder, an item with `request` is a request. */
+function splitItems(items: WireItem[]): { folders: HttpFolder[]; requests: HttpRequestItem[] } {
+  const folders: HttpFolder[] = [];
+  const requests: HttpRequestItem[] = [];
+  for (const it of items) {
+    if ("item" in it && Array.isArray(it.item)) folders.push(wireItemToFolder(it));
+    else if ("request" in it && it.request) requests.push(wireItemToRequest(it));
+  }
+  return { folders, requests };
+}
+
+function wireToCollection(wire: WireCollection): HttpCollection & { _order?: number } {
+  const { folders, requests } = splitItems(wire.item ?? []);
+  const env: Record<string, string> = {};
+  for (const v of wire.variable ?? []) {
+    if (v.disabled === true) continue;
+    env[v.key] = v.value ?? "";
+  }
+  const c: HttpCollection & { _order?: number } = {
+    id: wire.info?._postman_id || genId(),
+    name: wire.info?.name || "Untitled",
+    folders,
+    requests,
+    auth: wireToAuth(wire.auth),
+    _order: wire[RDB_EXT]?.order,
+  };
+  if (Object.keys(env).length) c.env = env;
+  const extHeaders = wire[RDB_EXT]?.headers;
+  if (extHeaders && Object.keys(extHeaders).length) c.headers = extHeaders;
+  const pre = eventScript(wire.event, "prerequest");
+  const post = eventScript(wire.event, "test");
+  if (pre) c.preScript = pre;
+  if (post) c.postScript = post;
+  return c;
+}
+
+/** Sort by the `_order` we stamped on write (stable; absent -> 0), then drop it. */
+function sortAndStripOrder<T extends { _order?: number }>(items: T[]): Omit<T, "_order">[] {
+  return items
+    .map((it, i) => ({ it, key: it._order ?? i }))
+    .sort((a, b) => a.key - b.key)
+    .map(({ it }) => {
+      const { _order, ...rest } = it;
+      void _order;
+      return rest;
+    });
+}
+
+/** Serialize the in-memory tree into the on-disk file list: one collection
+ *  file per collection, keyed by collection id. */
 export function collectionsToFiles(data: CollectionsFile): CurlFile[] {
-  const shape: CollectionsShapeFile = {
-    version: data.version,
-    collections: data.collections.map(stripCollection),
-  };
-  const files: CurlFile[] = [
-    { path: COLLECTIONS_SHAPE_FILE, content: JSON.stringify(shape, null, 2) },
-  ];
-
-  const emitRequests = (reqs: HttpRequestItem[], prefix: string) => {
-    for (const r of reqs) {
-      files.push({
-        path: `${prefix}/requests/${r.id}.json`,
-        content: JSON.stringify(r, null, 2),
-      });
-    }
-  };
-  const walkFolder = (folder: HttpFolder, prefix: string) => {
-    const fPrefix = `${prefix}/folders/${folder.id}`;
-    emitRequests(folder.requests, fPrefix);
-    for (const sub of folder.folders) walkFolder(sub, fPrefix);
-  };
-  for (const col of data.collections) {
-    emitRequests(col.requests, col.id);
-    for (const folder of col.folders) walkFolder(folder, col.id);
-  }
-  return files;
+  return data.collections.map((c, i) => ({
+    path: `${c.id}${COLLECTION_SUFFIX}`,
+    content: JSON.stringify(collectionToWire(c, i), null, 2),
+  }));
 }
 
-/** Rebuild a live folder from its shape, with requests filled in from the parsed
- *  request map (in the shape's recorded order; missing ids are skipped). */
-function reviveFolder(shape: FolderShape, reqs: Map<string, HttpRequestItem>): HttpFolder {
-  return {
-    id: shape.id,
-    name: shape.name,
-    folders: shape.folders.map((f) => reviveFolder(f, reqs)),
-    requests: shape.requestIds.map((id) => reqs.get(id)).filter((r): r is HttpRequestItem => !!r),
-  };
-}
-
-/** Rebuild the in-memory tree from the on-disk file list: parse the shape file,
- *  collect every request file into an id->request map, then assemble the tree in
- *  the shape's recorded order. Falls back to a default file when no shape is
- *  present. */
+/** Rebuild the in-memory tree from the on-disk file list: parse every
+ *  collection file, map each to a collection, and order by the stamped
+ *  `_rdb.order`. Falls back to a default file when none are present. */
 export function filesToCollections(files: CurlFile[]): CollectionsFile {
-  const shapeFile = files.find((f) => f.path === COLLECTIONS_SHAPE_FILE);
-  if (!shapeFile) return defaultCollectionsFile();
-  const shape = JSON.parse(shapeFile.content) as CollectionsShapeFile;
-  if (shape.version !== 1 || !Array.isArray(shape.collections)) {
-    throw new Error("invalid collections file");
-  }
+  const cols = files
+    .filter((f) => f.path.endsWith(COLLECTION_SUFFIX))
+    .map((f) => {
+      try {
+        return wireToCollection(JSON.parse(f.content) as WireCollection);
+      } catch {
+        return null;
+      }
+    })
+    .filter((c): c is HttpCollection & { _order?: number } => !!c);
+  if (cols.length === 0) return defaultCollectionsFile();
+  return { version: 1, collections: sortAndStripOrder(cols) };
+}
 
-  // Parse every request file into an id -> request map.
-  const reqs = new Map<string, HttpRequestItem>();
-  for (const file of files) {
-    if (file.path === COLLECTIONS_SHAPE_FILE) continue;
-    const segs = file.path.split("/");
-    if (segs.length < 3 || segs[segs.length - 2] !== "requests") continue;
-    try {
-      const req = JSON.parse(file.content) as HttpRequestItem;
-      if (req && typeof req.id === "string") reqs.set(req.id, req);
-    } catch {
-      // Skip an unparseable request file rather than failing the whole load.
-    }
-  }
+// --- Single-collection import / export (v2.1) -------------------------------
+//
+// The on-disk workspace format is already v2.1, so importing/exporting a
+// single collection to/from a user-chosen file reuses the same mappers. Export
+// serializes one collection; import parses one collection file and hands
+// back an in-memory collection to splice into the tree.
 
+/** Serialize one collection to a v2.1 collection JSON string, suitable for
+ *  saving to a file and re-importing here or into other v2.1-compatible tools. */
+export function collectionToJson(c: HttpCollection): string {
+  return JSON.stringify(collectionToWire(c, 0), null, 2);
+}
+
+/** A filesystem-safe default filename for exporting a collection, e.g.
+ *  `My API.postman_collection.json`. */
+export function collectionFileName(c: HttpCollection): string {
+  const base = c.name
+    .trim()
+    .replace(/[^\w.-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return `${base || "collection"}${COLLECTION_SUFFIX}`;
+}
+
+/** Parse a v2.1 collection JSON string into an in-memory collection.
+ *  All ids are regenerated and every script's `pm.` namespace is rewritten to
+ *  our `client.` API (see {@link prepareImported}). Throws when the text is not
+ *  JSON or does not look like a collection. */
+export function collectionFromJson(json: string): HttpCollection {
+  let wire: WireCollection;
+  try {
+    wire = JSON.parse(json) as WireCollection;
+  } catch {
+    throw new Error("File is not valid JSON");
+  }
+  if (!wire || typeof wire !== "object" || (!wire.info && !Array.isArray(wire.item))) {
+    throw new Error("File is not a valid collection");
+  }
+  const { _order, ...c } = wireToCollection(wire);
+  void _order;
+  return prepareImported(c);
+}
+
+/** Post-process a freshly-parsed imported collection: regenerate all ids
+ *  (collection, every folder, every request) so it can never collide with one
+ *  already open — importing the same file twice yields two independent
+ *  collections and per-request draft files (keyed by request id) stay separate —
+ *  and rewrite each script's `pm.` namespace to our `client.` API. This
+ *  runs only on import, never on the internal wire-format round-trip. */
+function prepareImported(c: HttpCollection): HttpCollection {
+  const convertReq = (r: HttpRequestItem): HttpRequestItem => ({
+    ...r,
+    id: genId(),
+    ...(r.preScript ? { preScript: rewriteScriptNamespace(r.preScript) } : {}),
+    ...(r.postScript ? { postScript: rewriteScriptNamespace(r.postScript) } : {}),
+  });
+  const walkFolder = (f: HttpFolder): HttpFolder => ({
+    ...f,
+    id: genId(),
+    folders: f.folders.map(walkFolder),
+    requests: f.requests.map(convertReq),
+  });
   return {
-    version: 1,
-    collections: shape.collections.map((c) => ({
-      id: c.id,
-      name: c.name,
-      folders: c.folders.map((f) => reviveFolder(f, reqs)),
-      requests: c.requestIds.map((id) => reqs.get(id)).filter((r): r is HttpRequestItem => !!r),
-      ...(c.env ? { env: c.env } : {}),
-      ...(c.headers ? { headers: c.headers } : {}),
-      ...(c.auth ? { auth: c.auth } : {}),
-    })),
+    ...c,
+    id: genId(),
+    folders: c.folders.map(walkFolder),
+    requests: c.requests.map(convertReq),
+    ...(c.preScript ? { preScript: rewriteScriptNamespace(c.preScript) } : {}),
+    ...(c.postScript ? { postScript: rewriteScriptNamespace(c.postScript) } : {}),
   };
 }
 
 // --- Disk IO over the generic workspace primitives --------------------------
 
-/** Recursively collect every `*.json` path under the connection root, driving
- *  `listWorkspaceDir`. `rel` is the dir's path relative to the root ("" for the
- *  root itself). */
-async function walkJson(savedId: string, rel: string, out: string[]): Promise<void> {
-  const entries = await listWorkspaceDir(savedId, rel);
-  for (const e of entries) {
-    const childRel = rel ? `${rel}/${e.name}` : e.name;
-    if (e.isDir) {
-      await walkJson(savedId, childRel, out);
-    } else if (e.name.endsWith(".json")) {
-      out.push(childRel);
-    }
-  }
-}
-
-/** Load every curl file for a profile as a flat `{path, content}` list, with
- *  paths relative to the connection root. Empty when nothing is saved yet. Feed
- *  the result to {@link filesToCollections}. */
+/** Load every collection file for a profile as a flat `{path, content}` list.
+ *  Empty when nothing is saved yet. Feed the result to {@link filesToCollections}. */
 export async function loadCurlFiles(savedId: string): Promise<CurlFile[]> {
-  const paths: string[] = [];
-  await walkJson(savedId, "", paths);
+  const entries = await listWorkspaceDir(savedId, "");
   const files: CurlFile[] = [];
-  for (const path of paths) {
-    const content = await readWorkspaceFile(savedId, path);
-    if (content !== null) files.push({ path, content });
+  for (const e of entries) {
+    if (e.isDir || !e.name.endsWith(COLLECTION_SUFFIX)) continue;
+    const content = await readWorkspaceFile(savedId, e.name);
+    if (content !== null) files.push({ path: e.name, content });
   }
   return files;
 }
 
-/** Persist the curl file set (from {@link collectionsToFiles}) for a profile:
- *  write every desired file, then prune any existing `*.json` not in the set and
- *  any stale top-level collection dir, so deletions are reflected on disk. */
+/** Persist the collection file set (from {@link collectionsToFiles}) for a
+ *  profile: write every desired file, then prune stale collection files
+ *  no longer wanted so deletions are reflected on disk. Restricting the
+ *  prune to that suffix inherently protects the environment files and sidecar. */
 export async function saveCurlFiles(savedId: string, files: CurlFile[]): Promise<void> {
   const wanted = new Set(files.map((f) => f.path));
-
-  // Snapshot what's currently on disk before writing.
-  const existing: string[] = [];
-  await walkJson(savedId, "", existing);
-
-  // Write all desired files.
   for (const f of files) {
     await writeWorkspaceFileAt(savedId, f.path, f.content);
   }
-
-  // Delete stale files no longer wanted. `environments.json` lives at the root
-  // alongside the collections tree but is owned by saveEnvironments — never
-  // prune it here.
-  for (const path of existing) {
-    if (path !== ENVIRONMENTS_FILE && !wanted.has(path)) {
-      await deleteWorkspacePath(savedId, path);
-    }
-  }
-
-  // Drop whole top-level collection dirs that no longer exist (removes any now-
-  // empty folder subtrees in one shot). Top-level dir names are collection ids.
-  const liveCollectionDirs = new Set(
-    files
-      .map((f) => f.path.split("/"))
-      .filter((segs) => segs.length > 1)
-      .map((segs) => segs[0]),
-  );
-  const topEntries = await listWorkspaceDir(savedId, "");
-  for (const e of topEntries) {
-    if (e.isDir && !liveCollectionDirs.has(e.name)) {
+  const entries = await listWorkspaceDir(savedId, "");
+  for (const e of entries) {
+    if (!e.isDir && e.name.endsWith(COLLECTION_SUFFIX) && !wanted.has(e.name)) {
       await deleteWorkspacePath(savedId, e.name);
     }
   }
 }
 
-/** The single file holding all environments + the active selection. */
-export const ENVIRONMENTS_FILE = "environments.json";
+/** in-memory environment -> wire environment file shape. */
+function envToWire(env: HttpEnvironment, order: number): WireEnvironment {
+  return {
+    id: env.id,
+    name: env.name,
+    values: Object.entries(env.variables).map(([key, value]) => ({
+      key,
+      value,
+      enabled: true,
+      type: "default",
+    })),
+    _postman_variable_scope: "environment",
+    [RDB_EXT]: { order },
+  };
+}
 
-/** Load the environments file for a profile, falling back to an empty set when
- *  absent or unparseable. */
+/** Wire environment file -> in-memory environment (dropping disabled values). */
+function wireToEnv(wire: WireEnvironment): HttpEnvironment & { _order?: number } {
+  const variables: Record<string, string> = {};
+  for (const v of wire.values ?? []) {
+    if (v.enabled === false || !v.key) continue;
+    variables[v.key] = v.value ?? "";
+  }
+  return {
+    id: wire.id || genId(),
+    name: wire.name || "Environment",
+    variables,
+    _order: wire[RDB_EXT]?.order,
+  };
+}
+
+/** Load all environments for a profile, plus the active selection from the
+ *  sidecar. Falls back to an empty set when nothing is saved yet. */
 export async function loadEnvironments(savedId: string): Promise<EnvironmentsFile> {
-  const content = await readWorkspaceFile(savedId, ENVIRONMENTS_FILE);
-  if (content === null) return defaultEnvironmentsFile();
-  try {
-    const data = JSON.parse(content) as EnvironmentsFile;
-    if (data.version !== 1 || !Array.isArray(data.environments)) {
-      return defaultEnvironmentsFile();
+  const entries = await listWorkspaceDir(savedId, "");
+  const envs: (HttpEnvironment & { _order?: number })[] = [];
+  for (const e of entries) {
+    if (e.isDir || !e.name.endsWith(ENV_SUFFIX)) continue;
+    const content = await readWorkspaceFile(savedId, e.name);
+    if (content === null) continue;
+    try {
+      envs.push(wireToEnv(JSON.parse(content) as WireEnvironment));
+    } catch {
+      // Skip an unparseable environment file rather than failing the whole load.
     }
-    return {
-      version: 1,
-      environments: data.environments,
-      activeId: data.activeId ?? null,
-    };
-  } catch {
-    return defaultEnvironmentsFile();
+  }
+  const environments = sortAndStripOrder(envs);
+
+  let activeId: string | null = null;
+  const meta = await readWorkspaceFile(savedId, ENV_META_FILE);
+  if (meta !== null) {
+    try {
+      activeId = (JSON.parse(meta) as { activeId?: string | null }).activeId ?? null;
+    } catch {
+      // Ignore a corrupt sidecar; treat as no active environment.
+    }
+  }
+  // Guard against a dangling activeId that no longer names an existing env.
+  if (activeId && !environments.some((e) => e.id === activeId)) activeId = null;
+
+  if (environments.length === 0 && activeId === null) return defaultEnvironmentsFile();
+  return { version: 1, environments, activeId };
+}
+
+/** Persist all environments for a profile: one environment file each,
+ *  plus the active-selection sidecar. Prunes stale environment files. */
+export async function saveEnvironments(savedId: string, data: EnvironmentsFile): Promise<void> {
+  const wanted = new Set<string>();
+  for (let i = 0; i < data.environments.length; i++) {
+    const env = data.environments[i];
+    const path = `${env.id}${ENV_SUFFIX}`;
+    wanted.add(path);
+    await writeWorkspaceFileAt(savedId, path, JSON.stringify(envToWire(env, i), null, 2));
+  }
+  await writeWorkspaceFileAt(
+    savedId,
+    ENV_META_FILE,
+    JSON.stringify({ version: 1, activeId: data.activeId ?? null }, null, 2),
+  );
+  const entries = await listWorkspaceDir(savedId, "");
+  for (const e of entries) {
+    if (!e.isDir && e.name.endsWith(ENV_SUFFIX) && !wanted.has(e.name)) {
+      await deleteWorkspacePath(savedId, e.name);
+    }
   }
 }
 
-/** Persist the environments file for a profile. */
-export async function saveEnvironments(savedId: string, data: EnvironmentsFile): Promise<void> {
-  await writeWorkspaceFileAt(savedId, ENVIRONMENTS_FILE, JSON.stringify(data, null, 2));
+// --- Drafts + open-tabs session (restart-survivable, per-request) -----------
+
+/** An autosaved draft of one open request's unsaved edits. `key` is the tab
+ *  key it belongs to (`collectionId:folderId:requestId` for a collection-backed
+ *  request, or `tmp␟<id>` for a scratch request). `kind` distinguishes a
+ *  scratch request (not yet in any collection) from an edited saved request. */
+export interface DraftEntry {
+  version: 1;
+  key: string;
+  kind: "scratch" | "collection";
+  request: HttpRequestItem;
 }
 
-/** Color class suffix for an HTTP method, Postman-style. */
+/** The open-tabs session for a profile: which request/collection/folder/env
+ *  tabs are open, which is active, and the expanded tree state. Persisted so
+ *  open requests survive an app restart. */
+export interface CurlSession {
+  version: 1;
+  openTabs: string[];
+  selectedId: string | null;
+  expanded: Record<string, boolean>;
+}
+
+/** Load every draft file for a profile. Skips unparseable files rather than
+ *  failing the whole load (mirroring {@link filesToCollections}). */
+export async function loadDrafts(savedId: string): Promise<DraftEntry[]> {
+  const entries = await listWorkspaceDir(savedId, DRAFTS_DIR);
+  const drafts: DraftEntry[] = [];
+  for (const e of entries) {
+    if (e.isDir || !e.name.endsWith(".json")) continue;
+    const content = await readWorkspaceFile(savedId, `${DRAFTS_DIR}/${e.name}`);
+    if (content === null) continue;
+    try {
+      const d = JSON.parse(content) as DraftEntry;
+      if (d && d.key && d.request?.id) drafts.push(d);
+    } catch {
+      // Ignore a corrupt draft file.
+    }
+  }
+  return drafts;
+}
+
+/** Write one draft file (named by its request id, which is unique per profile
+ *  and filesystem-safe). */
+export function saveDraft(savedId: string, entry: DraftEntry): Promise<void> {
+  return writeWorkspaceFileAt(
+    savedId,
+    `${DRAFTS_DIR}/${entry.request.id}.json`,
+    JSON.stringify(entry, null, 2),
+  );
+}
+
+/** Delete a draft file by its request id (missing = success). */
+export function deleteDraft(savedId: string, requestId: string): Promise<void> {
+  return deleteWorkspacePath(savedId, `${DRAFTS_DIR}/${requestId}.json`);
+}
+
+/** Load the open-tabs session, or null when none is saved / it is corrupt. */
+export async function loadCurlSession(savedId: string): Promise<CurlSession | null> {
+  const content = await readWorkspaceFile(savedId, SESSION_FILE);
+  if (content === null) return null;
+  try {
+    const s = JSON.parse(content) as CurlSession;
+    return {
+      version: 1,
+      openTabs: Array.isArray(s.openTabs) ? s.openTabs : [],
+      selectedId: s.selectedId ?? null,
+      expanded: s.expanded ?? {},
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Persist the open-tabs session. */
+export function saveCurlSession(savedId: string, session: CurlSession): Promise<void> {
+  return writeWorkspaceFileAt(savedId, SESSION_FILE, JSON.stringify(session, null, 2));
+}
+
 export function methodColor(method: string): string {
   switch (method.toUpperCase()) {
     case "GET":
@@ -466,7 +1034,7 @@ export function userAgent(version: string): string {
   return `rdb/${version || "0"} Http-Client (plugin)`;
 }
 
-/** Headers rdb adds to every request automatically (Postman-style). They are
+/** Headers rdb adds to every request automatically. They are
  *  shown read-only in the Headers tab and sent unless the user (or the owning
  *  collection) sets a header with the same name, which overrides them. */
 export function autoHeaders(version: string): Record<string, string> {
@@ -563,7 +1131,7 @@ export function joinUrl(base: string, params: KvRow[]): string {
 }
 
 /** UTF-8-safe base64 (btoa alone mishandles non-Latin1 chars). */
-function base64Utf8(s: string): string {
+export function base64Utf8(s: string): string {
   const bytes = new TextEncoder().encode(s);
   let bin = "";
   for (const b of bytes) bin += String.fromCharCode(b);
@@ -736,7 +1304,7 @@ export function buildSendable(
  *  existing `%XX` escapes so an already-encoded value (e.g. from curl import) is
  *  not double-encoded. Iterates by code point so multi-byte chars round-trip.
  *  Mirrors the URL-query `enc` in the curlui plugin. */
-function encodeFormComponent(s: string): string {
+export function encodeFormComponent(s: string): string {
   let out = "";
   const chars = Array.from(s);
   for (let i = 0; i < chars.length; i++) {
@@ -806,11 +1374,3 @@ export function buildCurl(req: HttpRequest): string {
   }
   return parts.join(" \\\n");
 }
-
-export const curlui_api = {
-  httpSend: (connectionId: ConnectionId, request: HttpRequest) =>
-    pluginCall<HttpResponse>(connectionId, "curlui.send", { request }),
-
-  httpParseCurl: (connectionId: ConnectionId, curl: string) =>
-    pluginCall<HttpRequest>(connectionId, "curlui.parse_curl", { curl }),
-};

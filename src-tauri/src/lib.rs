@@ -95,6 +95,11 @@ pub fn run() {
             // `updater_builder()` (the init Builder has no `.endpoints`).
             app.handle().plugin(tauri_plugin_shell::init())?;
             app.handle().plugin(tauri_plugin_dialog::init())?;
+            // The `curlui` workspace sends HTTP requests directly from the
+            // frontend via this plugin; `fs` reads local files for multipart
+            // uploads. Allowed URLs / read scope are set in capabilities.
+            app.handle().plugin(tauri_plugin_http::init())?;
+            app.handle().plugin(tauri_plugin_fs::init())?;
 
             #[cfg(desktop)]
             {

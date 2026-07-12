@@ -2,48 +2,24 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rdb_core::{Connection, PluginError, Result};
-use rdb_plugin_curlui::{
-    downcast_conn, parse_curl_command, send_request, CurlUiPlugin, HttpRequest,
-};
+use rdb_plugin_curlui::CurlUiPlugin;
 use rdb_plugin_runtime::Dispatcher;
-use serde::Deserialize;
 use serde_json::Value;
 
+/// The `curlui` plugin exposes no `call` ops — HTTP requests and curl import
+/// are handled entirely by the frontend. This dispatcher exists only to satisfy
+/// the runtime and rejects any op.
 struct CurlUiDispatcher;
-
-#[derive(Deserialize)]
-struct SendParams {
-    request: HttpRequest,
-}
-
-#[derive(Deserialize)]
-struct ParseCurlParams {
-    curl: String,
-}
-
-fn parse<T: for<'de> Deserialize<'de>>(params: Value) -> Result<T> {
-    serde_json::from_value(params).map_err(|e| PluginError::Config(format!("invalid params: {e}")))
-}
-
-fn to_value<T: serde::Serialize>(value: T) -> Result<Value> {
-    serde_json::to_value(value).map_err(|e| PluginError::Backend(e.to_string()))
-}
 
 #[async_trait]
 impl Dispatcher for CurlUiDispatcher {
-    async fn dispatch(&self, op: &str, params: Value, conn: Arc<dyn Connection>) -> Result<Value> {
-        let conn = downcast_conn(&conn)?;
-        match op {
-            "curlui.send" => {
-                let p: SendParams = parse(params)?;
-                to_value(send_request(conn, &p.request).await?)
-            }
-            "curlui.parse_curl" => {
-                let p: ParseCurlParams = parse(params)?;
-                to_value(parse_curl_command(&p.curl)?)
-            }
-            _ => Err(PluginError::Unsupported),
-        }
+    async fn dispatch(
+        &self,
+        _op: &str,
+        _params: Value,
+        _conn: Arc<dyn Connection>,
+    ) -> Result<Value> {
+        Err(PluginError::Unsupported)
     }
 }
 

@@ -7,6 +7,7 @@ A static marketing + documentation site for **rdb**. No build step — plain HTM
 website/
 ├─ index.html     landing page (hero, features, plugins, architecture, download, build)
 ├─ docs.html      full documentation with a sticky table of contents
+├─ install.sh     one-command desktop-app installer (served at /install.sh)
 ├─ styles.css     shared styles
 └─ assets/        app icons
 ```

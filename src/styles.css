@@ -3217,12 +3217,17 @@ table.grid tr.new-row td {
   color: var(--bg, #fff);
 }
 
-.curlui-tree-fab {
+.curlui-tree-fabs {
   position: sticky;
   bottom: 12px;
   align-self: flex-end;
   margin: auto 12px 12px;
   flex-shrink: 0;
+  display: flex;
+  gap: 8px;
+}
+
+.curlui-tree-fab {
   width: 28px;
   height: 28px;
   border-radius: 50%;
@@ -3331,6 +3336,31 @@ table.grid tr.new-row td {
 
 .curlui-tree-request.active {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* Drag-and-drop indicators for the tree (mirrors the connection list in
+   .conn-item): the dragged row fades, and the hovered drop target shows an
+   inset accent line at its top (before) or bottom (after), or an inset outline
+   + faint fill when dropping into a folder/collection. */
+.curlui-tree-request.dragging,
+.curlui-tree-row.dragging {
+  opacity: 0.5;
+}
+
+.curlui-tree-request.drag-over-before,
+.curlui-tree-row.drag-over-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.curlui-tree-request.drag-over-after,
+.curlui-tree-row.drag-over-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.curlui-tree-request.drag-over-into,
+.curlui-tree-row.drag-over-into {
+  box-shadow: inset 0 0 0 2px var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .curlui-req-method {
@@ -3946,4 +3976,117 @@ select.curlui-method {
   white-space: pre-wrap;
   word-break: break-word;
   resize: none;
+}
+
+/* --- Pre-request / test scripts --------------------------------------------- */
+
+.curlui-script {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 8px;
+}
+.curlui-script-editor {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: auto;
+}
+
+/* Red badge variant for a failing test count on the Test Results tab. */
+.tab-badge.bad {
+  background: var(--err);
+  color: #1a1a1a;
+}
+
+.curlui-tests {
+  padding: 4px 2px;
+  overflow: auto;
+  font-size: 13px;
+}
+.curlui-test-error {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--err) 18%, transparent);
+  color: var(--err);
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.curlui-test-summary {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+.curlui-test-pass {
+  color: var(--ok);
+}
+.curlui-test-fail {
+  color: var(--err);
+}
+.curlui-test-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.curlui-test-list li {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-2);
+}
+.curlui-test-badge {
+  display: inline-block;
+  min-width: 40px;
+  margin-right: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  color: #1a1a1a;
+}
+.curlui-test-ok .curlui-test-badge {
+  background: var(--ok);
+}
+.curlui-test-bad .curlui-test-badge {
+  background: var(--err);
+}
+.curlui-test-msg {
+  margin-top: 4px;
+  padding-left: 48px;
+  color: var(--err);
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.curlui-console {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.curlui-console-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.curlui-log {
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 1px 0;
+}
+.curlui-log-warn {
+  color: var(--warn);
+}
+.curlui-log-error {
+  color: var(--err);
 }
