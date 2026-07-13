@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import type { MultipartPart } from "../api/curlui.ts";
+import { VarHighlightInput } from "./VarHighlightField.tsx";
 
 // Monotonic counter for per-row React keys (mirrors KvEditor). Only needs to be
 // unique within a mounted editor and stable across its renders.
@@ -19,9 +20,12 @@ function basename(path: string): string {
 export function MultipartEditor({
   parts,
   onChange,
+  env,
 }: {
   parts: MultipartPart[];
   onChange: (parts: MultipartPart[]) => void;
+  /** When set, the text-value field highlights `{{NAME}}` placeholders. */
+  env?: Record<string, string>;
 }) {
   // The blank trailing row is presentation-only; it isn't part of the stored
   // model until the user types into it.
@@ -93,6 +97,14 @@ export function MultipartEditor({
                   Browse…
                 </button>
               </div>
+            ) : env ? (
+              <VarHighlightInput
+                className="curlui-kv-value"
+                env={env}
+                placeholder="Value"
+                value={r.value}
+                onChange={(v) => patch(i, { value: v })}
+              />
             ) : (
               <input
                 type="text"

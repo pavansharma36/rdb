@@ -1,6 +1,13 @@
 import { useEffect, useImperativeHandle, useRef } from "react";
 import { Compartment, EditorState, Prec } from "@codemirror/state";
-import { EditorView, keymap, placeholder as placeholderExt } from "@codemirror/view";
+import {
+  Decoration,
+  EditorView,
+  MatchDecorator,
+  ViewPlugin,
+  keymap,
+  placeholder as placeholderExt,
+} from "@codemirror/view";
 import { indentWithTab } from "@codemirror/commands";
 import {
   StreamLanguage,
@@ -60,6 +67,9 @@ export interface CodeEditorV2Props {
   /** Host shortcuts layered above the editor's own keymap (consumed when hit). */
   keybindings?: EditorKeybinding[];
   handleRef?: React.Ref<CodeEditorV2Handle>;
+  /** When set, `{{NAME}}` placeholders in the document are highlighted,
+   *  colored by whether `NAME` resolves in this map. */
+  highlightVars?: Record<string, string>;
 }
 
 /** CodeMirror-side chrome (selection, caret, gutters) that's awkward to express
@@ -127,6 +137,17 @@ const baseTheme = EditorView.theme(
     ".cm-panel.cm-search label": { color: "var(--muted)" },
     ".cm-panel.cm-search input[type=checkbox]": { accentColor: "var(--accent)" },
     ".cm-panel button[name=close]": { color: "var(--muted)" },
+    // {{NAME}} placeholder highlighting (see `variableHighlightExtension`),
+    // colored by whether NAME resolves in the env passed as `highlightVars`.
+    ".cm-var-token": { borderRadius: "3px" },
+    ".cm-var-resolved": {
+      color: "var(--accent-2)",
+      backgroundColor: "color-mix(in srgb, var(--accent-2) 20%, transparent)",
+    },
+    ".cm-var-unresolved": {
+      color: "var(--err)",
+      backgroundColor: "color-mix(in srgb, var(--err) 18%, transparent)",
+    },
   },
   { dark: true },
 );
@@ -186,6 +207,36 @@ function languageExtension(language?: CodeLanguage) {
   }
 }
 
+const VAR_TOKEN_RE = /\{\{\s*[^{}]*\s*\}\}/g;
+
+/** Highlights `{{NAME}}` placeholders, colored by whether `NAME` (trimmed)
+ *  resolves in `env` — mirrors the same-purpose overlay used on plain
+ *  `<input>`/`<textarea>` fields (`VarHighlightField`), but as a native
+ *  CodeMirror decoration since this editor already has its own render pass.
+ *  Empty (no `env`) disables the extension entirely. */
+function variableHighlightExtension(env?: Record<string, string>) {
+  if (!env) return [];
+  const matcher = new MatchDecorator({
+    regexp: VAR_TOKEN_RE,
+    decoration: (match) => {
+      const name = match[0].slice(2, -2).trim();
+      const resolved = name in env;
+      return Decoration.mark({
+        class: "cm-var-token " + (resolved ? "cm-var-resolved" : "cm-var-unresolved"),
+      });
+    },
+  });
+  return ViewPlugin.define(
+    (view) => ({
+      decorations: matcher.createDeco(view),
+      update(update) {
+        this.decorations = matcher.updateDeco(update, this.decorations);
+      },
+    }),
+    { decorations: (v) => v.decorations },
+  );
+}
+
 /**
  * A CodeMirror 6 code editor — the successor to the transparent-textarea overlay
  * in CodeEditorV1. CodeMirror provides syntax highlighting, line numbers, code
@@ -210,6 +261,7 @@ export function CodeEditorV2({
   lineWrapping = false,
   keybindings,
   handleRef,
+  highlightVars,
 }: CodeEditorV2Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -221,11 +273,21 @@ export function CodeEditorV2({
   const keybindingsRef = useRef(keybindings);
   keybindingsRef.current = keybindings;
 
+  // Set immediately before a reconcile-effect dispatch (below) and read inside
+  // the updateListener, which CodeMirror invokes synchronously within
+  // `dispatch()` — so this never straddles a render. Distinguishes "the doc
+  // changed because a new `value` prop arrived" (e.g. switching to a
+  // different request reusing this editor instance) from a real user edit:
+  // only the latter should flow back out through `onChange`, otherwise the
+  // host sees a no-op "edit" and marks the record dirty.
+  const suppressOnChangeRef = useRef(false);
+
   // Compartments let us reconfigure individual facets (language, read-only,
   // placeholder) without recreating the view.
   const languageComp = useRef(new Compartment());
   const readOnlyComp = useRef(new Compartment());
   const placeholderComp = useRef(new Compartment());
+  const highlightVarsComp = useRef(new Compartment());
 
   // Build the editor once. Subsequent prop changes are pushed in via the
   // effects below (or the compartments), so this never re-runs.
@@ -254,11 +316,17 @@ export function CodeEditorV2({
         // find panel (⌘/Ctrl+F) and text selection still work when read-only.
         readOnlyComp.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(true)]),
         placeholderComp.current.of(placeholder ? placeholderExt(placeholder) : []),
+        highlightVarsComp.current.of(variableHighlightExtension(highlightVars)),
         lineWrapping ? EditorView.lineWrapping : [],
         Prec.highest(syntaxHighlighting(highlightStyle)),
         baseTheme,
         EditorView.updateListener.of((u) => {
-          if (u.docChanged) onChangeRef.current?.(u.state.doc.toString());
+          if (!u.docChanged) return;
+          if (suppressOnChangeRef.current) {
+            suppressOnChangeRef.current = false;
+            return;
+          }
+          onChangeRef.current?.(u.state.doc.toString());
         }),
       ],
     });
@@ -277,11 +345,16 @@ export function CodeEditorV2({
 
   // Reconcile external value changes into the document (skips no-ops, so typing
   // doesn't loop: edit → onChange → parent setState → value === doc → skip).
+  // This dispatch is a resync, not a user edit (e.g. a different request's body
+  // swapped into a reused editor instance), so it's flagged to skip onChange —
+  // otherwise the host would see a spurious "edit" back to the value it just
+  // handed in and mark the record dirty.
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     const current = view.state.doc.toString();
     if (value !== current) {
+      suppressOnChangeRef.current = true;
       view.dispatch({ changes: { from: 0, to: current.length, insert: value } });
     }
   }, [value]);
@@ -306,6 +379,12 @@ export function CodeEditorV2({
       effects: placeholderComp.current.reconfigure(placeholder ? placeholderExt(placeholder) : []),
     });
   }, [placeholder]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({
+      effects: highlightVarsComp.current.reconfigure(variableHighlightExtension(highlightVars)),
+    });
+  }, [highlightVars]);
 
   useImperativeHandle(
     handleRef,

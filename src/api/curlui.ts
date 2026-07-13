@@ -1,3 +1,4 @@
+import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import {
   genId,
   listWorkspaceDir,
@@ -48,6 +49,8 @@ export interface HttpFolder {
   name: string;
   folders: HttpFolder[];
   requests: HttpRequestItem[];
+  /** Free-text (Markdown) documentation for this folder. */
+  description?: string;
 }
 
 export interface HttpRequestItem {
@@ -70,6 +73,8 @@ export interface HttpRequestItem {
   /** JavaScript run in a sandbox after the response arrives. Runs `client.test`
    *  assertions and can save values from the response into variables. */
   postScript?: string;
+  /** Free-text (Markdown) documentation for this request. */
+  description?: string;
 }
 
 export type AuthKind = "inherit" | "none" | "bearer" | "basic" | "apikey";
@@ -124,6 +129,15 @@ export interface HttpCollection {
   /** Test script run after every request in this collection (after the
    *  request's own test script). */
   postScript?: string;
+  /** Free-text (Markdown) documentation for this collection. */
+  description?: string;
+  /** Set when this collection's file lives outside the connection's workspace
+   *  dir, at a user-chosen path on disk (linked, not copied in). Never
+   *  serialized into the collection's own JSON — it's registry metadata,
+   *  tracked in {@link EXTERNAL_LINKS_FILE}. `missing` means the path could
+   *  not be read on last load (moved/deleted/unmounted); the collection is
+   *  shown as an empty placeholder and is never overwritten until relinked. */
+  external?: { path: string; missing?: boolean };
 }
 
 export interface CollectionsFile {
@@ -221,6 +235,20 @@ export const ENV_META_FILE = ".rdb-env-meta.json";
 export const DRAFTS_DIR = ".rdb-drafts";
 export const SESSION_FILE = ".rdb-curl-session.json";
 
+/** Sidecar listing which collections are linked to a file outside the
+ *  workspace dir, and where. See {@link HttpCollection.external}. */
+export const EXTERNAL_LINKS_FILE = ".rdb-external-collections.json";
+
+export interface ExternalLink {
+  id: string;
+  path: string;
+}
+
+interface ExternalLinksFile {
+  version: 1;
+  links: ExternalLink[];
+}
+
 /** The collection v2.1 schema URL, written into every collection file. */
 const SCHEMA_URL = "https://schema.getpostman.com/json/collection/v2.1.0/collection.json";
 
@@ -313,6 +341,7 @@ interface WireRequest {
   url?: string | WireUrl;
   body?: WireBody;
   auth?: WireAuth;
+  description?: string;
 }
 
 interface RdbItemExt {
@@ -330,6 +359,7 @@ interface WireRequestItem {
 interface WireFolderItem {
   name: string;
   _postman_id?: string;
+  description?: string;
   item: WireItem[];
 }
 
@@ -586,6 +616,7 @@ function requestToWireItem(r: HttpRequestItem): WireRequestItem {
   if (body) request.body = body;
   const auth = authToWire(r.auth ?? { kind: "inherit" });
   if (auth) request.auth = auth;
+  if (r.description) request.description = r.description;
 
   const item: WireRequestItem = { name: r.name, _postman_id: r.id, request };
   const events = scriptsToEvents(r.preScript, r.postScript);
@@ -598,6 +629,7 @@ function folderToWireItem(f: HttpFolder): WireFolderItem {
   return {
     name: f.name,
     _postman_id: f.id,
+    ...(f.description ? { description: f.description } : {}),
     // Folders first, then requests (the relative order across the two arrays is
     // not representable in the in-memory model).
     item: [...f.folders.map(folderToWireItem), ...f.requests.map(requestToWireItem)],
@@ -606,7 +638,12 @@ function folderToWireItem(f: HttpFolder): WireFolderItem {
 
 function collectionToWire(c: HttpCollection, order: number): WireCollection {
   const wire: WireCollection = {
-    info: { name: c.name, _postman_id: c.id, schema: SCHEMA_URL },
+    info: {
+      name: c.name,
+      _postman_id: c.id,
+      schema: SCHEMA_URL,
+      ...(c.description ? { description: c.description } : {}),
+    },
     item: [...c.folders.map(folderToWireItem), ...c.requests.map(requestToWireItem)],
   };
   const variable = Object.entries(c.env ?? {}).map(([key, value]) => ({ key, value }));
@@ -643,12 +680,20 @@ function wireItemToRequest(item: WireRequestItem): HttpRequestItem {
   const post = eventScript(item.event, "test");
   if (pre) out.preScript = pre;
   if (post) out.postScript = post;
+  if (req.description) out.description = req.description;
   return out;
 }
 
 function wireItemToFolder(item: WireFolderItem): HttpFolder {
   const { folders, requests } = splitItems(item.item ?? []);
-  return { id: item._postman_id || genId(), name: item.name || "Folder", folders, requests };
+  const out: HttpFolder = {
+    id: item._postman_id || genId(),
+    name: item.name || "Folder",
+    folders,
+    requests,
+  };
+  if (item.description) out.description = item.description;
+  return out;
 }
 
 /** Partition a wire `item[]` into our two arrays by discriminator: an item
@@ -685,6 +730,7 @@ function wireToCollection(wire: WireCollection): HttpCollection & { _order?: num
   const post = eventScript(wire.event, "test");
   if (pre) c.preScript = pre;
   if (post) c.postScript = post;
+  if (wire.info?.description) c.description = wire.info.description;
   return c;
 }
 
@@ -750,11 +796,12 @@ export function collectionFileName(c: HttpCollection): string {
   return `${base || "collection"}${COLLECTION_SUFFIX}`;
 }
 
-/** Parse a v2.1 collection JSON string into an in-memory collection.
- *  All ids are regenerated and every script's `pm.` namespace is rewritten to
- *  our `client.` API (see {@link prepareImported}). Throws when the text is not
- *  JSON or does not look like a collection. */
-export function collectionFromJson(json: string): HttpCollection {
+/** Parse+validate a v2.1 collection JSON string into an in-memory collection,
+ *  with no id regeneration or script rewriting. Throws when the text is not
+ *  JSON or does not look like a collection. Shared by {@link collectionFromJson}
+ *  (import: a copy) and {@link parseLinkedCollectionFile} (a link: same file
+ *  stays the source of truth, so ids must round-trip via `_postman_id`). */
+function parseCollectionJson(json: string): HttpCollection {
   let wire: WireCollection;
   try {
     wire = JSON.parse(json) as WireCollection;
@@ -766,31 +813,51 @@ export function collectionFromJson(json: string): HttpCollection {
   }
   const { _order, ...c } = wireToCollection(wire);
   void _order;
-  return prepareImported(c);
+  return c;
 }
 
-/** Post-process a freshly-parsed imported collection: regenerate all ids
- *  (collection, every folder, every request) so it can never collide with one
- *  already open — importing the same file twice yields two independent
- *  collections and per-request draft files (keyed by request id) stay separate —
- *  and rewrite each script's `pm.` namespace to our `client.` API. This
- *  runs only on import, never on the internal wire-format round-trip. */
-function prepareImported(c: HttpCollection): HttpCollection {
+/** Parse a v2.1 collection JSON string into an in-memory collection.
+ *  All ids are regenerated and every script's `pm.` namespace is rewritten to
+ *  our `client.` API (see {@link prepareImported}). Throws when the text is not
+ *  JSON or does not look like a collection. */
+export function collectionFromJson(json: string): HttpCollection {
+  return prepareImported(parseCollectionJson(json), { regenerateIds: true });
+}
+
+/** Parse a v2.1 collection JSON string read from a file the user is linking
+ *  (not importing/copying): ids are kept as-authored (so the file's own
+ *  `_postman_id`s round-trip on the next save) but `pm.` scripts are still
+ *  rewritten to our `client.` API, since a foreign Postman export uses `pm.`. */
+export function parseLinkedCollectionFile(json: string): HttpCollection {
+  return prepareImported(parseCollectionJson(json), { regenerateIds: false });
+}
+
+/** Post-process a freshly-parsed collection: rewrite each script's `pm.`
+ *  namespace to our `client.` API, and — for an import (`regenerateIds: true`)
+ *  only — regenerate every id (collection, every folder, every request) so it
+ *  can never collide with one already open — importing the same file twice
+ *  yields two independent collections and per-request draft files (keyed by
+ *  request id) stay separate. A linked collection keeps its ids so the file
+ *  it was read from round-trips on save. */
+function prepareImported(
+  c: HttpCollection,
+  { regenerateIds }: { regenerateIds: boolean },
+): HttpCollection {
   const convertReq = (r: HttpRequestItem): HttpRequestItem => ({
     ...r,
-    id: genId(),
+    ...(regenerateIds ? { id: genId() } : {}),
     ...(r.preScript ? { preScript: rewriteScriptNamespace(r.preScript) } : {}),
     ...(r.postScript ? { postScript: rewriteScriptNamespace(r.postScript) } : {}),
   });
   const walkFolder = (f: HttpFolder): HttpFolder => ({
     ...f,
-    id: genId(),
+    ...(regenerateIds ? { id: genId() } : {}),
     folders: f.folders.map(walkFolder),
     requests: f.requests.map(convertReq),
   });
   return {
     ...c,
-    id: genId(),
+    ...(regenerateIds ? { id: genId() } : {}),
     folders: c.folders.map(walkFolder),
     requests: c.requests.map(convertReq),
     ...(c.preScript ? { preScript: rewriteScriptNamespace(c.preScript) } : {}),
@@ -828,6 +895,51 @@ export async function saveCurlFiles(savedId: string, files: CurlFile[]): Promise
       await deleteWorkspacePath(savedId, e.name);
     }
   }
+}
+
+// --- External (linked) collection files --------------------------------------
+//
+// A collection can instead be backed by a file at an arbitrary path outside
+// the workspace dir (chosen via a directory or file picker), so it stays the
+// source of truth and edits write straight back to it. Which collection ids
+// are linked to which paths is tracked in EXTERNAL_LINKS_FILE, a sidecar in
+// the same workspace dir as the collection files; the linked files themselves
+// are read/written through the unsandboxed fs plugin, not the workspace
+// primitives above.
+
+/** Load the id -> path registry of linked external collections. `[]` when
+ *  none are linked or the sidecar is missing/corrupt. */
+export async function loadExternalLinks(savedId: string): Promise<ExternalLink[]> {
+  const content = await readWorkspaceFile(savedId, EXTERNAL_LINKS_FILE);
+  if (content === null) return [];
+  try {
+    const parsed = JSON.parse(content) as ExternalLinksFile;
+    return Array.isArray(parsed.links) ? parsed.links : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Persist the id -> path registry of linked external collections. */
+export function saveExternalLinks(savedId: string, links: ExternalLink[]): Promise<void> {
+  const data: ExternalLinksFile = { version: 1, links };
+  return writeWorkspaceFileAt(savedId, EXTERNAL_LINKS_FILE, JSON.stringify(data, null, 2));
+}
+
+/** Read and parse a linked collection file from its external path. Throws if
+ *  the path can't be read or doesn't look like a collection — callers should
+ *  fall back to a `missing` placeholder rather than let this fail the load. */
+export async function readExternalCollectionFile(path: string): Promise<HttpCollection> {
+  const text = await readTextFile(path);
+  return parseLinkedCollectionFile(text);
+}
+
+/** Write a linked collection back to its external path. */
+export function writeExternalCollectionFile(
+  path: string,
+  collection: HttpCollection,
+): Promise<void> {
+  return writeTextFile(path, collectionToJson(collection));
 }
 
 /** in-memory environment -> wire environment file shape. */
@@ -1136,6 +1248,39 @@ export function base64Utf8(s: string): string {
   let bin = "";
   for (const b of bytes) bin += String.fromCharCode(b);
   return btoa(bin);
+}
+
+/** One run of literal text, or one `{{NAME}}` placeholder, in a template
+ *  string. `name` (trimmed) is only set when `isVar` is true. */
+export interface VarToken {
+  text: string;
+  isVar: boolean;
+  name?: string;
+}
+
+/** Split a template into literal/placeholder runs for inline UI highlighting.
+ *  Unlike {@link interpolate}, this never throws: an unclosed `{{` (as a user
+ *  is mid-typing one) is emitted as trailing literal text instead of erroring. */
+export function splitVarTokens(template: string): VarToken[] {
+  const tokens: VarToken[] = [];
+  let rest = template;
+  while (rest) {
+    const start = rest.indexOf("{{");
+    if (start < 0) {
+      tokens.push({ text: rest, isVar: false });
+      break;
+    }
+    if (start > 0) tokens.push({ text: rest.slice(0, start), isVar: false });
+    rest = rest.slice(start);
+    const end = rest.indexOf("}}");
+    if (end < 0) {
+      tokens.push({ text: rest, isVar: false });
+      break;
+    }
+    tokens.push({ text: rest.slice(0, end + 2), isVar: true, name: rest.slice(2, end).trim() });
+    rest = rest.slice(end + 2);
+  }
+  return tokens;
 }
 
 /** Replace `{{NAME}}` placeholders using the environment map. Throws on an

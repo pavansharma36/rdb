@@ -297,14 +297,14 @@ function KeyValueEditor({
   const entries = Object.entries(value);
   return (
     <div className="keyvalue-editor">
-      {entries.length === 0 && <p className="muted keyvalue-empty">No variables yet.</p>}
+      {entries.length === 0 && <p className="muted keyvalue-empty">No entries yet.</p>}
       {entries.map(([key, val]) => (
         <div key={key} className="keyvalue-row">
           <input
             type="text"
             className="keyvalue-key"
             value={key}
-            placeholder="NAME"
+            placeholder="key"
             onChange={(e) => {
               const nextKey = e.target.value;
               const { [key]: removed, ...rest } = value;
@@ -337,15 +337,15 @@ function KeyValueEditor({
         className="keyvalue-add"
         onClick={() => {
           let n = 1;
-          let key = "VAR";
+          let key = "key";
           while (key in value) {
             n += 1;
-            key = `VAR${n}`;
+            key = `key${n}`;
           }
           onChange({ ...value, [key]: "" });
         }}
       >
-        + Add variable
+        + Add
       </button>
     </div>
   );

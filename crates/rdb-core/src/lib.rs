@@ -163,6 +163,41 @@ pub fn cfg_secret(cfg: &ConnectionConfig, key: &str) -> Result<Option<String>> {
     }
 }
 
+/// Render the free-form `options` key-value map (the `ConfigFieldType::KeyValue`
+/// field a plugin can expose in its config schema, conventionally under the
+/// `options` key) as a URL query-string suffix, e.g.
+/// `connect_timeout=10&application_name=rdb`, and append it to `url`. Lets any
+/// parameter the underlying driver/server's URL parser understands pass
+/// straight through without the plugin needing to know about it individually.
+pub fn append_options(mut url: String, cfg: &ConnectionConfig) -> String {
+    let Some(map) = cfg.get("options").and_then(|v| v.as_object()) else {
+        return url;
+    };
+    for (k, v) in map {
+        let Some(v) = v.as_str().filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        url.push(if url.contains('?') { '&' } else { '?' });
+        url.push_str(&url_encode(k));
+        url.push('=');
+        url.push_str(&url_encode(v));
+    }
+    url
+}
+
+fn url_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 /// How a `cli`-kind plugin tells the host to launch its terminal process.
 ///
 /// The host knows nothing about ssh/telnet/etc.; it asks the plugin (via the

@@ -3217,6 +3217,17 @@ table.grid tr.new-row td {
   color: var(--bg, #fff);
 }
 
+.curlui-tree-col-external {
+  margin-left: 4px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.curlui-tree-col-missing .curlui-tree-col-label {
+  opacity: 0.55;
+  font-style: italic;
+}
+
 .curlui-tree-fabs {
   position: sticky;
   bottom: 12px;
@@ -3307,14 +3318,23 @@ table.grid tr.new-row td {
 .curlui-tree-actions {
   display: flex;
   gap: 2px;
-  opacity: 0.7;
 }
 
-.curlui-tree-actions button {
+/* Only the ⋮ trigger dims/brightens — scoped to a direct child of .conn-menu
+ * so it doesn't leak into the .conn-menu-popup items nested beside it, which
+ * must keep the connection list's full-size, opaque .footer-menu-item look. */
+.curlui-tree-actions > .conn-menu > button {
   background: transparent;
   border: none;
   padding: 0 4px;
-  font-size: 11px;
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 700;
+  opacity: 0.7;
+}
+
+.curlui-tree-actions > .conn-menu > button:hover {
+  opacity: 1;
 }
 
 .curlui-tree-request {
@@ -3537,6 +3557,12 @@ select.curlui-method {
 
 .curlui-request-bar {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.curlui-request-bar-row {
+  display: flex;
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
@@ -3547,11 +3573,133 @@ select.curlui-method {
   min-width: 100px;
 }
 
+.curlui-req-title-input {
+  flex: 1;
+  min-width: 60px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.curlui-req-title-input:hover {
+  background: var(--bg-2);
+  border-color: var(--border);
+}
+
+.curlui-req-title-input:focus {
+  background: var(--bg-2);
+  border-color: var(--accent);
+}
+
+.curlui-req-location {
+  display: flex;
+  align-items: center;
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.curlui-req-location-crumb {
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  flex-shrink: 1;
+}
+
+.curlui-req-location-crumb button {
+  all: unset;
+  cursor: pointer;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 3px;
+}
+
+.curlui-req-location-crumb button:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.curlui-req-location-sep {
+  margin: 0 5px;
+  color: var(--muted);
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
 .curlui-url-input {
   flex: 1;
   min-width: 200px;
   font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   font-size: 12px;
+}
+
+/* Inline {{VAR}} highlighting: a transparent input/textarea layered over a
+ * backdrop that renders the same text with colored placeholder spans. The
+ * wrapper takes on whatever sizing class the caller passed (curlui-url-input,
+ * curlui-kv-value, etc.) so layout is unaffected; font-family/size cascade to
+ * the backdrop/input as normal inherited properties. */
+.var-hl-field {
+  position: relative;
+  display: block;
+}
+
+.var-hl-backdrop {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  box-sizing: border-box;
+  overflow: hidden;
+  pointer-events: none;
+  white-space: pre;
+  color: var(--text);
+}
+
+.var-hl-backdrop.multiline {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.var-hl-field:focus-within .var-hl-backdrop {
+  border-color: var(--accent);
+}
+
+.var-hl-token {
+  border-radius: 3px;
+}
+
+.var-hl-token.var-hl-resolved {
+  color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent-2) 20%, transparent);
+}
+
+.var-hl-token.var-hl-unresolved {
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 18%, transparent);
+}
+
+.var-hl-field > .var-hl-input {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border-color: transparent;
+  color: transparent;
+  caret-color: var(--text);
+}
+
+.var-hl-field > .var-hl-input:focus {
+  border-color: transparent;
 }
 
 .curlui-env-tab {
@@ -3562,21 +3710,6 @@ select.curlui-method {
 
 .curlui-env-tab code {
   font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-}
-
-.curlui-env-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.curlui-env-chip {
-  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--bg-2);
-  border: 1px solid var(--border);
 }
 
 .curlui-editors {
@@ -3733,6 +3866,17 @@ select.curlui-method {
 
 .curlui-collection-hint code {
   font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+.curlui-collection-external {
+  margin: -4px 0 8px;
+  font-size: 12px;
+  color: var(--text-muted, var(--text));
+  word-break: break-all;
+}
+
+.curlui-collection-external-missing {
+  color: var(--err);
 }
 
 .curlui-auth-field {
@@ -3992,6 +4136,25 @@ select.curlui-method {
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: auto;
+}
+
+/* --- Description (collection / folder / request docs) ---------------------- */
+
+.curlui-description {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.curlui-description-input {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
 }
 
 /* Red badge variant for a failing test count on the Test Results tab. */
