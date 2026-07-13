@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
 use rdb_core::{
-    cfg_secret, ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError,
-    PluginInfo, PluginKind, Result,
+    append_options, cfg_secret, ConfigField, ConfigFieldType, Connection, ConnectionConfig,
+    Plugin, PluginError, PluginInfo, PluginKind, Result,
 };
 use rdb_rdbms_common::{
     downcast_conn, ApplyResult, BrowseFilter, BrowseSpec, Column, ColumnMeta, ColumnValue,
@@ -297,6 +297,15 @@ impl Plugin for MysqlPlugin {
                         equals: "individual".into(),
                     }),
                 },
+                ConfigField {
+                    key: "options".into(),
+                    label: "Additional Options".into(),
+                    field_type: ConfigFieldType::KeyValue,
+                    required: false,
+                    default: Some(serde_json::json!({})),
+                    placeholder: Some("connect_timeout=10".into()),
+                    show_if: None,
+                },
             ],
         }
     }
@@ -308,6 +317,7 @@ impl Plugin for MysqlPlugin {
             let database = cfg_str(&cfg, "database")?;
             build_url(&cfg, &database)?
         };
+        let url = append_options(url, &cfg);
         // Never log `url` — it carries the password. Log only safe fields.
         tracing::info!(
             "connecting to mysql host={} port={} db={}",
@@ -366,6 +376,7 @@ impl RdbmsPlugin for MysqlPlugin {
         } else {
             build_url(&conn.config, database)?
         };
+        let url = append_options(url, &conn.config);
         let pool = make_pool(&url).await?;
         *conn.pool.write().unwrap() = pool;
         Ok(())

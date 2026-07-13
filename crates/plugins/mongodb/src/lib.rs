@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use mongodb::{bson::doc, Client};
 use rdb_core::{
-    cfg_secret, ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin, PluginError,
-    PluginInfo, PluginKind, Result, ShowIf,
+    append_options, cfg_secret, ConfigField, ConfigFieldType, Connection, ConnectionConfig,
+    Plugin, PluginError, PluginInfo, PluginKind, Result, ShowIf,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -89,30 +89,37 @@ fn urlencode(s: &str) -> String {
 
 /// Resolve the effective MongoDB connection string, either taken verbatim from
 /// the `uri` field or assembled from the individual host/port/credentials.
+/// Either way, the free-form `options` key-value map is appended as extra
+/// query parameters (see [`rdb_core::append_options`]).
 fn build_mongo_uri(cfg: &ConnectionConfig) -> Result<String> {
     let mode = cfg_str_opt(cfg, "mode").unwrap_or_else(|| MODE_URI.to_string());
-    if mode != MODE_FIELDS {
-        return cfg_str(cfg, "uri");
-    }
-
-    let host = cfg_str(cfg, "host")?;
-    let user = cfg_str_opt(cfg, "user").unwrap_or_default();
-    let password = cfg_secret(cfg, "password")?.unwrap_or_default();
-    let srv = cfg_bool(cfg, "srv");
-
-    let scheme = if srv { "mongodb+srv" } else { "mongodb" };
-    let auth = if user.is_empty() {
-        String::new()
+    let uri = if mode != MODE_FIELDS {
+        cfg_str(cfg, "uri")?
     } else {
-        format!("{}:{}@", urlencode(&user), urlencode(&password))
+        let host = cfg_str(cfg, "host")?;
+        let user = cfg_str_opt(cfg, "user").unwrap_or_default();
+        let password = cfg_secret(cfg, "password")?.unwrap_or_default();
+        let srv = cfg_bool(cfg, "srv");
+
+        let scheme = if srv { "mongodb+srv" } else { "mongodb" };
+        let auth = if user.is_empty() {
+            String::new()
+        } else {
+            format!("{}:{}@", urlencode(&user), urlencode(&password))
+        };
+        // SRV records carry their own port; a literal port is invalid there.
+        let host_port = if srv {
+            host
+        } else {
+            format!("{host}:{}", cfg_u16(cfg, "port", 27017))
+        };
+        let auth_source = cfg_str_opt(cfg, "authenticationDb").filter(|s| !s.is_empty());
+        let query = auth_source
+            .map(|db| format!("?authSource={}", urlencode(&db)))
+            .unwrap_or_default();
+        format!("{scheme}://{auth}{host_port}{query}")
     };
-    // SRV records carry their own port; a literal port is invalid there.
-    let host_port = if srv {
-        host
-    } else {
-        format!("{host}:{}", cfg_u16(cfg, "port", 27017))
-    };
-    Ok(format!("{scheme}://{auth}{host_port}"))
+    Ok(append_options(uri, cfg))
 }
 
 #[async_trait]
@@ -211,12 +218,33 @@ impl Plugin for MongoPlugin {
                     }),
                 },
                 ConfigField {
+                    key: "authenticationDb".into(),
+                    label: "Authentication DB".into(),
+                    field_type: ConfigFieldType::Text,
+                    required: false,
+                    default: None,
+                    placeholder: Some("admin".into()),
+                    show_if: Some(ShowIf {
+                        field: "mode".into(),
+                        equals: MODE_FIELDS.into(),
+                    }),
+                },
+                ConfigField {
                     key: "database".into(),
                     label: "Default DB (optional)".into(),
                     field_type: ConfigFieldType::Text,
                     required: false,
                     default: None,
                     placeholder: None,
+                    show_if: None,
+                },
+                ConfigField {
+                    key: "options".into(),
+                    label: "Additional Options".into(),
+                    field_type: ConfigFieldType::KeyValue,
+                    required: false,
+                    default: Some(serde_json::json!({})),
+                    placeholder: Some("retryWrites=false".into()),
                     show_if: None,
                 },
             ],

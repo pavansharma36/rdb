@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { type KvRow, newKvRow } from "../api/curlui.ts";
+import { VarHighlightInput } from "./VarHighlightField.tsx";
 
 // Monotonic counter for per-row React keys (see `keysRef` below). Only needs to
 // be unique within a mounted editor and stable across its renders.
@@ -21,6 +22,7 @@ export function KvEditor({
   disabled = false,
   disabledTitle = "Added automatically — add a header with the same name to override",
   overriddenTitle = "Overridden by a header you added below",
+  env,
 }: {
   rows: KvRow[];
   onChange: (rows: KvRow[]) => void;
@@ -29,6 +31,11 @@ export function KvEditor({
   disabled?: boolean;
   disabledTitle?: string;
   overriddenTitle?: string;
+  /** When set (and the row isn't `disabled`), key/value inputs highlight
+   *  `{{NAME}}` placeholders, colored by whether `NAME` resolves here. Omit
+   *  for variable-*definition* tables (env/collection-overrides editors),
+   *  where highlighting would imply resolution support that doesn't exist. */
+  env?: Record<string, string>;
 }) {
   // Stable, generated React key per row *position*. The rows handed in may
   // carry freshly-generated `r.id`s on every render (some callers rebuild them
@@ -85,22 +92,43 @@ export function KvEditor({
               disabled={disabled || (isLast && !r.key.trim() && !r.value.trim())}
               onChange={(e) => patch(r.id, "enabled", e.target.checked)}
             />
-            <input
-              type="text"
-              className="curlui-kv-key"
-              placeholder={keyPlaceholder}
-              value={r.key}
-              readOnly={disabled}
-              onChange={(e) => patch(r.id, "key", e.target.value)}
-            />
-            <input
-              type="text"
-              className="curlui-kv-value"
-              placeholder={valuePlaceholder}
-              value={r.value}
-              readOnly={disabled}
-              onChange={(e) => patch(r.id, "value", e.target.value)}
-            />
+            {env && !disabled ? (
+              <>
+                <VarHighlightInput
+                  className="curlui-kv-key"
+                  env={env}
+                  placeholder={keyPlaceholder}
+                  value={r.key}
+                  onChange={(v) => patch(r.id, "key", v)}
+                />
+                <VarHighlightInput
+                  className="curlui-kv-value"
+                  env={env}
+                  placeholder={valuePlaceholder}
+                  value={r.value}
+                  onChange={(v) => patch(r.id, "value", v)}
+                />
+              </>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  className="curlui-kv-key"
+                  placeholder={keyPlaceholder}
+                  value={r.key}
+                  readOnly={disabled}
+                  onChange={(e) => patch(r.id, "key", e.target.value)}
+                />
+                <input
+                  type="text"
+                  className="curlui-kv-value"
+                  placeholder={valuePlaceholder}
+                  value={r.value}
+                  readOnly={disabled}
+                  onChange={(e) => patch(r.id, "value", e.target.value)}
+                />
+              </>
+            )}
             <button
               type="button"
               className="curlui-kv-del"

@@ -164,6 +164,7 @@ export function ContentEditor({
   autoFocus = false,
   readOnly = false,
   keybindings,
+  env,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -173,6 +174,9 @@ export function ContentEditor({
   autoFocus?: boolean;
   readOnly?: boolean;
   keybindings?: EditorKeybinding[];
+  /** When set, `{{NAME}}` placeholders in the body highlight, colored by
+   *  whether `NAME` resolves in this map. */
+  env?: Record<string, string>;
 }) {
   const format = resolveFormat(contentType);
 
@@ -258,6 +262,7 @@ export function ContentEditor({
         placeholder={placeholder}
         autoFocus={autoFocus}
         keybindings={keybindings}
+        highlightVars={readOnly ? undefined : env}
       />
       {!readOnly && format !== "text" && (
         <div className="content-editor-toolbar">
