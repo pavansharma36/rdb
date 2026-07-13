@@ -3,7 +3,8 @@ name: Tag release
 # Manually cut a release tag. Computes the next semver from the latest existing
 # `v*` tag (or the workspace Cargo.toml version when there are none), then
 # creates and pushes an annotated `vX.Y.Z` tag. Pushing that tag triggers
-# publish-app.yml and publish-plugins.yml in stable (tag) mode.
+# publish.yml, which runs checks once and fans out to publish-app.yml and
+# publish-plugins.yml in stable (tag) mode.
 #
 # IMPORTANT: a tag pushed with the default GITHUB_TOKEN will NOT trigger those
 # `on: push` workflows (GitHub's loop-prevention). To make tagging kick off the

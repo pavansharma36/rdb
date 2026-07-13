@@ -18,10 +18,8 @@ name: Publish plugins
 # repo and choosing the tag (e.g., `v0.2.0` or `plugins-latest`).
 
 on:
-  push:
-    branches: [master]
-    tags: ['v*']
   workflow_dispatch:
+  workflow_call:
 
 # Master pushes supersede each other; tag builds run independently and are
 # never cancelled (distinct ref -> distinct group).
@@ -34,7 +32,10 @@ permissions:
 
 jobs:
   # Formatting + linting gate — plugins are only built/published if this passes.
+  # Only actually runs when this workflow is dispatched standalone; when
+  # called from publish.yml the orchestrator has already run checks once.
   checks:
+    if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/checks.yml
 
   build:
@@ -42,7 +43,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     needs: checks
     if: |
-      needs.checks.result == 'success'
+      !cancelled()
+      && (needs.checks.result == 'success' || needs.checks.result == 'skipped')
       && (github.ref_type == 'tag'
       || !contains(github.event.head_commit.message, '[skip ci]'))
     strategy:
