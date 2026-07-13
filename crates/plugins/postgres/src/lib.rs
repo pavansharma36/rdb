@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
 use rdb_core::{
-    append_options, cfg_secret, ConfigField, ConfigFieldType, Connection, ConnectionConfig,
-    Plugin, PluginError, PluginInfo, PluginKind, Result,
+    append_options, cfg_secret, ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin,
+    PluginError, PluginInfo, PluginKind, Result,
 };
 use rdb_rdbms_common::{
     downcast_conn, ApplyResult, BrowseFilter, BrowseSpec, Column, ColumnMeta, ColumnValue,

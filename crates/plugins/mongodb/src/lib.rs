@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use mongodb::{bson::doc, Client};
 use rdb_core::{
-    append_options, cfg_secret, ConfigField, ConfigFieldType, Connection, ConnectionConfig,
-    Plugin, PluginError, PluginInfo, PluginKind, Result, ShowIf,
+    append_options, cfg_secret, ConfigField, ConfigFieldType, Connection, ConnectionConfig, Plugin,
+    PluginError, PluginInfo, PluginKind, Result, ShowIf,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
