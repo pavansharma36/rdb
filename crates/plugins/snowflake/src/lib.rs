@@ -9,7 +9,8 @@ use rdb_rdbms_common::{
 };
 use regex::Regex;
 use snowflake_connector_rs::{
-    SnowflakeAuthMethod, SnowflakeClient, SnowflakeClientConfig, SnowflakeRow, SnowflakeSession,
+    AuthConfig, CellValue, Client, ClientConfig, KeyPairConfig, QueryConfig, Session,
+    SessionConfig,
 };
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -30,19 +31,19 @@ impl Default for SnowflakePlugin {
 
 /// A live connection to one database on a Snowflake account.
 ///
-/// Snowflake's REST API is reached through a [`SnowflakeClient`] (cheap to clone)
+/// Snowflake's REST API is reached through a [`Client`] (cheap to clone)
 /// that mints session tokens. The active session sits behind a lock so the
 /// current database can be switched in place — re-logging in against the new
 /// database — without changing the connection's id. A session is cloned out
 /// under the read lock before any query awaits, so a concurrent database swap
 /// never blocks in-flight queries.
 pub struct SnowflakeConnection {
-    session: RwLock<Arc<SnowflakeSession>>,
+    session: RwLock<Arc<Session>>,
     config: ConnectionConfig,
 }
 
 impl SnowflakeConnection {
-    fn session(&self) -> Arc<SnowflakeSession> {
+    fn session(&self) -> Arc<Session> {
         self.session.read().unwrap().clone()
     }
 }
@@ -68,7 +69,7 @@ const DEFAULT_MAX_ROW_COUNT: usize = 10_000;
 /// Build the auth method described by the connection config. Supports
 /// password auth and key-pair auth (a PEM private key file, optionally
 /// passphrase-encrypted).
-fn build_auth(cfg: &ConnectionConfig) -> Result<SnowflakeAuthMethod> {
+fn build_auth(cfg: &ConnectionConfig) -> Result<AuthConfig> {
     let mode = cfg_str_opt(cfg, "auth_mode").unwrap_or_else(|| "password".into());
     match mode.as_str() {
         "keypair" => {
@@ -76,23 +77,23 @@ fn build_auth(cfg: &ConnectionConfig) -> Result<SnowflakeAuthMethod> {
             let pem = std::fs::read_to_string(&path)
                 .map_err(|e| PluginError::Config(format!("cannot read private key {path}: {e}")))?;
             match cfg_secret(cfg, "private_key_passphrase")?.filter(|p| !p.is_empty()) {
-                Some(pass) => Ok(SnowflakeAuthMethod::KeyPair {
-                    encrypted_pem: pem,
-                    password: pass.into_bytes(),
-                }),
-                None => Ok(SnowflakeAuthMethod::KeyPairUnencrypted { pem }),
+                Some(pass) => Ok(AuthConfig::key_pair(KeyPairConfig::from_encrypted_pem(
+                    pem,
+                    pass.into_bytes(),
+                ))),
+                None => Ok(AuthConfig::key_pair(KeyPairConfig::from_pem(pem))),
             }
         }
         _ => {
             let password = cfg_secret(cfg, "password")?.unwrap_or_default();
-            Ok(SnowflakeAuthMethod::Password(password))
+            Ok(AuthConfig::password(password))
         }
     }
 }
 
-/// Build a [`SnowflakeClient`] for a given database. The database is part of the
+/// Build a [`Client`] for a given database. The database is part of the
 /// client config, so switching databases means building a fresh client + session.
-fn build_client(cfg: &ConnectionConfig, database: &str) -> Result<SnowflakeClient> {
+fn build_client(cfg: &ConnectionConfig, database: &str) -> Result<Client> {
     let account = cfg_str(cfg, "account")?;
     let user = cfg_str(cfg, "user")?;
     let warehouse = cfg_str(cfg, "warehouse")?;
@@ -100,22 +101,22 @@ fn build_client(cfg: &ConnectionConfig, database: &str) -> Result<SnowflakeClien
     let schema = cfg_str(cfg, "schema")?;
     let auth = build_auth(cfg)?;
 
-    SnowflakeClient::new(
-        &user,
-        auth,
-        SnowflakeClientConfig {
-            account,
-            role: Some(role),
-            warehouse: Some(warehouse),
-            database: Some(database.to_string()),
-            schema: Some(schema),
-            timeout: Some(Duration::from_secs(30)),
-        },
+    let session = SessionConfig::new()
+        .with_role(role)
+        .with_warehouse(warehouse)
+        .with_database(database)
+        .with_schema(schema);
+    let query = QueryConfig::new().with_query_response_timeout(Duration::from_secs(30));
+
+    Client::new(
+        ClientConfig::new(user, account, auth)
+            .with_session(session)
+            .with_query(query),
     )
     .map_err(|e| PluginError::Connection(e.to_string()))
 }
 
-async fn open_session(client: &SnowflakeClient) -> Result<SnowflakeSession> {
+async fn open_session(client: &Client) -> Result<Session> {
     client
         .create_session()
         .await
@@ -608,79 +609,53 @@ fn parse_column_type_metadata(dtype: &str) -> (&str, Option<i32>, Option<i32>, O
 }
 
 /// Run a query and return its column metadata plus rows as JSON cell matrices.
-/// Column metadata is read from the first returned row (the connector carries
-/// metadata per row); an empty result therefore yields no columns.
 async fn run_query(
-    session: &SnowflakeSession,
+    session: &Session,
     sql: &str,
 ) -> Result<(Vec<ColumnMeta>, Vec<Vec<serde_json::Value>>)> {
-    let rows = session
-        .query(sql)
+    let table = session
+        .query(sql.to_string())
+        .await
+        .map_err(|e| PluginError::Backend(e.to_string()))?
+        .collect_table()
         .await
         .map_err(|e| PluginError::Backend(e.to_string()))?;
 
-    let columns = rows.first().map(columns_of).unwrap_or_default();
-    let data = rows.iter().map(|r| row_to_json(r, &columns)).collect();
+    let columns: Vec<ColumnMeta> = table
+        .schema()
+        .columns()
+        .iter()
+        .map(|c| ColumnMeta {
+            name: c.name().to_string(),
+            data_type: c.ty().as_str().to_string(),
+        })
+        .collect();
+
+    let data = table
+        .dynamic_rows()
+        .map_err(|e| PluginError::Backend(e.to_string()))?
+        .map(|row| {
+            let row = row.map_err(|e| PluginError::Backend(e.to_string()))?;
+            Ok(row
+                .into_parts()
+                .1
+                .into_vec()
+                .into_iter()
+                .map(CellValue::into_json_value)
+                .collect())
+        })
+        .collect::<Result<Vec<_>>>()?;
+
     Ok((columns, data))
 }
 
 /// Run a statement for side effects, discarding any returned rows.
-async fn run_statement(session: &SnowflakeSession, sql: &str) -> Result<()> {
+async fn run_statement(session: &Session, sql: &str) -> Result<()> {
     session
-        .query(sql)
+        .query(sql.to_string())
         .await
         .map(|_| ())
         .map_err(|e| PluginError::Backend(e.to_string()))
-}
-
-fn columns_of(row: &SnowflakeRow) -> Vec<ColumnMeta> {
-    row.column_types()
-        .into_iter()
-        .map(|c| ColumnMeta {
-            name: c.name().to_string(),
-            data_type: c.column_type().snowflake_type().to_string(),
-        })
-        .collect()
-}
-
-fn row_to_json(row: &SnowflakeRow, columns: &[ColumnMeta]) -> Vec<serde_json::Value> {
-    (0..columns.len())
-        .map(|i| cell_to_json(row, i, columns.get(i).map(|c| c.data_type.as_str())))
-        .collect()
-}
-
-/// Read one cell as a string (the connector returns every value as text) and
-/// promote it to a typed JSON value based on the column's Snowflake type.
-fn cell_to_json(row: &SnowflakeRow, i: usize, ty: Option<&str>) -> serde_json::Value {
-    use serde_json::Value;
-
-    let raw: Option<String> = match row.at(i) {
-        Ok(v) => v,
-        Err(_) => return Value::Null,
-    };
-    let Some(s) = raw else {
-        return Value::Null;
-    };
-
-    match ty.unwrap_or("").to_ascii_lowercase().as_str() {
-        "fixed" => s
-            .parse::<i64>()
-            .map(|n| Value::Number(n.into()))
-            .unwrap_or(Value::String(s)),
-        "real" => s
-            .parse::<f64>()
-            .ok()
-            .and_then(serde_json::Number::from_f64)
-            .map(Value::Number)
-            .unwrap_or(Value::String(s)),
-        "boolean" => match s.as_str() {
-            "true" | "TRUE" | "1" => Value::Bool(true),
-            "false" | "FALSE" | "0" => Value::Bool(false),
-            _ => Value::String(s),
-        },
-        "variant" | "object" | "array" => serde_json::from_str(&s).unwrap_or(Value::String(s)),
-        _ => Value::String(s),
-    }
 }
 
 fn json_to_string(v: &serde_json::Value) -> String {

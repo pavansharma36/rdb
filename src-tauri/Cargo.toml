@@ -22,7 +22,7 @@ tauri-plugin-dialog = "2"
 # needs. `tauri-plugin-fs` reads local files for multipart uploads.
 tauri-plugin-http = { version = "2", features = ["unsafe-headers"] }
 tauri-plugin-fs = "2"
-portable-pty = "0.8"
+portable-pty = "0.9"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
