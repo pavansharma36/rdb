@@ -232,6 +232,7 @@ export function RdbmsWorkspace({
         autoOpenSingle(list, false);
       })
       .catch((e) => setError(errString(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionId]);
 
   // Populate the database picker. A rejection means the backend doesn't list
@@ -241,6 +242,7 @@ export function RdbmsWorkspace({
       .rdbmsListDatabases(connectionId)
       .then(setDatabases)
       .catch(() => setDatabases([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionId]);
 
   // Load this profile's saved SQL files.

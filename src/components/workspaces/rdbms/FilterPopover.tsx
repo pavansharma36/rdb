@@ -10,6 +10,7 @@ export interface FilterRow {
 }
 
 /** Browse-filter operators with their labels and whether they take a value. */
+// eslint-disable-next-line react-refresh/only-export-components
 export const BROWSE_OPS: { op: BrowseOp; label: string; needsValue: boolean }[] = [
   { op: "eq", label: "= equals", needsValue: true },
   { op: "ne", label: "≠ not equal", needsValue: true },
@@ -23,6 +24,7 @@ export const BROWSE_OPS: { op: BrowseOp; label: string; needsValue: boolean }[] 
   { op: "is_not_null", label: "IS NOT NULL", needsValue: false },
 ];
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function opNeedsValue(op: BrowseOp): boolean {
   return BROWSE_OPS.find((o) => o.op === op)?.needsValue ?? true;
 }

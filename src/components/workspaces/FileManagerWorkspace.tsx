@@ -195,7 +195,7 @@ export function FileManagerWorkspace({
         loader.hide();
       }
     },
-    [connectionId, loader],
+    [connectionId, loader, setCurrentPath, setEntries, setTruncated],
   );
 
   // Navigate to a path and push it onto the history stack.
@@ -210,7 +210,7 @@ export function FileManagerWorkspace({
       });
       fetchDir(path);
     },
-    [fetchDir, histIndex],
+    [fetchDir, histIndex, setHistIndex, setHistory],
   );
 
   function goBack() {

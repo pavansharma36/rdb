@@ -1517,6 +1517,7 @@ export function CurlUiWorkspace({
       setParamRows(splitUrl(activeRequest.url).params);
       setFormRows(formToRows(activeRequest.body_kind === "form" ? activeRequest.body : ""));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRequest?.id]);
 
   function toggleExpanded(key: string) {
