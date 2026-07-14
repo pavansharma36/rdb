@@ -128,7 +128,13 @@ async function buildFormData(parts: HttpRequest["parts"]): Promise<FormData> {
   for (const p of parts ?? []) {
     if (!p.name.trim()) continue;
     if (p.kind === "file") {
-      const bytes = await readFile(p.value);
+      let bytes;
+      try {
+        bytes = await readFile(p.value);
+      } catch (e) {
+        const raw = e instanceof Error ? e.message : String(e);
+        throw new Error(`Could not read file "${p.value}" for form field "${p.name}": ${raw}`);
+      }
       const filename = p.filename && p.filename.trim() ? p.filename : basename(p.value);
       const type = p.content_type && p.content_type.trim() ? p.content_type : guessMime(filename);
       fd.append(p.name, new File([bytes], filename, { type }), filename);
@@ -141,6 +147,60 @@ async function buildFormData(parts: HttpRequest["parts"]): Promise<FormData> {
     }
   }
   return fd;
+}
+
+/** Turn a raw transport error into a short, actionable one.
+ *
+ *  `@tauri-apps/plugin-http` forwards `reqwest::Error` to the frontend via its
+ *  `Display` impl, which only prints a fixed top-level phrase per failure
+ *  stage — e.g. `"error sending request for url (...)"`. The actual cause
+ *  (DNS failure, connection refused, TLS handshake error, ...) lives on
+ *  `.source()` and is never serialized across the IPC boundary, so we can only
+ *  tell *which stage* failed, not *why*. Falls back to the raw message for
+ *  anything that doesn't match one of those fixed phrases. */
+function describeFetchError(url: string, err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  let host = url;
+  try {
+    host = new URL(url).host || url;
+  } catch {
+    // Leave `host` as the raw url — it's already the best we have.
+  }
+
+  if (raw.startsWith("error sending request")) {
+    return `Could not connect to ${host}. Check that the server is running and reachable, that the host/port are correct, and — for https — that it's actually serving TLS.`;
+  }
+  if (raw.startsWith("builder error")) {
+    return `"${url}" isn't a request the HTTP client could build. Check the URL and headers.`;
+  }
+  if (raw.startsWith("error following redirect")) {
+    return `Too many redirects (or a redirect loop) while requesting ${host}.`;
+  }
+  if (raw.startsWith("request or response body error")) {
+    return `A problem occurred sending the request body or reading the response body from ${host}.`;
+  }
+  if (raw.startsWith("error decoding response body")) {
+    return `Could not decode the response body from ${host}.`;
+  }
+  if (raw.startsWith("error upgrading connection")) {
+    return `Could not upgrade the connection to ${host}.`;
+  }
+  if (raw.startsWith("url not allowed on the configured scope")) {
+    return `This URL isn't permitted by the app's network scope: ${url}`;
+  }
+  if (raw.startsWith("dangerous settings used but are not enabled")) {
+    return `Could not disable TLS verification for this request. Try re-saving the connection settings.`;
+  }
+  if (
+    raw.includes("relative URL without a base") ||
+    raw.includes("invalid port number") ||
+    raw.includes("empty host") ||
+    raw.includes("invalid domain character") ||
+    raw.includes("invalid international domain name")
+  ) {
+    return `"${url}" is not a valid URL.`;
+  }
+  return `Request to ${host} failed: ${raw}`;
 }
 
 /** Send an already-assembled request (from `buildSendable`) and return the same
@@ -187,9 +247,9 @@ export async function sendHttpRequest(
     });
   } catch (e) {
     if (e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError")) {
-      throw new Error(`request timed out after ${settings.timeoutSecs}s`);
+      throw new Error(`Request timed out after ${settings.timeoutSecs}s.`);
     }
-    throw new Error(`request failed: ${e instanceof Error ? e.message : String(e)}`);
+    throw new Error(describeFetchError(url, e));
   }
   const elapsed_ms = Math.round(performance.now() - started);
 

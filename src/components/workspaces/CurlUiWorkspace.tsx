@@ -989,6 +989,29 @@ export function CurlUiWorkspace({
     {},
   );
   const [error, setError] = useState<string | null>(null);
+  // Send/copy/script errors per open tab, keyed like `responses` — so an
+  // error from one tab's request doesn't linger on screen after switching to
+  // another tab. Distinct from `error`, which is for workspace-level failures
+  // (collection/environment load, session persistence) that aren't tied to
+  // any single request tab.
+  const [requestErrors, setRequestErrors] = useConnectionState<Record<string, string>>(
+    scope,
+    "requestErrors",
+    {},
+  );
+
+  /** Set (`msg`) or clear (`null`) the given tab's request-scoped error. */
+  function setRequestError(key: string, msg: string | null) {
+    setRequestErrors((r) => {
+      if (msg == null) {
+        if (!(key in r)) return r;
+        const next = { ...r };
+        delete next[key];
+        return next;
+      }
+      return { ...r, [key]: msg };
+    });
+  }
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
   const [importTarget, setImportTarget] = useState<TreeTarget | null>(null);
@@ -1178,6 +1201,7 @@ export function CurlUiWorkspace({
 
   const response = selectedId ? (responses[selectedId] ?? null) : null;
   const testRun = selectedId ? (testResults[selectedId] ?? null) : null;
+  const activeRequestError = selectedId ? (requestErrors[selectedId] ?? null) : null;
 
   // Resolve open tab keys to live requests/collections, dropping any whose
   // target was deleted. Keeps the rendered strip in sync with the tree.
@@ -1586,6 +1610,7 @@ export function CurlUiWorkspace({
       delete next[key];
       return next;
     });
+    setRequestError(key, null);
     // Drop any unsaved draft for the closed tab (covers discard-on-close and
     // closing a scratch request, whose only home is its draft).
     const draft = drafts[key];
@@ -1891,6 +1916,13 @@ export function CurlUiWorkspace({
       delete next[oldKey];
       return next;
     });
+    setRequestErrors((r) => {
+      if (!(oldKey in r)) return r;
+      const next = { ...r };
+      next[newKey] = next[oldKey];
+      delete next[oldKey];
+      return next;
+    });
     setSelectedId(newKey);
     // The committed request now backs the tab: drop the draft (file + entry).
     deleteDraft(savedId, reqId).catch((e) => setError(errString(e)));
@@ -1959,7 +1991,7 @@ export function CurlUiWorkspace({
     if (!activeRequest || !selectedId) return;
     const key = selectedId;
     const collection = activeRequestCollection;
-    setError(null);
+    setRequestError(key, null);
     setResTab("body");
     loader.show({ scope: "workspace", message: "Sending…" });
 
@@ -2017,7 +2049,7 @@ export function CurlUiWorkspace({
 
       // A pre-request script error aborts the send.
       if (scriptError) {
-        setError(`Pre-request script: ${scriptError}`);
+        setRequestError(key, `Pre-request script: ${scriptError}`);
         storeRun();
         if (tests.length) setResTab("tests");
         return;
@@ -2056,10 +2088,10 @@ export function CurlUiWorkspace({
       persistScriptVars(environment, collection, collectionVariables);
 
       storeRun();
-      if (scriptError) setError(`Test script: ${scriptError}`);
+      if (scriptError) setRequestError(key, `Test script: ${scriptError}`);
       if (tests.length) setResTab("tests");
     } catch (e) {
-      setError(errString(e));
+      setRequestError(key, errString(e));
     } finally {
       loader.hide();
     }
@@ -2079,7 +2111,7 @@ export function CurlUiWorkspace({
   }
 
   async function onCopyCurl() {
-    if (!activeRequest) return;
+    if (!activeRequest || !selectedId) return;
     try {
       await navigator.clipboard.writeText(
         buildCurl(
@@ -2089,7 +2121,7 @@ export function CurlUiWorkspace({
       setCopiedCurl(true);
       setTimeout(() => setCopiedCurl(false), 1500);
     } catch (e) {
-      setError(errString(e));
+      setRequestError(selectedId, errString(e));
     }
   }
 
@@ -2453,6 +2485,7 @@ export function CurlUiWorkspace({
         };
         setResponses(remap);
         setTestResults(remap);
+        setRequestErrors(remap);
         setDrafts((d) => {
           if (!(oldKey in d)) return d;
           const nextMap = { ...d };
@@ -2886,7 +2919,9 @@ export function CurlUiWorkspace({
         />
 
         <main className="curlui-main">
-          {error && <div className="msg error">{error}</div>}
+          {(error || activeRequestError) && (
+            <div className="msg error">{error ?? activeRequestError}</div>
+          )}
 
           <div className="curlui-req-tabs" role="tablist">
             {tabs.map((t) => (

@@ -1303,12 +1303,28 @@ export function interpolate(template: string, env: Record<string, string>): stri
   return out + rest;
 }
 
+/** True for hosts that are almost always plain HTTP local/dev servers
+ *  (localhost, loopback, and private-network addresses). */
+function isLocalHost(host: string): boolean {
+  const h = host.toLowerCase();
+  if (h === "localhost" || h === "::1" || h === "0.0.0.0") return true;
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
+  if (!m) return false;
+  const a = Number(m[1]);
+  const b = Number(m[2]);
+  return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
 /** Default a schemeless URL to `https://` so a bare host like `www.google.com`
- *  works like it does in a browser. A leading `scheme://` is left untouched. */
+ *  works like it does in a browser — except localhost/private-network hosts,
+ *  which default to `http://` since local dev servers rarely speak TLS.
+ *  A leading `scheme://` is left untouched. */
 export function normalizeUrl(url: string): string {
   const trimmed = url.trim();
   if (!trimmed || /^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
+  const hostPart = trimmed.split(/[/?#]/)[0].split(":")[0];
+  const scheme = isLocalHost(hostPart) ? "http" : "https";
+  return `${scheme}://${trimmed}`;
 }
 
 /** Build the concrete request to send: merge the owning collection's env
