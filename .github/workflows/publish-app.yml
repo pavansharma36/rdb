@@ -1,10 +1,8 @@
 name: Publish desktop app
 
 on:
-  push:
-    branches: [master]
-    tags: ['v*']
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: publish-app-${{ github.ref }}
@@ -15,7 +13,10 @@ permissions:
 
 jobs:
   # Formatting + linting gate — the app is only built/published if this passes.
+  # Only actually runs when this workflow is dispatched standalone; when
+  # called from publish.yml the orchestrator has already run checks once.
   checks:
+    if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/checks.yml
 
   build:
@@ -24,7 +25,7 @@ jobs:
     needs: checks
     if: |
       !cancelled() &&
-      needs.checks.result == 'success' &&
+      (needs.checks.result == 'success' || needs.checks.result == 'skipped') &&
       (github.ref_type == 'tag' || !contains(github.event.head_commit.message, '[skip ci]'))
     strategy:
       fail-fast: false
