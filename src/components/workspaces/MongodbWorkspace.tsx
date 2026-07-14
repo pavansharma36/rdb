@@ -155,6 +155,7 @@ export function MongodbWorkspace({
         }
       })
       .catch((e) => setError(errString(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionId]);
 
   // Load this profile's saved script files.

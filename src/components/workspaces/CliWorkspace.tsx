@@ -35,6 +35,14 @@ interface Props {
 /** Scripts are stored as `.sh` workspace files (vs `.sql` for RDBMS). */
 const SCRIPT_EXT = "sh";
 
+/** Sent before every piped script run. Bash-family shells expand `!` history
+ * references (e.g. `!!`) on raw interactive input *before* quote parsing, so a
+ * script containing `!` (like `echo "Hi!!!"`) gets silently rewritten from
+ * history — and the rewritten line is itself appended to history, compounding
+ * on every subsequent run. Disabling history expansion up front keeps `!`
+ * literal; redirected because not every remote shell recognizes `set +H`. */
+const DISABLE_HISTORY_EXPANSION = "set +H > /dev/null 2>&1\n";
+
 /** One terminal tab: a frontend-minted PTY id + its display title. */
 interface TerminalTab {
   id: string;
@@ -210,6 +218,15 @@ export function CliWorkspace({
     if (write) writers.current.set(terminalId, write);
     else writers.current.delete(terminalId);
   };
+  // Terminals that have already had history expansion disabled — `set +H`
+  // persists for the shell's lifetime, so it only needs sending once, not
+  // before every Run (which would otherwise echo as a visible extra line).
+  const historyExpansionDisabled = useRef<Set<string>>(new Set());
+  function withHistoryGuard(terminalId: string, body: string): string {
+    if (historyExpansionDisabled.current.has(terminalId)) return body;
+    historyExpansionDisabled.current.add(terminalId);
+    return DISABLE_HISTORY_EXPANSION + body;
+  }
 
   // Terminal tabs + the active one. Stored in the session state store so they
   // survive the workspace unmount/remount that happens on every connection
@@ -326,10 +343,11 @@ export function CliWorkspace({
   function runScript(text: string) {
     const trimmed = text.trim();
     if (!trimmed) return;
-    const write = activeTab ? writers.current.get(activeTab) : undefined;
+    if (!activeTab) return;
+    const write = writers.current.get(activeTab);
     if (!write) return;
     const body = text.endsWith("\n") ? text : text + "\n";
-    write(body);
+    write(withHistoryGuard(activeTab, body));
   }
 
   /** Pipe a script's text into *every* open terminal at once. */
@@ -338,7 +356,7 @@ export function CliWorkspace({
     if (!trimmed) return;
     const body = text.endsWith("\n") ? text : text + "\n";
     for (const t of tabs) {
-      writers.current.get(t.id)?.(body);
+      writers.current.get(t.id)?.(withHistoryGuard(t.id, body));
     }
   }
 

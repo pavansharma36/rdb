@@ -101,6 +101,7 @@ export function WorkspaceLoaderSlot() {
 }
 
 /** Access the loader controls. Must be used within a {@link LoaderProvider}. */
+// eslint-disable-next-line react-refresh/only-export-components
 export function useLoader(): LoaderApi {
   const ctx = useContext(LoaderContext);
   if (!ctx) throw new Error("useLoader must be used within a LoaderProvider");
