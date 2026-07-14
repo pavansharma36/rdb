@@ -9,8 +9,7 @@ use rdb_rdbms_common::{
 };
 use regex::Regex;
 use snowflake_connector_rs::{
-    AuthConfig, CellValue, Client, ClientConfig, KeyPairConfig, QueryConfig, Session,
-    SessionConfig,
+    AuthConfig, CellValue, Client, ClientConfig, KeyPairConfig, QueryConfig, Session, SessionConfig,
 };
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
