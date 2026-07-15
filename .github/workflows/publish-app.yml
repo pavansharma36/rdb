@@ -154,7 +154,12 @@ jobs:
   finalize:
     name: finalize release
     needs: build
-    if: needs.build.result == 'success'
+    # `checks` (skipped when called via workflow_call) is a transitive ancestor of
+    # `build` via its own `needs`. A bare `if: needs.build.result == 'success'` gets
+    # an implicit `&& success()` ANDed in, and job-level success() walks the whole
+    # transitive dependency chain — so that skipped `checks` makes it false even
+    # though `build` itself succeeded. `!cancelled()` opts out of the implicit check.
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
