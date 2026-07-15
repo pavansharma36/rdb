@@ -155,6 +155,11 @@ jobs:
   release:
     name: publish releases
     needs: build
+    # See publish-app.yml's `finalize` job: without an explicit override, the
+    # implicit success() check walks the transitive dependency chain and trips on
+    # the (intentionally) skipped `checks` job, silently skipping this job even
+    # when `build` succeeded.
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
