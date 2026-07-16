@@ -1452,6 +1452,12 @@ export function buildSendable(
 
   const body = req.body_kind === "none" ? "" : interpolate(req.body ?? "", effEnv);
 
+  if (req.body_kind === "json" && !haveKey("Content-Type")) {
+    headers["Content-Type"] = "application/json";
+  } else if (req.body_kind === "text" && !haveKey("Content-Type")) {
+    headers["Content-Type"] = "text/plain";
+  }
+
   return {
     method: req.method,
     url,
