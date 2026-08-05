@@ -124,9 +124,9 @@ header.nav {
 }
 .badge b { color: var(--accent-2); font-weight: 600; }
 
-/*.app-post {*/
-/*  margin-top: 26px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; height: 399px;*/
-/*}*/
+.app-post {
+  margin-top: 26px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; height: 399px;
+}
 
 /* Section -------------------------------------------------------------- */
 section { padding: 56px 0; }
