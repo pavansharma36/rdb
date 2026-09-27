@@ -50,7 +50,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI0MTk3N0JCQUJBMUI4QkUKUldTK3VLR3J1M2NadEFjYVRVcjVYdjNXMjREc3cxdlJSSG5KZThlYkRiRU5naVFuMTV2aWtQYk4Kpavan",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI0MTk3N0JCQUJBMUI4QkUKUldTK3VLR3J1M2NadEFjYVRVcjVYdjNXMjREc3cxdlJSSG5KZThlYkRiRU5naVFuMTV2aWtQYk4K",
       "endpoints": [
         "https://github.com/pavansharma36/rdb/releases/latest/download/latest.json"
       ]
