@@ -3,7 +3,11 @@ import { api, errString } from "../../api/api.ts";
 import type { ConnectionId } from "../../api/api.ts";
 import type { MongoCollection } from "../../api/document.ts";
 import type { WorkspaceFile } from "../../api/store.ts";
-import { listWorkspaceFiles, saveWorkspaceFile, deleteWorkspaceFile } from "../../api/store.ts";
+import {
+  listWorkspaceFiles,
+  saveWorkspaceFile,
+  deleteWorkspaceFile,
+} from "../../api/store.ts";
 import { useResizable, TREE_MIN, TREE_MAX } from "../../useResizable";
 import { ConnScope, useConnectionState } from "../../connectionState";
 import { CodeEditorV2, type CodeEditorV2Handle } from "../CodeEditorV2.tsx";
@@ -74,50 +78,76 @@ export function MongodbWorkspace({
   // unmount a connection switch causes, keyed by the stable saved-profile id.
   const scope = ConnScope(savedId, "document");
   // Databases on the server (drive the picker) and the one currently selected.
-  const [databases, setDatabases] = useConnectionState<string[]>(scope, "databases", []);
-  const [currentDatabase, setCurrentDatabase] = useConnectionState<string | null>(
+  const [databases, setDatabases] = useConnectionState<string[]>(
     scope,
-    "currentDatabase",
+    "databases",
+    [],
+  );
+  const [currentDatabase, setCurrentDatabase] = useConnectionState<
+    string | null
+  >(scope, "currentDatabase", null);
+  // Collections cache keyed by database; only the current database's list shows.
+  const [collections, setCollections] = useConnectionState<
+    Record<string, MongoCollection[]>
+  >(scope, "collections", {});
+  // The expanded database node in the tree (its name), or null when collapsed.
+  const [openDb, setOpenDb] = useConnectionState<string | null>(
+    scope,
+    "openDb",
     null,
   );
-  // Collections cache keyed by database; only the current database's list shows.
-  const [collections, setCollections] = useConnectionState<Record<string, MongoCollection[]>>(
-    scope,
-    "collections",
-    {},
-  );
-  // The expanded database node in the tree (its name), or null when collapsed.
-  const [openDb, setOpenDb] = useConnectionState<string | null>(scope, "openDb", null);
   // The selected collection (within the current database), or null.
-  const [active, setActive] = useConnectionState<string | null>(scope, "active", null);
+  const [active, setActive] = useConnectionState<string | null>(
+    scope,
+    "active",
+    null,
+  );
   // Which tab is showing (per-collection views, or the database-scoped Script).
   const [tab, setTab] = useConnectionState<Tab>(scope, "tab", "documents");
   const [filter, setFilter] = useConnectionState(scope, "filter", "{}");
   const [limit, setLimit] = useConnectionState(scope, "limit", 50);
-  const [result, setResult] = useConnectionState<DocsResult | null>(scope, "result", null);
-  // Aggregation builder state (scoped to the active collection; reset on pick).
-  const [pipeline, setPipeline] = useConnectionState<Stage[]>(scope, "pipeline", DEFAULT_PIPELINE);
-  const [aggResult, setAggResult] = useConnectionState<DocsResult | null>(scope, "aggResult", null);
-  // Indexes for the active collection; null means "not loaded yet" (lazy-loaded
-  // when the Indexes tab is opened).
-  const [indexes, setIndexes] = useConnectionState<unknown[] | null>(scope, "indexes", null);
-
-  // --- Script tab state (database-scoped, mongosh-like multi-statement) ----
-  const [scriptText, setScriptText] = useConnectionState(scope, "scriptText", "");
-  const [scriptResults, setScriptResults] = useConnectionState<StatementResult[] | null>(
+  const [result, setResult] = useConnectionState<DocsResult | null>(
     scope,
-    "scriptResults",
+    "result",
     null,
   );
+  // Aggregation builder state (scoped to the active collection; reset on pick).
+  const [pipeline, setPipeline] = useConnectionState<Stage[]>(
+    scope,
+    "pipeline",
+    DEFAULT_PIPELINE,
+  );
+  const [aggResult, setAggResult] = useConnectionState<DocsResult | null>(
+    scope,
+    "aggResult",
+    null,
+  );
+  // Indexes for the active collection; null means "not loaded yet" (lazy-loaded
+  // when the Indexes tab is opened).
+  const [indexes, setIndexes] = useConnectionState<unknown[] | null>(
+    scope,
+    "indexes",
+    null,
+  );
+
+  // --- Script tab state (database-scoped, mongosh-like multi-statement) ----
+  const [scriptText, setScriptText] = useConnectionState(
+    scope,
+    "scriptText",
+    "",
+  );
+  const [scriptResults, setScriptResults] = useConnectionState<
+    StatementResult[] | null
+  >(scope, "scriptResults", null);
   // Saved `.mongo` script files for this connection profile (the "Scripts" section).
   const [scriptFiles, setScriptFiles] = useState<WorkspaceFile[]>([]);
   const [newScriptName, setNewScriptName] = useState<string | null>(null);
-  const [scriptActiveFile, setScriptActiveFile] = useConnectionState<string | null>(
-    scope,
-    "scriptActiveFile",
+  const [scriptActiveFile, setScriptActiveFile] = useConnectionState<
+    string | null
+  >(scope, "scriptActiveFile", null);
+  const [confirmDeleteScript, setConfirmDeleteScript] = useState<string | null>(
     null,
   );
-  const [confirmDeleteScript, setConfirmDeleteScript] = useState<string | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -181,7 +211,9 @@ export function MongodbWorkspace({
       saveWorkspaceFile(savedId, scriptActiveFile, scriptText, SCRIPT_EXT)
         .then(() =>
           setScriptFiles((prev) =>
-            prev.map((f) => (f.name === scriptActiveFile ? { ...f, content: scriptText } : f)),
+            prev.map((f) =>
+              f.name === scriptActiveFile ? { ...f, content: scriptText } : f,
+            ),
           ),
         )
         .catch((e) => setError(errString(e)));
@@ -312,7 +344,11 @@ export function MongodbWorkspace({
     setBusy(true);
     setError(null);
     try {
-      const rc = await api.docRunCommand(connectionId, db, buildListIndexesCommand(target));
+      const rc = await api.docRunCommand(
+        connectionId,
+        db,
+        buildListIndexesCommand(target),
+      );
       setIndexes(cursorBatch(rc));
     } catch (e) {
       setError(errString(e));
@@ -356,7 +392,9 @@ export function MongodbWorkspace({
     const ed = scriptEditorRef.current;
     if (!ed) return;
     const sel = ed.getSelection();
-    const stmt = sel.trim() ? sel : statementAtCursor(ed.getValue(), ed.getCursorOffset());
+    const stmt = sel.trim()
+      ? sel
+      : statementAtCursor(ed.getValue(), ed.getCursorOffset());
     if (stmt.trim()) void runScript(stmt);
   }
 
@@ -364,7 +402,9 @@ export function MongodbWorkspace({
   async function copyQuery() {
     if (!active) return;
     const script =
-      tab === "aggregation" ? aggregateScript(active, pipeline) : findScript(active, filter, limit);
+      tab === "aggregation"
+        ? aggregateScript(active, pipeline)
+        : findScript(active, filter, limit);
     try {
       await navigator.clipboard.writeText(script);
       setCopied(true);
@@ -455,13 +495,17 @@ export function MongodbWorkspace({
   /** Change a stage's operator, dropping the new operator's default snippet
    * into the editor as the stage body. */
   function changeStageOp(i: number, op: string) {
-    setPipeline((p) => p.map((s, idx) => (idx === i ? { ...s, op, body: stageDefault(op) } : s)));
+    setPipeline((p) =>
+      p.map((s, idx) => (idx === i ? { ...s, op, body: stageDefault(op) } : s)),
+    );
   }
   function addStage() {
     setPipeline((p) => [...p, newStage()]);
   }
   function removeStage(i: number) {
-    setPipeline((p) => (p.length > 1 ? p.filter((_, idx) => idx !== i) : DEFAULT_PIPELINE));
+    setPipeline((p) =>
+      p.length > 1 ? p.filter((_, idx) => idx !== i) : DEFAULT_PIPELINE,
+    );
   }
 
   /** Save the current script under `name` (from the inline name input). */
@@ -507,9 +551,12 @@ export function MongodbWorkspace({
 
   const scriptDirty =
     !!scriptActiveFile &&
-    scriptFiles.find((f) => f.name === scriptActiveFile)?.content !== scriptText;
+    scriptFiles.find((f) => f.name === scriptActiveFile)?.content !==
+      scriptText;
   const shownCollections = currentDatabase
-    ? [...(collections[currentDatabase] ?? [])].sort((a, b) => a.name.localeCompare(b.name))
+    ? [...(collections[currentDatabase] ?? [])].sort((a, b) =>
+        a.name.localeCompare(b.name),
+      )
     : [];
 
   return (
@@ -548,7 +595,9 @@ export function MongodbWorkspace({
             emptyText="No saved scripts."
           />
           <div className="tree-dbselect">
-            {databases.length > 0 && <span className="field-label">Database</span>}
+            {databases.length > 0 && (
+              <span className="field-label">Database</span>
+            )}
             <div className="tree-db-row">
               {databases.length > 0 && (
                 <select
@@ -582,17 +631,27 @@ export function MongodbWorkspace({
           groups={currentDatabase ? [currentDatabase] : []}
           items={
             currentDatabase
-              ? { [currentDatabase]: shownCollections.map((c) => ({ name: c.name })) }
+              ? {
+                  [currentDatabase]: shownCollections.map((c) => ({
+                    name: c.name,
+                  })),
+                }
               : {}
           }
           openGroup={openDb}
-          activeKey={active && currentDatabase ? currentDatabase + "." + active : null}
+          activeKey={
+            active && currentDatabase ? currentDatabase + "." + active : null
+          }
           onToggleGroup={(name) => setOpenDb((o) => (o === name ? null : name))}
           onPickItem={(_db, name) => pick(name)}
           emptyText="Select a database."
         />
       </div>
-      <div className="tree-resizer" onMouseDown={treeResize.onMouseDown} title="Drag to resize" />
+      <div
+        className="tree-resizer"
+        onMouseDown={treeResize.onMouseDown}
+        title="Drag to resize"
+      />
       <div className="editor-pane">
         {active && tab !== "script" && (
           <div className="tabs">
@@ -643,7 +702,9 @@ export function MongodbWorkspace({
                 onChange={setScriptText}
                 placeholder={"db.users.find({ active: true }).limit(5);"}
                 lineWrapping
-                keybindings={[{ key: "Mod-Enter", run: () => void runFromEditor() }]}
+                keybindings={[
+                  { key: "Mod-Enter", run: () => void runFromEditor() },
+                ]}
               />
             </div>
             <div className="editor-toolbar">
@@ -669,13 +730,15 @@ export function MongodbWorkspace({
                 <span className="status-line">Select a database first.</span>
               ) : (
                 <span className="status-line muted">
-                  ⌘/Ctrl+Enter runs the selection, or the statement at the cursor
+                  ⌘/Ctrl+Enter runs the selection, or the statement at the
+                  cursor
                 </span>
               )}
               {scriptResults && (
                 <span className="status-line">
-                  {scriptResults.length} result(s) · {scriptResults.filter((r) => !r.error).length}{" "}
-                  ok · {scriptResults.filter((r) => r.error).length} error(s)
+                  {scriptResults.length} result(s) ·{" "}
+                  {scriptResults.filter((r) => !r.error).length} ok ·{" "}
+                  {scriptResults.filter((r) => r.error).length} error(s)
                 </span>
               )}
             </div>
@@ -689,9 +752,15 @@ export function MongodbWorkspace({
                       <div className="script-result-head">
                         <span className="script-result-num">#{r.index}</span>
                         <code className="script-result-src">
-                          {r.method ? `${r.collection}.${r.method}()` : r.source}
+                          {r.method
+                            ? `${r.collection}.${r.method}()`
+                            : r.source}
                         </code>
-                        {r.result && <span className="status-line">{r.result.elapsed_ms} ms</span>}
+                        {r.result && (
+                          <span className="status-line">
+                            {r.result.elapsed_ms} ms
+                          </span>
+                        )}
                       </div>
                       {r.error ? (
                         <div className="status-line error">{r.error}</div>
@@ -708,7 +777,9 @@ export function MongodbWorkspace({
                             />
                           ))
                         ) : (
-                          <div className="status-line muted script-empty">No documents.</div>
+                          <div className="status-line muted script-empty">
+                            No documents.
+                          </div>
                         )
                       ) : r.value !== undefined ? (
                         <CodeEditorV2
@@ -727,8 +798,8 @@ export function MongodbWorkspace({
           </>
         ) : !active ? (
           <div className="empty-hint">
-            Select a collection to view its documents, build an aggregation, or inspect its indexes
-            — or open a script to run shell commands.
+            Select a collection to view its documents, build an aggregation, or
+            inspect its indexes — or open a script to run shell commands.
           </div>
         ) : (
           <>
@@ -743,7 +814,9 @@ export function MongodbWorkspace({
                     onChange={setFilter}
                     placeholder="{ }"
                     lineWrapping
-                    keybindings={[{ key: "Mod-Enter", run: () => void runFind() }]}
+                    keybindings={[
+                      { key: "Mod-Enter", run: () => void runFind() },
+                    ]}
                   />
                 </div>
                 <div className="editor-toolbar">
@@ -757,7 +830,11 @@ export function MongodbWorkspace({
                       onChange={(e) => setLimit(Number(e.target.value) || 1)}
                     />
                   </label>
-                  <button className="primary" disabled={busy} onClick={() => runFind()}>
+                  <button
+                    className="primary"
+                    disabled={busy}
+                    onClick={() => runFind()}
+                  >
                     Find
                   </button>
                   <button
@@ -777,7 +854,9 @@ export function MongodbWorkspace({
                 {result && (
                   <div className="result-scroll">
                     {result.documents.length === 0 && (
-                      <div className="status-line muted script-empty">No documents.</div>
+                      <div className="status-line muted script-empty">
+                        No documents.
+                      </div>
                     )}
                     {result.documents.map((d, i) => {
                       const hasId = docId(d) !== null;
@@ -790,7 +869,12 @@ export function MongodbWorkspace({
                               value={editDocText}
                               onChange={setEditDocText}
                               lineWrapping
-                              keybindings={[{ key: "Mod-Enter", run: () => void saveEditDoc() }]}
+                              keybindings={[
+                                {
+                                  key: "Mod-Enter",
+                                  run: () => void saveEditDoc(),
+                                },
+                              ]}
                             />
                             <div className="doc-actions">
                               <button
@@ -868,10 +952,18 @@ export function MongodbWorkspace({
               <>
                 <div className="agg-stages">
                   {pipeline.map((stage, i) => (
-                    <div key={i} className={"agg-stage" + (stage.enabled ? "" : " disabled")}>
+                    <div
+                      key={i}
+                      className={
+                        "agg-stage" + (stage.enabled ? "" : " disabled")
+                      }
+                    >
                       <div className="agg-stage-head">
                         <span className="agg-stage-num">{i + 1}</span>
-                        <select value={stage.op} onChange={(e) => changeStageOp(i, e.target.value)}>
+                        <select
+                          value={stage.op}
+                          onChange={(e) => changeStageOp(i, e.target.value)}
+                        >
                           {STAGE_OPS.map((op) => (
                             <option key={op} value={op}>
                               {op}
@@ -880,8 +972,12 @@ export function MongodbWorkspace({
                         </select>
                         <button
                           className="agg-stage-btn"
-                          title={stage.enabled ? "Disable stage" : "Enable stage"}
-                          onClick={() => updateStage(i, { enabled: !stage.enabled })}
+                          title={
+                            stage.enabled ? "Disable stage" : "Enable stage"
+                          }
+                          onClick={() =>
+                            updateStage(i, { enabled: !stage.enabled })
+                          }
                         >
                           {stage.enabled ? "⊘" : "○"}
                         </button>
@@ -901,7 +997,12 @@ export function MongodbWorkspace({
                           onChange={(v) => updateStage(i, { body: v })}
                           placeholder="{ }"
                           lineWrapping
-                          keybindings={[{ key: "Mod-Enter", run: () => void runAggregate() }]}
+                          keybindings={[
+                            {
+                              key: "Mod-Enter",
+                              run: () => void runAggregate(),
+                            },
+                          ]}
                         />
                       </div>
                     </div>
@@ -921,7 +1022,11 @@ export function MongodbWorkspace({
                       onChange={(e) => setLimit(Number(e.target.value) || 1)}
                     />
                   </label>
-                  <button className="primary" disabled={busy} onClick={() => runAggregate()}>
+                  <button
+                    className="primary"
+                    disabled={busy}
+                    onClick={() => runAggregate()}
+                  >
                     Run pipeline
                   </button>
                   <button
@@ -933,7 +1038,8 @@ export function MongodbWorkspace({
                   </button>
                   {aggResult && (
                     <span className="status-line">
-                      {aggResult.documents.length} doc(s) · {aggResult.elapsed_ms} ms
+                      {aggResult.documents.length} doc(s) ·{" "}
+                      {aggResult.elapsed_ms} ms
                     </span>
                   )}
                 </div>
@@ -958,10 +1064,18 @@ export function MongodbWorkspace({
             {tab === "indexes" && (
               <>
                 <div className="editor-toolbar">
-                  <button className="ghost" disabled={busy} onClick={() => loadIndexes()}>
+                  <button
+                    className="ghost"
+                    disabled={busy}
+                    onClick={() => loadIndexes()}
+                  >
                     ↻ Refresh
                   </button>
-                  {indexes && <span className="status-line">{indexes.length} index(es)</span>}
+                  {indexes && (
+                    <span className="status-line">
+                      {indexes.length} index(es)
+                    </span>
+                  )}
                 </div>
                 {error && <div className="status-line error">{error}</div>}
                 {indexes && (
@@ -1020,7 +1134,8 @@ export function MongodbWorkspace({
           title="Delete document"
           message={
             <>
-              Delete this document from <strong>{active}</strong>? This can't be undone.
+              Delete this document from <strong>{active}</strong>? This can't be
+              undone.
             </>
           }
           onCancel={() => setConfirmDeleteDoc(null)}

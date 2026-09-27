@@ -27,7 +27,10 @@ export function OverviewTab({ overview: o }: { overview: MqOverview | null }) {
       <h3>Message rates</h3>
       <div className="mq-stats">
         <Stat label="Publish" value={fmtRate(m.publish_details?.rate)} />
-        <Stat label="Deliver / get" value={fmtRate(m.deliver_get_details?.rate)} />
+        <Stat
+          label="Deliver / get"
+          value={fmtRate(m.deliver_get_details?.rate)}
+        />
         <Stat label="Ack" value={fmtRate(m.ack_details?.rate)} />
       </div>
 

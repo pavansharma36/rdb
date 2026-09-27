@@ -59,7 +59,11 @@ export function KvEditor({
     });
   }
 
-  function patch(id: string, field: "key" | "value" | "enabled", value: unknown) {
+  function patch(
+    id: string,
+    field: "key" | "value" | "enabled",
+    value: unknown,
+  ) {
     if (disabled) return;
     let next = rows.map((r) => (r.id === id ? { ...r, [field]: value } : r));
     const last = next[next.length - 1];
@@ -99,7 +103,9 @@ export function KvEditor({
               type="checkbox"
               className="curlui-kv-check"
               checked={r.enabled}
-              disabled={disabled || (isLast && !r.key.trim() && !r.value.trim())}
+              disabled={
+                disabled || (isLast && !r.key.trim() && !r.value.trim())
+              }
               onChange={(e) => patch(r.id, "enabled", e.target.checked)}
             />
             {env && !disabled ? (

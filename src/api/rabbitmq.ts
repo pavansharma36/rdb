@@ -150,9 +150,17 @@ export const rabbitmq_api = {
     }),
 
   mqPurgeQueue: (connectionId: ConnectionId, vhost: string, queue: string) =>
-    pluginCall<MqPurgeResult>(connectionId, "rabbitmq.purge_queue", { vhost, queue }),
+    pluginCall<MqPurgeResult>(connectionId, "rabbitmq.purge_queue", {
+      vhost,
+      queue,
+    }),
 
-  mqDeclareQueue: (connectionId: ConnectionId, vhost: string, queue: string, durable: boolean) =>
+  mqDeclareQueue: (
+    connectionId: ConnectionId,
+    vhost: string,
+    queue: string,
+    durable: boolean,
+  ) =>
     pluginCall<MqQueue>(connectionId, "rabbitmq.declare_queue", {
       vhost,
       queue,

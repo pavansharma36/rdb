@@ -20,7 +20,8 @@
   --ok: #a6e3a1;
   --err: #f38ba8;
   --warn: #f9e2af;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
 }
 

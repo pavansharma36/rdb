@@ -29,7 +29,10 @@ export function MultipartEditor({
 }) {
   // The blank trailing row is presentation-only; it isn't part of the stored
   // model until the user types into it.
-  const rows: MultipartPart[] = [...parts, { name: "", kind: "text", value: "" }];
+  const rows: MultipartPart[] = [
+    ...parts,
+    { name: "", kind: "text", value: "" },
+  ];
 
   // Position-stable React keys keep inputs mounted across renders. State-based
   // (not a ref) so the keys ride React's render path; setting during render is
@@ -51,7 +54,11 @@ export function MultipartEditor({
   // Commit the edited row set: drop fully-blank rows so the trailing blank never
   // persists, then hand the model back to the parent.
   function commit(next: MultipartPart[]) {
-    onChange(next.filter((p) => p.name.trim() || p.value.trim() || p.filename || p.content_type));
+    onChange(
+      next.filter(
+        (p) => p.name.trim() || p.value.trim() || p.filename || p.content_type,
+      ),
+    );
   }
 
   function patch(i: number, changes: Partial<MultipartPart>) {
@@ -62,7 +69,10 @@ export function MultipartEditor({
   }
 
   async function browse(i: number) {
-    const selected = await openFileDialog({ multiple: false, directory: false });
+    const selected = await openFileDialog({
+      multiple: false,
+      directory: false,
+    });
     if (typeof selected === "string") {
       patch(i, { value: selected });
     }

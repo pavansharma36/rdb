@@ -58,7 +58,8 @@ function joinPath(dir: string, name: string): string {
 function formatSize(bytes: number): string {
   if (bytes < 1024) return bytes + " B";
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  if (bytes < 1024 * 1024 * 1024)
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
   return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
 }
 
@@ -87,7 +88,13 @@ function formatPerms(mode: number): string {
 
 function FolderIcon({ size = 48 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
       <path
         d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.2c.4 0 .78.16 1.06.44L11.5 7h8A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5v-11Z"
         className="fm-icon-folder"
@@ -98,7 +105,13 @@ function FolderIcon({ size = 48 }: { size?: number }) {
 
 function FileIcon({ size = 48 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
       <path
         d="M6 3.5A1.5 1.5 0 0 1 7.5 2h6.1L19 7.4v13.1A1.5 1.5 0 0 1 17.5 22h-10A1.5 1.5 0 0 1 6 20.5v-17Z"
         className="fm-icon-file"
@@ -126,11 +139,23 @@ export function FileManagerWorkspace({
   // Session-preserved navigation/view state (see connectionState.ts): survives
   // the unmount a connection switch causes, keyed by the stable saved-profile id.
   const scope = ConnScope(savedId, "filemanager");
-  const [currentPath, setCurrentPath] = useConnectionState(scope, "currentPath", "/");
-  const [entries, setEntries] = useConnectionState<FileEntry[]>(scope, "entries", []);
+  const [currentPath, setCurrentPath] = useConnectionState(
+    scope,
+    "currentPath",
+    "/",
+  );
+  const [entries, setEntries] = useConnectionState<FileEntry[]>(
+    scope,
+    "entries",
+    [],
+  );
   // True when the current directory held more entries than the backend cap
   // (10,000) and the listing was truncated; drives a status-bar warning.
-  const [truncated, setTruncated] = useConnectionState<boolean>(scope, "truncated", false);
+  const [truncated, setTruncated] = useConnectionState<boolean>(
+    scope,
+    "truncated",
+    false,
+  );
   // Directory listing uses the app's global workspace-scoped loader (covers the
   // workspace area, leaves the sidebar interactive) instead of a local spinner.
   const loader = useLoader();
@@ -139,7 +164,9 @@ export function FileManagerWorkspace({
   const [view, setView] = useConnectionState<ViewMode>(scope, "view", "grid");
 
   // Navigation history (back/forward), like a browser.
-  const [history, setHistory] = useConnectionState<string[]>(scope, "history", ["/"]);
+  const [history, setHistory] = useConnectionState<string[]>(scope, "history", [
+    "/",
+  ]);
   const [histIndex, setHistIndex] = useConnectionState(scope, "histIndex", 0);
 
   // Places directory tree (lazy-loaded, rooted at "/").
@@ -384,7 +411,9 @@ export function FileManagerWorkspace({
     setDownload(null);
     setCancelling(false);
     if (s.phase === "cancelled") {
-      setDownloadNote(`${meta.title} cancelled after ${s.done} file${s.done === 1 ? "" : "s"}.`);
+      setDownloadNote(
+        `${meta.title} cancelled after ${s.done} file${s.done === 1 ? "" : "s"}.`,
+      );
     } else if (s.phase === "error") {
       setError(s.error || "Transfer failed.");
     } else {
@@ -496,9 +525,15 @@ export function FileManagerWorkspace({
     if (localPaths.length === 0) return;
     const items = localPaths.map((localPath) => {
       const name = localPath.split(/[/\\]/).pop() || "upload";
-      return { local_path: localPath, remote_path: joinPath(currentPath, name) };
+      return {
+        local_path: localPath,
+        remote_path: joinPath(currentPath, name),
+      };
     });
-    const title = localPaths.length === 1 ? "Uploading" : `Uploading ${localPaths.length} items`;
+    const title =
+      localPaths.length === 1
+        ? "Uploading"
+        : `Uploading ${localPaths.length} items`;
     try {
       await api.sftpStartTransfer(connectionId, "upload", items);
       beginPolling(title, currentPath);
@@ -604,7 +639,9 @@ export function FileManagerWorkspace({
 
   function renderPathbar() {
     const parts = currentPath === "/" ? [] : currentPath.split("/").slice(1);
-    const crumbs: { label: string; path: string }[] = [{ label: "/", path: "/" }];
+    const crumbs: { label: string; path: string }[] = [
+      { label: "/", path: "/" },
+    ];
     let acc = "";
     for (const part of parts) {
       acc += "/" + part;
@@ -628,7 +665,11 @@ export function FileManagerWorkspace({
   // ── Places sidebar (directory tree) ────────────────────────────────────────
 
   /** Apply `fn` to the node at `path` anywhere in the tree, returning a new tree. */
-  function updateNode(node: TreeNode, path: string, fn: (n: TreeNode) => TreeNode): TreeNode {
+  function updateNode(
+    node: TreeNode,
+    path: string,
+    fn: (n: TreeNode) => TreeNode,
+  ): TreeNode {
     if (node.path === path) return fn(node);
     if (!node.children) return node;
     return {
@@ -659,7 +700,9 @@ export function FileManagerWorkspace({
         }),
       );
     } catch {
-      setTree((t) => updateNode(t, path, (n) => ({ ...n, children: [], loading: false })));
+      setTree((t) =>
+        updateNode(t, path, (n) => ({ ...n, children: [], loading: false })),
+      );
     }
   }
 
@@ -682,7 +725,9 @@ export function FileManagerWorkspace({
   function toggleTreeNode(node: TreeNode, e: React.MouseEvent) {
     e.stopPropagation();
     if (node.expanded) {
-      setTree((t) => updateNode(t, node.path, (n) => ({ ...n, expanded: false })));
+      setTree((t) =>
+        updateNode(t, node.path, (n) => ({ ...n, expanded: false })),
+      );
       return;
     }
     setTree((t) =>
@@ -715,7 +760,9 @@ export function FileManagerWorkspace({
     return (
       <div key={node.path}>
         <div
-          className={"fm-tree-row" + (currentPath === node.path ? " active" : "")}
+          className={
+            "fm-tree-row" + (currentPath === node.path ? " active" : "")
+          }
           style={{ paddingLeft: 6 + depth * 14 }}
           onClick={() => clickTreeNode(node)}
         >
@@ -731,9 +778,13 @@ export function FileManagerWorkspace({
               className="fm-icon-folder"
             />
           </svg>
-          <span className="fm-tree-label">{node.path === "/" ? "/" : node.name}</span>
+          <span className="fm-tree-label">
+            {node.path === "/" ? "/" : node.name}
+          </span>
         </div>
-        {node.expanded && node.children && node.children.map((c) => renderTreeNode(c, depth + 1))}
+        {node.expanded &&
+          node.children &&
+          node.children.map((c) => renderTreeNode(c, depth + 1))}
       </div>
     );
   }
@@ -776,13 +827,17 @@ export function FileManagerWorkspace({
         {entries.map((entry) => (
           <div
             key={entry.path}
-            className={"fm-tile" + (selected.has(entry.path) ? " selected" : "")}
+            className={
+              "fm-tile" + (selected.has(entry.path) ? " selected" : "")
+            }
             onClick={(e) => selectEntry(entry, e)}
             onDoubleClick={() => open(entry)}
             onContextMenu={(e) => openContextMenu(e, entry)}
             title={entry.name}
           >
-            <div className="fm-tile-icon">{entry.is_dir ? <FolderIcon /> : <FileIcon />}</div>
+            <div className="fm-tile-icon">
+              {entry.is_dir ? <FolderIcon /> : <FileIcon />}
+            </div>
             <div className="fm-tile-label">{entryLabel(entry)}</div>
           </div>
         ))}
@@ -805,20 +860,32 @@ export function FileManagerWorkspace({
           {entries.map((entry) => (
             <tr
               key={entry.path}
-              className={"fm-list-row" + (selected.has(entry.path) ? " selected" : "")}
+              className={
+                "fm-list-row" + (selected.has(entry.path) ? " selected" : "")
+              }
               onClick={(e) => selectEntry(entry, e)}
               onDoubleClick={() => open(entry)}
               onContextMenu={(e) => openContextMenu(e, entry)}
             >
               <td className="fm-list-name">
                 <span className="fm-list-icon">
-                  {entry.is_dir ? <FolderIcon size={20} /> : <FileIcon size={20} />}
+                  {entry.is_dir ? (
+                    <FolderIcon size={20} />
+                  ) : (
+                    <FileIcon size={20} />
+                  )}
                 </span>
                 {entryLabel(entry)}
               </td>
-              <td className="fm-col-size muted">{entry.is_dir ? "—" : formatSize(entry.size)}</td>
-              <td className="fm-col-date muted">{formatDate(entry.modified)}</td>
-              <td className="fm-col-perms muted">{formatPerms(entry.permissions)}</td>
+              <td className="fm-col-size muted">
+                {entry.is_dir ? "—" : formatSize(entry.size)}
+              </td>
+              <td className="fm-col-date muted">
+                {formatDate(entry.modified)}
+              </td>
+              <td className="fm-col-perms muted">
+                {formatPerms(entry.permissions)}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -831,13 +898,22 @@ export function FileManagerWorkspace({
   return (
     <div className="workspace fm-workspace">
       {renderSidebar()}
-      <div className="tree-resizer" onMouseDown={treeResize.onMouseDown} title="Drag to resize" />
+      <div
+        className="tree-resizer"
+        onMouseDown={treeResize.onMouseDown}
+        title="Drag to resize"
+      />
 
       <div className="fm-main">
         {/* Header bar */}
         <div className="fm-headerbar">
           <div className="fm-nav">
-            <button className="fm-iconbtn" title="Back" disabled={histIndex <= 0} onClick={goBack}>
+            <button
+              className="fm-iconbtn"
+              title="Back"
+              disabled={histIndex <= 0}
+              onClick={goBack}
+            >
               ←
             </button>
             <button
@@ -890,7 +966,11 @@ export function FileManagerWorkspace({
             >
               ＋
             </button>
-            <button className="fm-iconbtn" title="Refresh" onClick={() => fetchDir(currentPath)}>
+            <button
+              className="fm-iconbtn"
+              title="Refresh"
+              onClick={() => fetchDir(currentPath)}
+            >
               ↻
             </button>
           </div>
@@ -931,7 +1011,9 @@ export function FileManagerWorkspace({
             !(loader.state.visible && loader.state.scope === "workspace") && (
               <div className="fm-empty">This folder is empty</div>
             )}
-          {dragOver && <div className="fm-drop-overlay">Drop files to upload here</div>}
+          {dragOver && (
+            <div className="fm-drop-overlay">Drop files to upload here</div>
+          )}
         </div>
 
         {/* Status bar */}
@@ -957,7 +1039,8 @@ export function FileManagerWorkspace({
               className="fm-statusbar-warning"
               title="This directory has too many files to list in full"
             >
-              ⚠ Showing first {entries.length.toLocaleString()} entries — directory truncated
+              ⚠ Showing first {entries.length.toLocaleString()} entries —
+              directory truncated
             </span>
           )}
         </div>
@@ -1011,7 +1094,8 @@ export function FileManagerWorkspace({
               // one of them), the menu acts on the whole selection: only the
               // operations that make sense in bulk — Download and Delete — are
               // shown. Open and Rename are single-item only.
-              const multi = selectedEntries.length > 1 && selected.has(menu.entry.path);
+              const multi =
+                selectedEntries.length > 1 && selected.has(menu.entry.path);
               const targets = multi ? selectedEntries : [menu.entry];
               return (
                 <>
@@ -1097,12 +1181,17 @@ export function FileManagerWorkspace({
           <div className="modal">
             <h3>
               Delete{" "}
-              {confirmDelete.length === 1 ? confirmDelete[0].name : `${confirmDelete.length} items`}
+              {confirmDelete.length === 1
+                ? confirmDelete[0].name
+                : `${confirmDelete.length} items`}
               ?
             </h3>
             <p className="muted">This action cannot be undone.</p>
             <div className="modal-actions">
-              <button className="danger" onClick={() => doDelete(confirmDelete)}>
+              <button
+                className="danger"
+                onClick={() => doDelete(confirmDelete)}
+              >
                 Delete
               </button>
               <button onClick={() => setConfirmDelete(null)}>Cancel</button>

@@ -179,7 +179,8 @@ let runDeadline = Infinity;
 
 async function getContext(): Promise<QuickJSContext> {
   if (ctx) return ctx;
-  if (!modPromise) modPromise = newQuickJSWASMModuleFromVariant(releaseSyncVariant);
+  if (!modPromise)
+    modPromise = newQuickJSWASMModuleFromVariant(releaseSyncVariant);
   const QuickJS = await modPromise;
   const c = QuickJS.newContext();
   c.runtime.setMemoryLimit(MEMORY_LIMIT_BYTES);
@@ -231,7 +232,10 @@ function evalOrThrow(c: QuickJSContext, code: string): unknown {
 
 /** Run a user script against `input` and return the resulting variable state,
  *  request mutations, test results, and console logs. Never rejects. */
-export async function runScript(source: string, input: ScriptInput): Promise<ScriptOutcome> {
+export async function runScript(
+  source: string,
+  input: ScriptInput,
+): Promise<ScriptOutcome> {
   const passthrough = (error?: string): ScriptOutcome => ({
     request: input.request,
     environment: input.environment,

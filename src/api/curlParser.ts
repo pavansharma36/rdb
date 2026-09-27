@@ -15,13 +15,18 @@ import { base64Utf8, type HttpRequest, type MultipartPart } from "./curlui.ts";
 export function parseCurl(curl: string): HttpRequest {
   const tokens = tokenizeShell(curl);
   let i = 0;
-  const peek = (): string | undefined => (i < tokens.length ? tokens[i] : undefined);
-  const next = (): string | undefined => (i < tokens.length ? tokens[i++] : undefined);
+  const peek = (): string | undefined =>
+    i < tokens.length ? tokens[i] : undefined;
+  const next = (): string | undefined =>
+    i < tokens.length ? tokens[i++] : undefined;
 
   // Skip an optional leading `curl` (and a shell prompt like `$`). Anything else
   // (a flag or a bare URL) is treated as the start of the args.
   const first = peek();
-  if (first !== undefined && (first === "$" || first.toLowerCase() === "curl")) {
+  if (
+    first !== undefined &&
+    (first === "$" || first.toLowerCase() === "curl")
+  ) {
     next();
   }
 
@@ -36,7 +41,8 @@ export function parseCurl(curl: string): HttpRequest {
     const tok = next() as string;
     const [name, inline] = splitFlag(tok);
     // Flags that take a value: use the inline `=value`, else the next token.
-    const valueFlag = (): string | undefined => (inline !== null ? inline : next());
+    const valueFlag = (): string | undefined =>
+      inline !== null ? inline : next();
 
     switch (name) {
       case "-X":
@@ -73,7 +79,8 @@ export function parseCurl(curl: string): HttpRequest {
       case "--form-string": {
         // `--form-string` is always a literal text field, even with a leading @/<.
         const f = valueFlag();
-        if (f !== undefined) forms.push(parseFormField(f, name === "--form-string"));
+        if (f !== undefined)
+          forms.push(parseFormField(f, name === "--form-string"));
         break;
       }
       case "-u":
@@ -83,7 +90,8 @@ export function parseCurl(curl: string): HttpRequest {
       case "-A":
       case "--user-agent": {
         const ua = valueFlag();
-        if (ua !== undefined && !("User-Agent" in headers)) headers["User-Agent"] = ua;
+        if (ua !== undefined && !("User-Agent" in headers))
+          headers["User-Agent"] = ua;
         break;
       }
       case "-b":
@@ -168,7 +176,8 @@ export function parseCurl(curl: string): HttpRequest {
     bodyKind = inferBodyKind(headers, body);
   }
 
-  const method_ = method ?? (body !== null || parts !== undefined ? "POST" : "GET");
+  const method_ =
+    method ?? (body !== null || parts !== undefined ? "POST" : "GET");
 
   return {
     method: method_,
@@ -191,7 +200,13 @@ function parseFormField(field: string, forceText: boolean): MultipartPart {
 
   const isFile = !forceText && (rhs.startsWith("@") || rhs.startsWith("<"));
   if (!isFile) {
-    return { name, kind: "text", value: rhs, filename: null, content_type: null };
+    return {
+      name,
+      kind: "text",
+      value: rhs,
+      filename: null,
+      content_type: null,
+    };
   }
 
   // Split the path from any `;type=`/`;filename=` modifiers.
@@ -202,7 +217,8 @@ function parseFormField(field: string, forceText: boolean): MultipartPart {
   for (let j = 1; j < segs.length; j++) {
     const seg = segs[j].trim();
     if (seg.startsWith("type=")) content_type = seg.slice("type=".length);
-    else if (seg.startsWith("filename=")) filename = seg.slice("filename=".length);
+    else if (seg.startsWith("filename="))
+      filename = seg.slice("filename=".length);
   }
   return { name, kind: "file", value: path, filename, content_type };
 }

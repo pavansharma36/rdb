@@ -23,7 +23,8 @@ import { html } from "@codemirror/lang-html";
 import { xml } from "@codemirror/lang-xml";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 
-export type CodeLanguage = "sql" | "bash" | "json" | "javascript" | "xml" | "html";
+export type CodeLanguage =
+  "sql" | "bash" | "json" | "javascript" | "xml" | "html";
 
 /** A keybinding the host layers on top of the editor's own. The `key` is a
  *  CodeMirror key name (e.g. "Mod-Enter", "Escape"); `run` is invoked when it
@@ -87,7 +88,9 @@ const baseTheme = EditorView.theme(
       color: "var(--muted)",
       border: "none",
     },
-    ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--accent) 9%, transparent)" },
+    ".cm-activeLine": {
+      backgroundColor: "color-mix(in srgb, var(--accent) 9%, transparent)",
+    },
     ".cm-activeLineGutter": {
       backgroundColor: "color-mix(in srgb, var(--accent) 14%, transparent)",
     },
@@ -135,7 +138,9 @@ const baseTheme = EditorView.theme(
       backgroundColor: "color-mix(in srgb, var(--accent) 30%, var(--bg-3))",
     },
     ".cm-panel.cm-search label": { color: "var(--muted)" },
-    ".cm-panel.cm-search input[type=checkbox]": { accentColor: "var(--accent)" },
+    ".cm-panel.cm-search input[type=checkbox]": {
+      accentColor: "var(--accent)",
+    },
     ".cm-panel button[name=close]": { color: "var(--muted)" },
     // {{NAME}} placeholder highlighting (see `variableHighlightExtension`),
     // colored by whether NAME resolves in the env passed as `highlightVars`.
@@ -183,7 +188,9 @@ const highlightStyle = HighlightStyle.define(
   // Specs with no color (link/heading/emphasis/strong/strikethrough) pass
   // through unchanged; an unmapped color falls back to itself.
   defaultHighlightStyle.specs.map((spec) =>
-    spec.color ? { ...spec, color: TOKEN_COLORS[spec.color] ?? spec.color } : spec,
+    spec.color
+      ? { ...spec, color: TOKEN_COLORS[spec.color] ?? spec.color }
+      : spec,
   ),
 );
 
@@ -222,7 +229,9 @@ function variableHighlightExtension(env?: Record<string, string>) {
       const name = match[0].slice(2, -2).trim();
       const resolved = name in env;
       return Decoration.mark({
-        class: "cm-var-token " + (resolved ? "cm-var-resolved" : "cm-var-unresolved"),
+        class:
+          "cm-var-token " +
+          (resolved ? "cm-var-resolved" : "cm-var-unresolved"),
       });
     },
   });
@@ -321,8 +330,13 @@ export function CodeEditorV2({
         languageComp.current.of(languageExtension(language)),
         // `readOnly` blocks edits; keep the editor `editable` (focusable) so the
         // find panel (⌘/Ctrl+F) and text selection still work when read-only.
-        readOnlyComp.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(true)]),
-        placeholderComp.current.of(placeholder ? placeholderExt(placeholder) : []),
+        readOnlyComp.current.of([
+          EditorState.readOnly.of(readOnly),
+          EditorView.editable.of(true),
+        ]),
+        placeholderComp.current.of(
+          placeholder ? placeholderExt(placeholder) : [],
+        ),
         highlightVarsComp.current.of(variableHighlightExtension(highlightVars)),
         lineWrapping ? EditorView.lineWrapping : [],
         Prec.highest(syntaxHighlighting(highlightStyle)),
@@ -362,7 +376,9 @@ export function CodeEditorV2({
     const current = view.state.doc.toString();
     if (value !== current) {
       suppressOnChangeRef.current = true;
-      view.dispatch({ changes: { from: 0, to: current.length, insert: value } });
+      view.dispatch({
+        changes: { from: 0, to: current.length, insert: value },
+      });
     }
   }, [value]);
 
@@ -383,13 +399,17 @@ export function CodeEditorV2({
 
   useEffect(() => {
     viewRef.current?.dispatch({
-      effects: placeholderComp.current.reconfigure(placeholder ? placeholderExt(placeholder) : []),
+      effects: placeholderComp.current.reconfigure(
+        placeholder ? placeholderExt(placeholder) : [],
+      ),
     });
   }, [placeholder]);
 
   useEffect(() => {
     viewRef.current?.dispatch({
-      effects: highlightVarsComp.current.reconfigure(variableHighlightExtension(highlightVars)),
+      effects: highlightVarsComp.current.reconfigure(
+        variableHighlightExtension(highlightVars),
+      ),
     });
   }, [highlightVars]);
 
@@ -417,5 +437,10 @@ export function CodeEditorV2({
     [],
   );
 
-  return <div ref={hostRef} className={"code-editor-v2" + (className ? " " + className : "")} />;
+  return (
+    <div
+      ref={hostRef}
+      className={"code-editor-v2" + (className ? " " + className : "")}
+    />
+  );
 }

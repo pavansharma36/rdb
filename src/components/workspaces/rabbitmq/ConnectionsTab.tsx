@@ -10,8 +10,18 @@ export function ConnectionsTab({
   channels: MqChannel[];
 }) {
   const connCols: Col<MqConnection>[] = [
-    { key: "name", label: "Name", render: (r) => r.name, sortVal: (r) => r.name },
-    { key: "user", label: "User", render: (r) => r.user, sortVal: (r) => r.user },
+    {
+      key: "name",
+      label: "Name",
+      render: (r) => r.name,
+      sortVal: (r) => r.name,
+    },
+    {
+      key: "user",
+      label: "User",
+      render: (r) => r.user,
+      sortVal: (r) => r.user,
+    },
     {
       key: "vhost",
       label: "Vhost",
@@ -50,8 +60,18 @@ export function ConnectionsTab({
   ];
 
   const chanCols: Col<MqChannel>[] = [
-    { key: "name", label: "Name", render: (r) => r.name, sortVal: (r) => r.name },
-    { key: "user", label: "User", render: (r) => r.user, sortVal: (r) => r.user },
+    {
+      key: "name",
+      label: "Name",
+      render: (r) => r.name,
+      sortVal: (r) => r.name,
+    },
+    {
+      key: "user",
+      label: "User",
+      render: (r) => r.user,
+      sortVal: (r) => r.user,
+    },
     {
       key: "vhost",
       label: "Vhost",
@@ -97,7 +117,12 @@ export function ConnectionsTab({
         empty="No open connections."
       />
       <h3>Channels</h3>
-      <DataTable cols={chanCols} rows={channels} rowKey={(r) => r.name} empty="No open channels." />
+      <DataTable
+        cols={chanCols}
+        rows={channels}
+        rowKey={(r) => r.name}
+        empty="No open channels."
+      />
     </div>
   );
 }

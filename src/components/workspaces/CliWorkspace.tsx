@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { listen } from "@tauri-apps/api/event";
-import { ptySpawn, ptyWrite, ptyResize, ptySnapshot, ptyClose } from "../../api/api.ts";
+import {
+  ptySpawn,
+  ptyWrite,
+  ptyResize,
+  ptySnapshot,
+  ptyClose,
+} from "../../api/api.ts";
 import type { ConnectionId } from "../../api/api.ts";
 import {
   genId,
@@ -14,7 +20,13 @@ import {
 import { WorkspaceFileList } from "./WorkspaceFileList";
 import { CodeEditorV2, type CodeEditorV2Handle } from "../CodeEditorV2.tsx";
 import { ConfirmDialog } from "../Modal";
-import { useResizable, TREE_MIN, TREE_MAX, EDITOR_MIN, EDITOR_MAX } from "../../useResizable";
+import {
+  useResizable,
+  TREE_MIN,
+  TREE_MAX,
+  EDITOR_MIN,
+  EDITOR_MAX,
+} from "../../useResizable";
 import { ConnScope, useConnectionState } from "../../connectionState";
 import "@xterm/xterm/css/xterm.css";
 
@@ -73,7 +85,10 @@ function CliTerminal({
   terminalId: string;
   active: boolean;
   /** Publish this terminal's PTY writer so the parent can route "Run" to it. */
-  registerWriter: (terminalId: string, write: ((text: string) => void) | null) => void;
+  registerWriter: (
+    terminalId: string,
+    write: ((text: string) => void) | null,
+  ) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -214,7 +229,10 @@ export function CliWorkspace({
   // Live PTY writers per terminal, published by each mounted CliTerminal so
   // "Run" can pipe a script into the *active* tab.
   const writers = useRef<Map<string, (text: string) => void>>(new Map());
-  const registerWriter = (terminalId: string, write: ((text: string) => void) | null) => {
+  const registerWriter = (
+    terminalId: string,
+    write: ((text: string) => void) | null,
+  ) => {
     if (write) writers.current.set(terminalId, write);
     else writers.current.delete(terminalId);
   };
@@ -234,7 +252,11 @@ export function CliWorkspace({
   // connectionState.ts. Seed one tab on first mount so behaviour matches the
   // old single-terminal workspace.
   const scope = ConnScope(savedId, "cli");
-  const [tabs, setTabs] = useConnectionState<TerminalTab[]>(scope, "terminals", []);
+  const [tabs, setTabs] = useConnectionState<TerminalTab[]>(
+    scope,
+    "terminals",
+    [],
+  );
   const [activeTab, setActiveTab] = useConnectionState<string | null>(
     scope,
     "activeTerminal",
@@ -243,7 +265,11 @@ export function CliWorkspace({
   // Monotonic counter for terminal titles ("Terminal N"). Persisted so numbers
   // always increase across adds — deriving the number from the current tab
   // count would reuse a number after a tab in the middle is closed.
-  const [nextNo, setNextNo] = useConnectionState<number>(scope, "nextTerminalNo", 1);
+  const [nextNo, setNextNo] = useConnectionState<number>(
+    scope,
+    "nextTerminalNo",
+    1,
+  );
   useEffect(() => {
     if (tabs.length === 0) {
       const id = genId();
@@ -280,7 +306,11 @@ export function CliWorkspace({
   // connectionState.ts.
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [script, setScript] = useConnectionState(scope, "script", "");
-  const [activeFile, setActiveFile] = useConnectionState<string | null>(scope, "activeFile", null);
+  const [activeFile, setActiveFile] = useConnectionState<string | null>(
+    scope,
+    "activeFile",
+    null,
+  );
   const [newName, setNewName] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
@@ -306,7 +336,9 @@ export function CliWorkspace({
       saveWorkspaceFile(savedId, activeFile, script, SCRIPT_EXT)
         .then(() =>
           setFiles((prev) =>
-            prev.map((f) => (f.name === activeFile ? { ...f, content: script } : f)),
+            prev.map((f) =>
+              f.name === activeFile ? { ...f, content: script } : f,
+            ),
           ),
         )
         .catch(() => {});
@@ -389,7 +421,8 @@ export function CliWorkspace({
 
   // True while the active script has edits not yet flushed to disk by autosave.
   const unsaved =
-    activeFile != null && files.find((f) => f.name === activeFile)?.content !== script;
+    activeFile != null &&
+    files.find((f) => f.name === activeFile)?.content !== script;
 
   return (
     <div className="workspace cli-workspace">
@@ -419,9 +452,13 @@ export function CliWorkspace({
         />
         <div className="cli-editor">
           <div className="cli-editor-head">
-            <span className="editor-file-name">{activeFile ? `${activeFile}.sh` : "Script"}</span>
+            <span className="editor-file-name">
+              {activeFile ? `${activeFile}.sh` : "Script"}
+            </span>
             {activeFile && (
-              <span className="muted cli-save-status">{unsaved ? "Saving…" : "Saved"}</span>
+              <span className="muted cli-save-status">
+                {unsaved ? "Saving…" : "Saved"}
+              </span>
             )}
             <div className="cli-editor-actions">
               <button

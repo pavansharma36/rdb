@@ -39,7 +39,11 @@ import { normalizeQuotes } from "../rdbms/sql.ts";
 type RunFn = (commandJson: string) => Promise<RunCommandResult>;
 
 /** Internal: execute a built command, recording it for per-statement display. */
-type ExecFn = (command: object, collection: string, method: string) => Promise<RunCommandResult>;
+type ExecFn = (
+  command: object,
+  collection: string,
+  method: string,
+) => Promise<RunCommandResult>;
 
 interface ExecEntry {
   command: string;
@@ -94,7 +98,10 @@ export async function executeScript(
     let threw: string | undefined;
     let value: unknown;
     try {
-      value = await evalStatement(source, createRuntime(exec, defaultLimit, dbName));
+      value = await evalStatement(
+        source,
+        createRuntime(exec, defaultLimit, dbName),
+      );
     } catch (e) {
       threw = errString(e);
     }
@@ -146,7 +153,9 @@ export async function executeScript(
  * strings, `(){}[]` nesting, and line/block comments; drops fragments that are
  * only whitespace/comments. `start`/`end` are the fragment's character range in
  * `src`. Mirrors the SQL splitter in rdbms/sql.ts. */
-export function splitStatements(src: string): { text: string; start: number; end: number }[] {
+export function splitStatements(
+  src: string,
+): { text: string; start: number; end: number }[] {
   const out: { text: string; start: number; end: number }[] = [];
   const n = src.length;
   let i = 0;
@@ -274,12 +283,21 @@ const BLOCKED_GLOBALS = [
 /** Evaluate one statement with the runtime context in scope, returning its
  * value (awaited). Tries the statement as a returnable expression first, then
  * falls back to a statement body (for declarations/control flow). */
-async function evalStatement(source: string, ctx: Record<string, unknown>): Promise<unknown> {
+async function evalStatement(
+  source: string,
+  ctx: Record<string, unknown>,
+): Promise<unknown> {
   const names = [...Object.keys(ctx), ...BLOCKED_GLOBALS];
-  const values = [...Object.values(ctx), ...BLOCKED_GLOBALS.map(() => undefined)];
+  const values = [
+    ...Object.values(ctx),
+    ...BLOCKED_GLOBALS.map(() => undefined),
+  ];
   let fn: (...args: unknown[]) => unknown;
   try {
-    fn = new Function(...names, `"use strict"; return (\n${source}\n);`) as typeof fn;
+    fn = new Function(
+      ...names,
+      `"use strict"; return (\n${source}\n);`,
+    ) as typeof fn;
   } catch {
     fn = new Function(...names, `"use strict";\n${source}\n`) as typeof fn;
   }
@@ -303,7 +321,8 @@ function createRuntime(
     getName: () => dbName,
     getCollection: (name: string) => new Collection(name, exec, defaultLimit),
     /** Run a raw command document, mirroring `db.runCommand(...)`. */
-    runCommand: (command: object) => exec(command, "db", "runCommand").then((rc) => rc.result),
+    runCommand: (command: object) =>
+      exec(command, "db", "runCommand").then((rc) => rc.result),
     /** Collection names in the database (via `listCollections` nameOnly). */
     getCollectionNames: () =>
       exec({ listCollections: 1, nameOnly: true }, "db", "getCollectionNames")
@@ -311,14 +330,23 @@ function createRuntime(
         .then((cs) => (cs as { name?: string }[]).map((c) => c.name)),
     /** Full `listCollections` entries, optionally filtered. */
     getCollectionInfos: (filter: object = {}) =>
-      exec(prune({ listCollections: 1, filter }), "db", "getCollectionInfos").then(cursorBatch),
+      exec(
+        prune({ listCollections: 1, filter }),
+        "db",
+        "getCollectionInfos",
+      ).then(cursorBatch),
     createCollection: (name: string, opts: object = {}) =>
-      exec({ create: name, ...opts }, "db", "createCollection").then((rc) => rc.result),
-    dropDatabase: () => exec({ dropDatabase: 1 }, "db", "dropDatabase").then((rc) => rc.result),
+      exec({ create: name, ...opts }, "db", "createCollection").then(
+        (rc) => rc.result,
+      ),
+    dropDatabase: () =>
+      exec({ dropDatabase: 1 }, "db", "dropDatabase").then((rc) => rc.result),
     stats: (scale?: number) =>
       exec(prune({ dbStats: 1, scale }), "db", "stats").then((rc) => rc.result),
-    serverStatus: () => exec({ serverStatus: 1 }, "db", "serverStatus").then((rc) => rc.result),
-    hostInfo: () => exec({ hostInfo: 1 }, "db", "hostInfo").then((rc) => rc.result),
+    serverStatus: () =>
+      exec({ serverStatus: 1 }, "db", "serverStatus").then((rc) => rc.result),
+    hostInfo: () =>
+      exec({ hostInfo: 1 }, "db", "hostInfo").then((rc) => rc.result),
     ping: () => exec({ ping: 1 }, "db", "ping").then((rc) => rc.result),
     version: () =>
       exec({ buildInfo: 1 }, "db", "version").then(
@@ -343,7 +371,8 @@ function createRuntime(
     NumberDecimal: (v: string | number) => Decimal128.fromString(String(v)),
     NumberDouble: (v: string | number) => new Double(Number(v)),
     Timestamp: (t = 0, i = 0) => new Timestamp({ t, i }),
-    BinData: (subtype: number, base64: string) => Binary.createFromBase64(base64, subtype),
+    BinData: (subtype: number, base64: string) =>
+      Binary.createFromBase64(base64, subtype),
     MinKey: () => new MinKey(),
     MaxKey: () => new MaxKey(),
   };
@@ -393,12 +422,24 @@ class Collection {
   ) {}
 
   find(filter: object = {}, projection?: object): Cursor {
-    return new Cursor(this.name, filter, projection, this.exec, this.defaultLimit);
+    return new Cursor(
+      this.name,
+      filter,
+      projection,
+      this.exec,
+      this.defaultLimit,
+    );
   }
 
   async findOne(filter: object = {}, projection?: object): Promise<unknown> {
     const rc = await this.exec(
-      prune({ find: this.name, filter, projection, limit: 1, singleBatch: true }),
+      prune({
+        find: this.name,
+        filter,
+        projection,
+        limit: 1,
+        singleBatch: true,
+      }),
       this.name,
       "findOne",
     );
@@ -406,9 +447,11 @@ class Collection {
   }
 
   countDocuments(filter: object = {}): Promise<unknown> {
-    return this.exec({ count: this.name, query: filter }, this.name, "countDocuments").then(
-      (rc) => (rc.result as { n?: number } | null)?.n ?? 0,
-    );
+    return this.exec(
+      { count: this.name, query: filter },
+      this.name,
+      "countDocuments",
+    ).then((rc) => (rc.result as { n?: number } | null)?.n ?? 0);
   }
 
   count(filter: object = {}): Promise<unknown> {
@@ -416,9 +459,11 @@ class Collection {
   }
 
   distinct(key: string, query: object = {}): Promise<unknown> {
-    return this.exec({ distinct: this.name, key, query }, this.name, "distinct").then(
-      (rc) => (rc.result as { values?: unknown[] } | null)?.values ?? [],
-    );
+    return this.exec(
+      { distinct: this.name, key, query },
+      this.name,
+      "distinct",
+    ).then((rc) => (rc.result as { values?: unknown[] } | null)?.values ?? []);
   }
 
   aggregate(pipeline: object[] = [], opts: object = {}): Promise<unknown> {
@@ -435,18 +480,22 @@ class Collection {
   }
 
   insertOne(doc: object): Promise<unknown> {
-    return this.exec({ insert: this.name, documents: [doc] }, this.name, "insertOne").then(
-      (rc) => rc.result,
-    );
+    return this.exec(
+      { insert: this.name, documents: [doc] },
+      this.name,
+      "insertOne",
+    ).then((rc) => rc.result);
   }
 
   insertMany(docs: object[]): Promise<unknown> {
     if (!Array.isArray(docs)) {
       throw new Error("insertMany() expects an array of documents.");
     }
-    return this.exec({ insert: this.name, documents: docs }, this.name, "insertMany").then(
-      (rc) => rc.result,
-    );
+    return this.exec(
+      { insert: this.name, documents: docs },
+      this.name,
+      "insertMany",
+    ).then((rc) => rc.result);
   }
 
   updateOne(f: object, u: object, opts: object = {}): Promise<unknown> {
@@ -493,26 +542,37 @@ class Collection {
     const o = opts as Record<string, unknown>;
     const index: Record<string, unknown> = {
       key: keys,
-      name: typeof o.name === "string" ? o.name : autoIndexName(keys as Record<string, unknown>),
+      name:
+        typeof o.name === "string"
+          ? o.name
+          : autoIndexName(keys as Record<string, unknown>),
     };
     for (const [k, v] of Object.entries(o)) if (k !== "name") index[k] = v;
-    return this.exec({ createIndexes: this.name, indexes: [index] }, this.name, "createIndex").then(
-      (rc) => rc.result,
-    );
+    return this.exec(
+      { createIndexes: this.name, indexes: [index] },
+      this.name,
+      "createIndex",
+    ).then((rc) => rc.result);
   }
 
   dropIndex(index: string | object): Promise<unknown> {
-    return this.exec({ dropIndexes: this.name, index }, this.name, "dropIndex").then(
-      (rc) => rc.result,
-    );
+    return this.exec(
+      { dropIndexes: this.name, index },
+      this.name,
+      "dropIndex",
+    ).then((rc) => rc.result);
   }
 
   getIndexes(): Promise<unknown> {
-    return this.exec({ listIndexes: this.name }, this.name, "getIndexes").then(cursorBatch);
+    return this.exec({ listIndexes: this.name }, this.name, "getIndexes").then(
+      cursorBatch,
+    );
   }
 
   drop(): Promise<unknown> {
-    return this.exec({ drop: this.name }, this.name, "drop").then((rc) => rc.result);
+    return this.exec({ drop: this.name }, this.name, "drop").then(
+      (rc) => rc.result,
+    );
   }
 }
 
@@ -593,7 +653,10 @@ class Cursor {
     return this.run().then((docs) => (docs as unknown[]).forEach(fn));
   }
   // Thenable: `await cursor` (or a bare cursor statement) runs the query.
-  then<T>(onFulfilled?: (value: unknown) => T, onRejected?: (reason: unknown) => T): Promise<T> {
+  then<T>(
+    onFulfilled?: (value: unknown) => T,
+    onRejected?: (reason: unknown) => T,
+  ): Promise<T> {
     return this.run().then(onFulfilled, onRejected);
   }
   catch<T>(onRejected?: (reason: unknown) => T): Promise<unknown> {

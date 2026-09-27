@@ -5,7 +5,16 @@ import { ConnectionId, pluginCall } from "./api.ts";
 /** Accepted browse-filter operators (mirrors `BrowseFilter::OPS` in Rust).
  * `is_null`/`is_not_null` ignore the value. */
 export type BrowseOp =
-  "eq" | "ne" | "lt" | "lte" | "gt" | "gte" | "like" | "ilike" | "is_null" | "is_not_null";
+  | "eq"
+  | "ne"
+  | "lt"
+  | "lte"
+  | "gt"
+  | "gte"
+  | "like"
+  | "ilike"
+  | "is_null"
+  | "is_not_null";
 
 export interface Schema {
   name: string;
@@ -167,7 +176,11 @@ export const rdbms_api = {
     }),
 
   /** Full backend-specific DDL (CREATE TABLE + indexes) for a table. */
-  rdbmsDdlStatement: (connectionId: ConnectionId, schema: string, table: string) =>
+  rdbmsDdlStatement: (
+    connectionId: ConnectionId,
+    schema: string,
+    table: string,
+  ) =>
     pluginCall<string>(connectionId, "rdbms.ddl_statement", { schema, table }),
 
   /** Run a SQL script; returns one result per statement, in order. */
@@ -181,7 +194,12 @@ export const rdbms_api = {
 
   /** Fetch rows of a table per a browse spec (filters, sort, limit, paging);
    * the plugin builds the dialect-correct query, binding filter values. */
-  rdbmsBrowseTable: (connectionId: ConnectionId, schema: string, table: string, spec: BrowseSpec) =>
+  rdbmsBrowseTable: (
+    connectionId: ConnectionId,
+    schema: string,
+    table: string,
+    spec: BrowseSpec,
+  ) =>
     pluginCall<QueryResult>(connectionId, "rdbms.browse_table", {
       schema,
       table,

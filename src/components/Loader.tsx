@@ -1,4 +1,11 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
 /** Where a loader overlay paints (and therefore what it blocks). */
 export type LoaderScope = "app" | "workspace";
@@ -15,7 +22,10 @@ export interface LoaderApi {
   /** Hide the loader. */
   hide: () => void;
   /** Show the loader for the lifetime of `p`, hiding it when `p` settles. */
-  withLoader: <T>(p: Promise<T>, opts?: { message?: string; scope?: LoaderScope }) => Promise<T>;
+  withLoader: <T>(
+    p: Promise<T>,
+    opts?: { message?: string; scope?: LoaderScope },
+  ) => Promise<T>;
   /** Current state (read by {@link WorkspaceLoaderSlot} to place the overlay). */
   state: LoaderState;
 }
@@ -57,7 +67,10 @@ export function LoaderProvider({ children }: { children: ReactNode }) {
   const hide = useCallback(() => setState(HIDDEN), []);
 
   const withLoader = useCallback(
-    async <T,>(p: Promise<T>, opts?: { message?: string; scope?: LoaderScope }): Promise<T> => {
+    async <T,>(
+      p: Promise<T>,
+      opts?: { message?: string; scope?: LoaderScope },
+    ): Promise<T> => {
       show(opts);
       try {
         return await p;

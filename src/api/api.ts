@@ -82,7 +82,8 @@ export interface GithubPreview {
 }
 
 /** Install/update state of an `AvailablePlugin` relative to what's installed. */
-export type PluginStatus = "not_installed" | "up_to_date" | "update_available" | "unknown";
+export type PluginStatus =
+  "not_installed" | "up_to_date" | "update_available" | "unknown";
 
 /** A plugin installable from the configured GitHub repo (see
  *  `list_github_plugins`). All plugins share one release tag (`plugins-latest`
@@ -139,21 +140,37 @@ export const api = {
     invoke<void>("close_connection", { connectionId }),
 
   // Plugin install (from GitHub releases)
-  listGithubPlugins: (repo: string) => invoke<AvailablePlugin[]>("list_github_plugins", { repo }),
+  listGithubPlugins: (repo: string) =>
+    invoke<AvailablePlugin[]>("list_github_plugins", { repo }),
 
-  previewGithubPlugin: (repo: string, tag?: string | null, pluginId?: string | null) =>
+  previewGithubPlugin: (
+    repo: string,
+    tag?: string | null,
+    pluginId?: string | null,
+  ) =>
     invoke<GithubPreview>("preview_github_plugin", {
       repo,
       tag: tag ?? null,
       pluginId: pluginId ?? null,
     }),
 
-  installGithubPlugin: (repo: string, tag: string, pluginId: string, expectedSha: string | null) =>
-    invoke<PluginInfo>("install_github_plugin", { repo, tag, pluginId, expectedSha }),
+  installGithubPlugin: (
+    repo: string,
+    tag: string,
+    pluginId: string,
+    expectedSha: string | null,
+  ) =>
+    invoke<PluginInfo>("install_github_plugin", {
+      repo,
+      tag,
+      pluginId,
+      expectedSha,
+    }),
 
   /** Uninstall a plugin (stops its process, deletes its files). Rejects if the
    *  plugin has open connections. */
-  uninstallPlugin: (pluginId: string) => invoke<void>("uninstall_plugin", { pluginId }),
+  uninstallPlugin: (pluginId: string) =>
+    invoke<void>("uninstall_plugin", { pluginId }),
 
   /** Cancel the in-flight plugin call for a connection (aborts it on the server). */
   cancelLastPluginCall: (connectionId: ConnectionId) =>
@@ -185,7 +202,10 @@ export function errString(e: unknown): string {
  * asks the owning plugin how to launch it (`cli.spawn_spec`, routed by
  * `connectionId`), so no config is sent from here. Idempotent: a no-op if the
  * terminal's PTY is already running. */
-export function ptySpawn(connectionId: ConnectionId, terminalId: string): Promise<void> {
+export function ptySpawn(
+  connectionId: ConnectionId,
+  terminalId: string,
+): Promise<void> {
   return invoke("pty_spawn", { connectionId, terminalId });
 }
 
@@ -195,7 +215,11 @@ export function ptyWrite(terminalId: string, data: number[]): Promise<void> {
 }
 
 /** Notify a terminal's PTY of a resize. */
-export function ptyResize(terminalId: string, cols: number, rows: number): Promise<void> {
+export function ptyResize(
+  terminalId: string,
+  cols: number,
+  rows: number,
+): Promise<void> {
   return invoke("pty_resize", { terminalId, cols, rows });
 }
 

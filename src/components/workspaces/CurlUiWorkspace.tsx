@@ -4,7 +4,10 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import {
+  open as openFileDialog,
+  save as saveFileDialog,
+} from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { join } from "@tauri-apps/api/path";
 import { errString } from "../../api/api.ts";
@@ -77,13 +80,27 @@ import { ContentEditor } from "../ContentEditor";
 import { CodeEditorV2 } from "../CodeEditorV2";
 import { VarHighlightInput, VarHighlightTextarea } from "../VarHighlightField";
 import { useLoader } from "../Loader";
-import { useResizable, TREE_MIN, TREE_MAX, EDITOR_MIN, EDITOR_MAX } from "../../useResizable";
+import {
+  useResizable,
+  TREE_MIN,
+  TREE_MAX,
+  EDITOR_MIN,
+  EDITOR_MAX,
+} from "../../useResizable";
 import { ConnScope, useConnectionState } from "../../connectionState";
 
 type RequestTab =
-  "env" | "params" | "auth" | "headers" | "body" | "prescript" | "tests" | "description";
+  | "env"
+  | "params"
+  | "auth"
+  | "headers"
+  | "body"
+  | "prescript"
+  | "tests"
+  | "description";
 type ResponseTab = "body" | "headers" | "tests";
-type CollectionTab = "env" | "headers" | "auth" | "prescript" | "tests" | "description";
+type CollectionTab =
+  "env" | "headers" | "auth" | "prescript" | "tests" | "description";
 
 /** Aggregated output of the pre/post scripts for one send: assertion results,
  *  console logs, and a top-level script error (compile/throw/timeout). */
@@ -94,7 +111,10 @@ interface TestRun {
 }
 
 /** Shallow equality of two string maps (same keys, same values). */
-function sameRecord(a: Record<string, string>, b: Record<string, string>): boolean {
+function sameRecord(
+  a: Record<string, string>,
+  b: Record<string, string>,
+): boolean {
   const ak = Object.keys(a);
   if (ak.length !== Object.keys(b).length) return false;
   return ak.every((k) => a[k] === b[k]);
@@ -114,7 +134,8 @@ function ScriptEditor({
   const hint =
     kind === "pre" ? (
       <>
-        Runs before the request in a sandbox. Use <code>client.environment.set(k, v)</code>,{" "}
+        Runs before the request in a sandbox. Use{" "}
+        <code>client.environment.set(k, v)</code>,{" "}
         <code>client.variables.get(k)</code>,{" "}
         <code>client.request.headers.add(&#123;key, value&#125;)</code>.
       </>
@@ -134,7 +155,9 @@ function ScriptEditor({
         value={value}
         onChange={onChange}
         lineWrapping
-        placeholder={kind === "pre" ? "// pre-request script" : "// test script"}
+        placeholder={
+          kind === "pre" ? "// pre-request script" : "// test script"
+        }
       />
     </div>
   );
@@ -142,7 +165,13 @@ function ScriptEditor({
 
 /** Free-text (Markdown) documentation editor, shared by the collection,
  *  folder, and request panels. */
-function DescriptionEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function DescriptionEditor({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
   return (
     <div className="curlui-description">
       <textarea
@@ -161,19 +190,30 @@ function TestResultsView({ run }: { run: TestRun }) {
   const failed = run.tests.length - passed;
   return (
     <div className="curlui-tests">
-      {run.error && <div className="curlui-test-error">Script error: {run.error}</div>}
+      {run.error && (
+        <div className="curlui-test-error">Script error: {run.error}</div>
+      )}
       {run.tests.length > 0 && (
         <div className="curlui-test-summary">
           <span className="curlui-test-pass">{passed} passed</span>
-          {failed > 0 && <span className="curlui-test-fail">{failed} failed</span>}
+          {failed > 0 && (
+            <span className="curlui-test-fail">{failed} failed</span>
+          )}
         </div>
       )}
       <ul className="curlui-test-list">
         {run.tests.map((t, i) => (
-          <li key={i} className={t.passed ? "curlui-test-ok" : "curlui-test-bad"}>
-            <span className="curlui-test-badge">{t.passed ? "PASS" : "FAIL"}</span>
+          <li
+            key={i}
+            className={t.passed ? "curlui-test-ok" : "curlui-test-bad"}
+          >
+            <span className="curlui-test-badge">
+              {t.passed ? "PASS" : "FAIL"}
+            </span>
             <span className="curlui-test-name">{t.name}</span>
-            {!t.passed && t.error && <div className="curlui-test-msg">{t.error}</div>}
+            {!t.passed && t.error && (
+              <div className="curlui-test-msg">{t.error}</div>
+            )}
           </li>
         ))}
       </ul>
@@ -196,7 +236,10 @@ function TestResultsView({ run }: { run: TestRun }) {
 
 /** Case-insensitive header lookup (HTTP header names aren't case-sensitive,
  *  and servers vary the casing they return). */
-function headerValue(headers: Record<string, string>, name: string): string | undefined {
+function headerValue(
+  headers: Record<string, string>,
+  name: string,
+): string | undefined {
   const lower = name.toLowerCase();
   for (const [k, v] of Object.entries(headers)) {
     if (k.toLowerCase() === lower) return v;
@@ -243,12 +286,17 @@ function AuthEditor({
    *  placeholders, colored by whether `NAME` resolves here. */
   env?: Record<string, string>;
 }) {
-  const kinds = allowInherit ? AUTH_KINDS : AUTH_KINDS.filter((k) => k.value !== "inherit");
+  const kinds = allowInherit
+    ? AUTH_KINDS
+    : AUTH_KINDS.filter((k) => k.value !== "inherit");
   return (
     <div className="curlui-auth">
       <label className="curlui-auth-field">
         <span className="field-label">Type</span>
-        <select value={auth.kind} onChange={(e) => onChange({ kind: e.target.value as AuthKind })}>
+        <select
+          value={auth.kind}
+          onChange={(e) => onChange({ kind: e.target.value as AuthKind })}
+        >
           {kinds.map((k) => (
             <option key={k.value} value={k.value}>
               {k.label}
@@ -258,7 +306,9 @@ function AuthEditor({
       </label>
 
       {auth.kind === "inherit" && (
-        <p className="muted">This request uses the authorization set on its parent collection.</p>
+        <p className="muted">
+          This request uses the authorization set on its parent collection.
+        </p>
       )}
 
       {auth.kind === "none" && (
@@ -432,8 +482,8 @@ function CollectionEditor({
         <div className="curlui-collection-external">
           {collection.external.missing ? (
             <span className="curlui-collection-external-missing">
-              ⚠️ Could not read {collection.external.path} — click Relink to point this collection
-              at a different file.
+              ⚠️ Could not read {collection.external.path} — click Relink to
+              point this collection at a different file.
             </span>
           ) : (
             <span>🔗 Linked to {collection.external.path}</span>
@@ -500,8 +550,8 @@ function CollectionEditor({
         {tab === "env" && (
           <>
             <p className="muted curlui-collection-hint">
-              Overrides the active environment for requests in this collection. Use as{" "}
-              <code>{"{{NAME}}"}</code>.
+              Overrides the active environment for requests in this collection.
+              Use as <code>{"{{NAME}}"}</code>.
               {Object.keys(baseEnv).length > 0 &&
                 ` Environment: ${Object.keys(baseEnv).join(", ")}.`}
             </p>
@@ -601,7 +651,9 @@ const collectionIdFromTab = (key: string): string | null =>
 const FOL_TAB = "fol␟";
 const folderTabKey = (collectionId: string, folderId: string) =>
   FOL_TAB + collectionId + "␟" + folderId;
-const folderRefFromTab = (key: string): { collectionId: string; folderId: string } | null => {
+const folderRefFromTab = (
+  key: string,
+): { collectionId: string; folderId: string } | null => {
   if (!key.startsWith(FOL_TAB)) return null;
   const [collectionId, folderId] = key.slice(FOL_TAB.length).split("␟");
   return collectionId && folderId ? { collectionId, folderId } : null;
@@ -619,7 +671,10 @@ const tmpTabKey = (id: string) => TMP_TAB + id;
 const tmpIdFromTab = (key: string): string | null =>
   key.startsWith(TMP_TAB) ? key.slice(TMP_TAB.length) : null;
 
-function findRequest(data: CollectionsFile, sel: SelectedRequest): HttpRequestItem | null {
+function findRequest(
+  data: CollectionsFile,
+  sel: SelectedRequest,
+): HttpRequestItem | null {
   const col = data.collections.find((c) => c.id === sel.collectionId);
   if (!col) return null;
   if (!sel.folderId) {
@@ -781,7 +836,10 @@ function updateFolder(
 
 /** Remove a request by id from the collection root or any nested folder,
  *  returning the removed node (or null when not found). */
-function detachRequestFromCol(col: HttpCollection, reqId: string): HttpRequestItem | null {
+function detachRequestFromCol(
+  col: HttpCollection,
+  reqId: string,
+): HttpRequestItem | null {
   const pull = (reqs: HttpRequestItem[]): HttpRequestItem | null => {
     const i = reqs.findIndex((r) => r.id === reqId);
     return i >= 0 ? reqs.splice(i, 1)[0] : null;
@@ -802,7 +860,10 @@ function detachRequestFromCol(col: HttpCollection, reqId: string): HttpRequestIt
 
 /** Remove a folder by id from the collection root or any nested folder,
  *  returning the removed node (or null when not found). */
-function detachFolderFromCol(col: HttpCollection, folderId: string): HttpFolder | null {
+function detachFolderFromCol(
+  col: HttpCollection,
+  folderId: string,
+): HttpFolder | null {
   const pull = (folders: HttpFolder[]): HttpFolder | null => {
     const i = folders.findIndex((f) => f.id === folderId);
     return i >= 0 ? folders.splice(i, 1)[0] : null;
@@ -835,20 +896,29 @@ function folderInCol(col: HttpCollection, folderId: string): HttpFolder | null {
 }
 
 /** The destination `requests` array for a folder id (null = collection root). */
-function requestsContainer(col: HttpCollection, folderId: string | null): HttpRequestItem[] | null {
+function requestsContainer(
+  col: HttpCollection,
+  folderId: string | null,
+): HttpRequestItem[] | null {
   if (!folderId) return col.requests;
   return folderInCol(col, folderId)?.requests ?? null;
 }
 
 /** The destination `folders` array for a folder id (null = collection root). */
-function foldersContainer(col: HttpCollection, folderId: string | null): HttpFolder[] | null {
+function foldersContainer(
+  col: HttpCollection,
+  folderId: string | null,
+): HttpFolder[] | null {
   if (!folderId) return col.folders;
   return folderInCol(col, folderId)?.folders ?? null;
 }
 
 /** All descendant folder ids of a folder (excluding the folder itself), used to
  *  reject dropping a folder into itself or one of its own descendants. */
-function folderDescendantIds(col: HttpCollection, folderId: string): Set<string> {
+function folderDescendantIds(
+  col: HttpCollection,
+  folderId: string,
+): Set<string> {
   const out = new Set<string>();
   const root = folderInCol(col, folderId);
   if (!root) return out;
@@ -878,10 +948,16 @@ function requestNameFromUrl(url: string): string {
  *  to that path instead, and the id -> path registry is kept in sync. A
  *  `missing` external collection (its file couldn't be read on load) is never
  *  written — that would stomp a transient read failure with an empty file. */
-async function persistCollections(savedId: string, data: CollectionsFile): Promise<void> {
+async function persistCollections(
+  savedId: string,
+  data: CollectionsFile,
+): Promise<void> {
   const internal = data.collections.filter((c) => !c.external);
   const external = data.collections.filter((c) => !!c.external);
-  await saveCurlFiles(savedId, collectionsToFiles({ version: 1, collections: internal }));
+  await saveCurlFiles(
+    savedId,
+    collectionsToFiles({ version: 1, collections: internal }),
+  );
   await Promise.all(
     external
       .filter((c) => !c.external!.missing)
@@ -948,19 +1024,29 @@ export function CurlUiWorkspace({
   // selection changes. Must be state (not a ref) — both the check and the
   // update run during render, and refs are restricted to non-render access
   // by the new `react-hooks/refs` rule.
-  const [lastSyncedRequestId, setLastSyncedRequestId] = useState<string | null>(null);
+  const [lastSyncedRequestId, setLastSyncedRequestId] = useState<string | null>(
+    null,
+  );
   // Open request tabs, as `collectionId:folderId:requestId` keys (the same
   // shape as `selectedId`, which points at the active tab). App-state-backed so
   // open tabs survive connection switches / remounts.
-  const [openTabs, setOpenTabs] = useConnectionState<string[]>(scope, "openTabs", []);
+  const [openTabs, setOpenTabs] = useConnectionState<string[]>(
+    scope,
+    "openTabs",
+    [],
+  );
   // Collections open as tabs too (key `col␟<id>`). The active tab is the
   // collection editor when `selectedId` is a collection key.
   const [collectionTab, setCollectionTab] = useState<CollectionTab>("env");
 
-  const [collections, setCollections] = useState<CollectionsFile>(defaultCollectionsFile());
+  const [collections, setCollections] = useState<CollectionsFile>(
+    defaultCollectionsFile(),
+  );
   // All environments + the active selection (`environments.json`). The active
   // environment's variables are the base `{{VAR}}` map for every request.
-  const [envFile, setEnvFile] = useState<EnvironmentsFile>(defaultEnvironmentsFile());
+  const [envFile, setEnvFile] = useState<EnvironmentsFile>(
+    defaultEnvironmentsFile(),
+  );
   // Per-open-request unsaved edits ("drafts"), keyed by tab key. Holds the
   // edited state of any request tab with pending changes AND every scratch
   // request (a scratch request is always a draft with a `tmp␟` key until it is
@@ -969,11 +1055,9 @@ export function CurlUiWorkspace({
   // owning collection file is never touched until an explicit Save. App-state-
   // backed so drafts survive connection switches; disk-backed so they survive
   // restart (see the hydrate/persist effects below).
-  const [drafts, setDrafts] = useConnectionState<Record<string, HttpRequestItem>>(
-    scope,
-    "drafts",
-    {},
-  );
+  const [drafts, setDrafts] = useConnectionState<
+    Record<string, HttpRequestItem>
+  >(scope, "drafts", {});
   const [loaded, setLoaded] = useState(false);
   const [headerRows, setHeaderRows] = useState<KvRow[]>([newKvRow()]);
   const [paramRows, setParamRows] = useState<KvRow[]>([newKvRow()]);
@@ -983,28 +1067,22 @@ export function CurlUiWorkspace({
   // Last response per open tab, keyed by the tab's request key, so switching
   // tabs keeps each request's result on screen. App-state-backed so responses
   // survive connection switches / remounts.
-  const [responses, setResponses] = useConnectionState<Record<string, HttpResponse>>(
-    scope,
-    "responses",
-    {},
-  );
+  const [responses, setResponses] = useConnectionState<
+    Record<string, HttpResponse>
+  >(scope, "responses", {});
   // Script test results + console logs per open tab, keyed like `responses`.
-  const [testResults, setTestResults] = useConnectionState<Record<string, TestRun>>(
-    scope,
-    "testResults",
-    {},
-  );
+  const [testResults, setTestResults] = useConnectionState<
+    Record<string, TestRun>
+  >(scope, "testResults", {});
   const [error, setError] = useState<string | null>(null);
   // Send/copy/script errors per open tab, keyed like `responses` — so an
   // error from one tab's request doesn't linger on screen after switching to
   // another tab. Distinct from `error`, which is for workspace-level failures
   // (collection/environment load, session persistence) that aren't tied to
   // any single request tab.
-  const [requestErrors, setRequestErrors] = useConnectionState<Record<string, string>>(
-    scope,
-    "requestErrors",
-    {},
-  );
+  const [requestErrors, setRequestErrors] = useConnectionState<
+    Record<string, string>
+  >(scope, "requestErrors", {});
 
   /** Set (`msg`) or clear (`null`) the given tab's request-scoped error. */
   function setRequestError(key: string, msg: string | null) {
@@ -1034,9 +1112,10 @@ export function CurlUiWorkspace({
   // Popover menu for the two "add an external collection" actions, anchored
   // under its trigger FAB like Sidebar's `.conn-menu`/`.conn-menu-popup`.
   const [externalMenuOpen, setExternalMenuOpen] = useState(false);
-  const [externalMenuPos, setExternalMenuPos] = useState<{ left: number; bottom: number } | null>(
-    null,
-  );
+  const [externalMenuPos, setExternalMenuPos] = useState<{
+    left: number;
+    bottom: number;
+  } | null>(null);
   const externalMenuRef = useRef<HTMLDivElement>(null);
   // Per-row actions popup (⋮) for a collection/folder row: "New folder",
   // "New request", "Import curl", and (collections only) "Export". Keyed like
@@ -1044,7 +1123,10 @@ export function CurlUiWorkspace({
   // collection can never collide. Anchored under its trigger like Sidebar's
   // `.conn-menu`/`.conn-menu-popup`.
   const [treeMenu, setTreeMenu] = useState<string | null>(null);
-  const [treeMenuPos, setTreeMenuPos] = useState<{ right: number; top: number } | null>(null);
+  const [treeMenuPos, setTreeMenuPos] = useState<{
+    right: number;
+    top: number;
+  } | null>(null);
   const treeMenuRef = useRef<HTMLDivElement>(null);
   // Save-scratch-to-collection dialog: which scratch request, the chosen
   // target collection / folder / name, and whether to close the tab after.
@@ -1067,9 +1149,10 @@ export function CurlUiWorkspace({
   // `dragging` only flips true past a 5px threshold so a plain click still
   // selects. `suppressClickRef` swallows the click that trails a completed drag.
   const [dragId, setDragId] = useState<string | null>(null);
-  const [overRow, setOverRow] = useState<{ id: string; zone: "before" | "into" | "after" } | null>(
-    null,
-  );
+  const [overRow, setOverRow] = useState<{
+    id: string;
+    zone: "before" | "into" | "after";
+  } | null>(null);
   const dragRef = useRef<{
     kind: "request" | "folder";
     id: string;
@@ -1087,7 +1170,9 @@ export function CurlUiWorkspace({
   const envSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Per-draft debounce timers (keyed by tab key), a live mirror of `drafts` the
   // debounced writers read, and the session-save debounce.
-  const draftSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const draftSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>(
+    {},
+  );
   const draftsRef = useRef(drafts);
   const sessionSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Latest not-yet-written payload for each debounced saver above, so the
@@ -1135,7 +1220,12 @@ export function CurlUiWorkspace({
         scratch: boolean;
       }
     | { kind: "collection"; collection: HttpCollection }
-    | { kind: "folder"; collectionId: string; folderId: string; folder: HttpFolder }
+    | {
+        kind: "folder";
+        collectionId: string;
+        folderId: string;
+        folder: HttpFolder;
+      }
     | { kind: "environment"; environment: HttpEnvironment };
   const activeTab = useMemo((): ActiveTab | null => {
     if (!selectedId) return null;
@@ -1154,7 +1244,13 @@ export function CurlUiWorkspace({
       // A scratch request lives only as a draft (keyed by its `tmp␟` tab key).
       const req = drafts[selectedId];
       return req
-        ? { kind: "request", sel: null, request: req, collection: null, scratch: true }
+        ? {
+            kind: "request",
+            sel: null,
+            request: req,
+            collection: null,
+            scratch: true,
+          }
         : null;
     }
     const folRef = folderRefFromTab(selectedId);
@@ -1167,16 +1263,19 @@ export function CurlUiWorkspace({
     if (!sel || !committed) return null;
     // Prefer the draft (unsaved edits) over the committed request when present.
     const req = drafts[selectedId] ?? committed;
-    const collection = collections.collections.find((c) => c.id === sel.collectionId) ?? null;
+    const collection =
+      collections.collections.find((c) => c.id === sel.collectionId) ?? null;
     return { kind: "request", sel, request: req, collection, scratch: false };
   }, [collections, envFile, drafts, selectedId]);
 
   const selected = activeTab?.kind === "request" ? activeTab.sel : null;
-  const activeRequest = activeTab?.kind === "request" ? activeTab.request : null;
+  const activeRequest =
+    activeTab?.kind === "request" ? activeTab.request : null;
   const activeIsScratch = activeTab?.kind === "request" && activeTab.scratch;
   // The collection that owns the active request — used to inherit env/headers/
   // auth when sending or copying as curl.
-  const activeRequestCollection = activeTab?.kind === "request" ? activeTab.collection : null;
+  const activeRequestCollection =
+    activeTab?.kind === "request" ? activeTab.collection : null;
 
   // Breadcrumb ("Collection › Folder › …") shown above the request name,
   // mirroring where Postman surfaces (and lets you navigate) a request's place
@@ -1184,12 +1283,22 @@ export function CurlUiWorkspace({
   // collection yet.
   const activeRequestLocationCrumbs = useMemo(() => {
     if (!activeRequestCollection) return null;
-    const crumbs: { id: string; label: string; kind: "collection" | "folder" }[] = [
-      { id: activeRequestCollection.id, label: activeRequestCollection.name, kind: "collection" },
+    const crumbs: {
+      id: string;
+      label: string;
+      kind: "collection" | "folder";
+    }[] = [
+      {
+        id: activeRequestCollection.id,
+        label: activeRequestCollection.name,
+        kind: "collection",
+      },
     ];
     if (selected?.folderId) {
-      const ancestry = folderAncestry(activeRequestCollection, selected.folderId) ?? [];
-      for (const f of ancestry) crumbs.push({ id: f.id, label: f.name, kind: "folder" });
+      const ancestry =
+        folderAncestry(activeRequestCollection, selected.folderId) ?? [];
+      for (const f of ancestry)
+        crumbs.push({ id: f.id, label: f.name, kind: "folder" });
     }
     return crumbs;
   }, [activeRequestCollection, selected]);
@@ -1207,7 +1316,9 @@ export function CurlUiWorkspace({
 
   const response = selectedId ? (responses[selectedId] ?? null) : null;
   const testRun = selectedId ? (testResults[selectedId] ?? null) : null;
-  const activeRequestError = selectedId ? (requestErrors[selectedId] ?? null) : null;
+  const activeRequestError = selectedId
+    ? (requestErrors[selectedId] ?? null)
+    : null;
 
   // Resolve open tab keys to live requests/collections, dropping any whose
   // target was deleted. Keeps the rendered strip in sync with the tree.
@@ -1253,10 +1364,18 @@ export function CurlUiWorkspace({
         }
         const folRef = folderRefFromTab(key);
         if (folRef) {
-          const col = collections.collections.find((c) => c.id === folRef.collectionId);
-          const fol = findFolder(collections, folRef.collectionId, folRef.folderId);
+          const col = collections.collections.find(
+            (c) => c.id === folRef.collectionId,
+          );
+          const fol = findFolder(
+            collections,
+            folRef.collectionId,
+            folRef.folderId,
+          );
           if (!fol || !col) return null;
-          const ancestry = folderAncestry(col, folRef.folderId)?.map((f) => f.name) ?? [fol.name];
+          const ancestry = folderAncestry(col, folRef.folderId)?.map(
+            (f) => f.name,
+          ) ?? [fol.name];
           const path = [col.name, ...ancestry.slice(0, -1)].join("/");
           return { key, kind: "folder", name: fol.name, path };
         }
@@ -1265,9 +1384,12 @@ export function CurlUiWorkspace({
         if (!committed) return null;
         // Show the draft's name/method when the tab has unsaved edits.
         const req = drafts[key] ?? committed;
-        const col = collections.collections.find((c) => c.id === sel!.collectionId);
+        const col = collections.collections.find(
+          (c) => c.id === sel!.collectionId,
+        );
         const ancestry = sel!.folderId
-          ? ((col && folderAncestry(col, sel!.folderId)?.map((f) => f.name)) ?? [])
+          ? ((col && folderAncestry(col, sel!.folderId)?.map((f) => f.name)) ??
+            [])
           : [];
         const path = col ? [col.name, ...ancestry].join("/") : undefined;
         return {
@@ -1337,7 +1459,10 @@ export function CurlUiWorkspace({
   useEffect(() => {
     if (!externalMenuOpen) return;
     function onClick(e: MouseEvent) {
-      if (externalMenuRef.current && !externalMenuRef.current.contains(e.target as Node)) {
+      if (
+        externalMenuRef.current &&
+        !externalMenuRef.current.contains(e.target as Node)
+      ) {
         setExternalMenuOpen(false);
       }
     }
@@ -1350,7 +1475,10 @@ export function CurlUiWorkspace({
   useEffect(() => {
     if (treeMenu === null) return;
     function onClick(e: MouseEvent) {
-      if (treeMenuRef.current && !treeMenuRef.current.contains(e.target as Node)) {
+      if (
+        treeMenuRef.current &&
+        !treeMenuRef.current.contains(e.target as Node)
+      ) {
         setTreeMenu(null);
       }
     }
@@ -1388,7 +1516,9 @@ export function CurlUiWorkspace({
         clearTimeout(saveTimer.current);
         saveTimer.current = null;
         if (pendingCollectionsSave.current) {
-          persistCollections(savedId, pendingCollectionsSave.current).catch(() => {});
+          persistCollections(savedId, pendingCollectionsSave.current).catch(
+            () => {},
+          );
           pendingCollectionsSave.current = null;
         }
       }
@@ -1430,7 +1560,9 @@ export function CurlUiWorkspace({
         const request = draftsRef.current[key];
         if (!request) return;
         const kind = tmpIdFromTab(key) ? "scratch" : "collection";
-        saveDraft(savedId, { version: 1, key, kind, request }).catch((e) => setError(errString(e)));
+        saveDraft(savedId, { version: 1, key, kind, request }).catch((e) =>
+          setError(errString(e)),
+        );
       }, 300);
     },
     [savedId],
@@ -1444,9 +1576,15 @@ export function CurlUiWorkspace({
           internal = filesToCollections(files).collections;
         } else {
           internal = defaultCollectionsFile().collections;
-          await saveCurlFiles(savedId, collectionsToFiles({ version: 1, collections: internal }));
+          await saveCurlFiles(
+            savedId,
+            collectionsToFiles({ version: 1, collections: internal }),
+          );
         }
-        setCollections({ version: 1, collections: [...internal, ...ext.collections] });
+        setCollections({
+          version: 1,
+          collections: [...internal, ...ext.collections],
+        });
         if (ext.missingCount > 0) {
           setError(
             `Could not read ${ext.missingCount} external collection${ext.missingCount > 1 ? "s" : ""} — see the tree for details.`,
@@ -1540,14 +1678,20 @@ export function CurlUiWorkspace({
     setLastSyncedRequestId(activeRequest.id);
     setHeaderRows(headersToRows(activeRequest.headers));
     setParamRows(splitUrl(activeRequest.url).params);
-    setFormRows(formToRows(activeRequest.body_kind === "form" ? activeRequest.body : ""));
+    setFormRows(
+      formToRows(activeRequest.body_kind === "form" ? activeRequest.body : ""),
+    );
   }
 
   function toggleExpanded(key: string) {
     setExpanded((e) => ({ ...e, [key]: !e[key] }));
   }
 
-  function selectRequest(collectionId: string, folderId: string | null, requestId: string) {
+  function selectRequest(
+    collectionId: string,
+    folderId: string | null,
+    requestId: string,
+  ) {
     const key = `${collectionId}:${folderId ?? ""}:${requestId}`;
     setOpenTabs((tabs) => (tabs.includes(key) ? tabs : [...tabs, key]));
     setSelectedId(key);
@@ -1561,10 +1705,15 @@ export function CurlUiWorkspace({
     setError(null);
   }
 
-  function patchCollection(collectionId: string, patch: Partial<HttpCollection>) {
+  function patchCollection(
+    collectionId: string,
+    patch: Partial<HttpCollection>,
+  ) {
     setCollectionsAndSave((data) => ({
       ...data,
-      collections: data.collections.map((c) => (c.id === collectionId ? { ...c, ...patch } : c)),
+      collections: data.collections.map((c) =>
+        c.id === collectionId ? { ...c, ...patch } : c,
+      ),
     }));
   }
 
@@ -1575,8 +1724,14 @@ export function CurlUiWorkspace({
     setError(null);
   }
 
-  function patchFolder(collectionId: string, folderId: string, patch: Partial<HttpFolder>) {
-    setCollectionsAndSave((data) => updateFolder(data, collectionId, folderId, patch));
+  function patchFolder(
+    collectionId: string,
+    folderId: string,
+    patch: Partial<HttpFolder>,
+  ) {
+    setCollectionsAndSave((data) =>
+      updateFolder(data, collectionId, folderId, patch),
+    );
   }
 
   function selectEnvironment(environmentId: string) {
@@ -1586,10 +1741,15 @@ export function CurlUiWorkspace({
     setError(null);
   }
 
-  function patchEnvironment(environmentId: string, patch: Partial<HttpEnvironment>) {
+  function patchEnvironment(
+    environmentId: string,
+    patch: Partial<HttpEnvironment>,
+  ) {
     setEnvAndSave((data) => ({
       ...data,
-      environments: data.environments.map((e) => (e.id === environmentId ? { ...e, ...patch } : e)),
+      environments: data.environments.map((e) =>
+        e.id === environmentId ? { ...e, ...patch } : e,
+      ),
     }));
   }
 
@@ -1671,7 +1831,8 @@ export function CurlUiWorkspace({
     setDrafts((d) => {
       // Seed the draft from the committed request on the first edit; scratch
       // requests always already have a draft entry.
-      const base = d[key] ?? (selected ? findRequest(collections, selected) : null);
+      const base =
+        d[key] ?? (selected ? findRequest(collections, selected) : null);
       if (!base) return d;
       return { ...d, [key]: { ...base, ...patch } };
     });
@@ -1750,7 +1911,12 @@ export function CurlUiWorkspace({
    *  to clobber a same-named file that's already there. */
   async function addExternalCollection(dir: string, name: string) {
     setError(null);
-    const col: HttpCollection = { id: genId(), name, folders: [], requests: [] };
+    const col: HttpCollection = {
+      id: genId(),
+      name,
+      folders: [],
+      requests: [],
+    };
     const path = await join(dir, collectionFileName(col));
     try {
       await readTextFile(path);
@@ -1834,7 +2000,9 @@ export function CurlUiWorkspace({
       setCollectionsAndSave((data) => ({
         ...data,
         collections: data.collections.map((c) =>
-          c.id === collectionId ? { ...parsed, id: collectionId, external: { path } } : c,
+          c.id === collectionId
+            ? { ...parsed, id: collectionId, external: { path } }
+            : c,
         ),
       }));
     } catch (e) {
@@ -1874,7 +2042,9 @@ export function CurlUiWorkspace({
     setExpanded((e) => ({
       ...e,
       [`folder:${folder.id}`]: true,
-      ...(target.kind === "folder" ? { [`folder:${target.folderId}`]: true } : {}),
+      ...(target.kind === "folder"
+        ? { [`folder:${target.folderId}`]: true }
+        : {}),
     }));
   }
 
@@ -1890,9 +2060,12 @@ export function CurlUiWorkspace({
     const req = newRequest("Untitled");
     const key = tmpTabKey(req.id);
     setDrafts((d) => ({ ...d, [key]: req }));
-    saveDraft(savedId, { version: 1, key, kind: "scratch", request: req }).catch((e) =>
-      setError(errString(e)),
-    );
+    saveDraft(savedId, {
+      version: 1,
+      key,
+      kind: "scratch",
+      request: req,
+    }).catch((e) => setError(errString(e)));
     setOpenTabs((tabs) => [...tabs, key]);
     setSelectedId(key);
     setError(null);
@@ -2021,8 +2194,12 @@ export function CurlUiWorkspace({
 
     // State threaded across every script phase (a script's writes are visible
     // to later phases and, for the request, to the send itself).
-    let environment: Record<string, string> = { ...(activeEnv?.variables ?? {}) };
-    let collectionVariables: Record<string, string> = { ...(collection?.env ?? {}) };
+    let environment: Record<string, string> = {
+      ...(activeEnv?.variables ?? {}),
+    };
+    let collectionVariables: Record<string, string> = {
+      ...(collection?.env ?? {}),
+    };
     let variables: Record<string, string> = {};
     let scriptReq: ScriptRequest = {
       method: activeRequest.method,
@@ -2034,7 +2211,10 @@ export function CurlUiWorkspace({
     const logs: LogLine[] = [];
     let scriptError: string | undefined;
 
-    const runPhase = async (source: string | undefined, response?: ScriptResponse) => {
+    const runPhase = async (
+      source: string | undefined,
+      response?: ScriptResponse,
+    ) => {
       if (!source || !source.trim()) return;
       const outcome = await runScript(source, {
         request: scriptReq,
@@ -2054,7 +2234,10 @@ export function CurlUiWorkspace({
 
     const storeRun = () => {
       if (tests.length || logs.length || scriptError) {
-        setTestResults((t) => ({ ...t, [key]: { tests, logs, error: scriptError } }));
+        setTestResults((t) => ({
+          ...t,
+          [key]: { tests, logs, error: scriptError },
+        }));
       } else {
         setTestResults((t) => {
           if (!(key in t)) return t;
@@ -2091,7 +2274,9 @@ export function CurlUiWorkspace({
         body: scriptReq.body,
       };
       const finalEnv = { ...environment, ...collectionVariables, ...variables };
-      const effCollection = collection ? { ...collection, env: undefined } : undefined;
+      const effCollection = collection
+        ? { ...collection, env: undefined }
+        : undefined;
       const res = await sendHttpRequest(
         buildSendable(mutated, finalEnv, effCollection, pluginVersion),
         settings,
@@ -2139,7 +2324,12 @@ export function CurlUiWorkspace({
     try {
       await navigator.clipboard.writeText(
         buildCurl(
-          buildSendable(activeRequest, env, activeRequestCollection ?? undefined, pluginVersion),
+          buildSendable(
+            activeRequest,
+            env,
+            activeRequestCollection ?? undefined,
+            pluginVersion,
+          ),
         ),
       );
       setCopiedCurl(true);
@@ -2170,7 +2360,9 @@ export function CurlUiWorkspace({
       });
       setHeaderRows(headersToRows(parsed.headers));
       setParamRows(splitUrl(parsed.url).params);
-      setFormRows(formToRows(parsed.body_kind === "form" ? (parsed.body ?? "") : ""));
+      setFormRows(
+        formToRows(parsed.body_kind === "form" ? (parsed.body ?? "") : ""),
+      );
     } catch (err) {
       setError(errString(err));
     } finally {
@@ -2192,7 +2384,8 @@ export function CurlUiWorkspace({
       req.body_kind = (parsed.body_kind as BodyKind) || "none";
       req.parts = parsed.parts;
       setCollectionsAndSave((data) => insertRequest(data, importTarget, req));
-      const folderId = importTarget.kind === "folder" ? importTarget.folderId : null;
+      const folderId =
+        importTarget.kind === "folder" ? importTarget.folderId : null;
       selectRequest(importTarget.collectionId, folderId, req.id);
       setImportOpen(false);
       setImportText("");
@@ -2234,7 +2427,10 @@ export function CurlUiWorkspace({
       if (typeof path !== "string") return; // user cancelled
       const text = await readTextFile(path);
       const col = collectionFromJson(text);
-      setCollectionsAndSave((data) => ({ ...data, collections: [...data.collections, col] }));
+      setCollectionsAndSave((data) => ({
+        ...data,
+        collections: [...data.collections, col],
+      }));
       setExpanded((e) => ({ ...e, [`col:${col.id}`]: true }));
       selectCollection(col.id);
     } catch (e) {
@@ -2333,13 +2529,19 @@ export function CurlUiWorkspace({
   /** A resolved drop: which container array to land in (`destFolderId` null =
    *  collection root), and — when reordering — the sibling to splice relative to
    *  (`after` chooses before/after). No `siblingId` means append. */
-  type DropOp = { destFolderId: string | null; siblingId?: string; after?: boolean };
+  type DropOp = {
+    destFolderId: string | null;
+    siblingId?: string;
+    after?: boolean;
+  };
   type DragState = NonNullable<typeof dragRef.current>;
 
   /** The nearest draggable/droppable tree row under a viewport point. */
   function treeRowAt(x: number, y: number): HTMLElement | null {
     const el = document.elementFromPoint(x, y) as HTMLElement | null;
-    return el?.closest<HTMLElement>(".curlui-tree-request, .curlui-tree-row") ?? null;
+    return (
+      el?.closest<HTMLElement>(".curlui-tree-request, .curlui-tree-row") ?? null
+    );
   }
 
   /** Resolve the drop under the pointer for the given drag, or null when the
@@ -2348,7 +2550,10 @@ export function CurlUiWorkspace({
     st: DragState,
     x: number,
     y: number,
-  ): { over: { id: string; zone: "before" | "into" | "after" }; op: DropOp } | null {
+  ): {
+    over: { id: string; zone: "before" | "into" | "after" };
+    op: DropOp;
+  } | null {
     const row = treeRowAt(x, y);
     if (!row) return null;
     const d = row.dataset;
@@ -2370,7 +2575,8 @@ export function CurlUiWorkspace({
           op: { destFolderId: tParent, siblingId: tId, after },
         };
       }
-      if (tKind === "folder") return { over: { id: tId, zone: "into" }, op: { destFolderId: tId } };
+      if (tKind === "folder")
+        return { over: { id: tId, zone: "into" }, op: { destFolderId: tId } };
       // collection row
       return { over: { id: tId, zone: "into" }, op: { destFolderId: null } };
     }
@@ -2378,7 +2584,8 @@ export function CurlUiWorkspace({
     // Dragging a folder: reject dropping into itself or a descendant.
     const col = collections.collections.find((c) => c.id === st.colId);
     const desc = col ? folderDescendantIds(col, st.id) : new Set<string>();
-    const cyclic = (dest: string | null) => dest !== null && (dest === st.id || desc.has(dest));
+    const cyclic = (dest: string | null) =>
+      dest !== null && (dest === st.id || desc.has(dest));
 
     if (tKind === "folder") {
       if (tId === st.id) return null;
@@ -2419,7 +2626,12 @@ export function CurlUiWorkspace({
     // didn't land on a row's click handler (so a later plain click isn't eaten).
     suppressClickRef.current = false;
     // Don't start a drag from the expand toggle or the row's action buttons.
-    if ((e.target as HTMLElement).closest(".curlui-tree-toggle, .curlui-tree-actions")) return;
+    if (
+      (e.target as HTMLElement).closest(
+        ".curlui-tree-toggle, .curlui-tree-actions",
+      )
+    )
+      return;
     dragRef.current = {
       kind,
       id,
@@ -2435,7 +2647,11 @@ export function CurlUiWorkspace({
     const st = dragRef.current;
     if (!st) return;
     if (!st.dragging) {
-      if (Math.abs(e.clientX - st.startX) < 5 && Math.abs(e.clientY - st.startY) < 5) return;
+      if (
+        Math.abs(e.clientX - st.startX) < 5 &&
+        Math.abs(e.clientY - st.startY) < 5
+      )
+        return;
       st.dragging = true;
       setDragId(st.id);
       // Route the rest of the gesture to this row even if the pointer strays.
@@ -2518,19 +2734,24 @@ export function CurlUiWorkspace({
           delete nextMap[oldKey];
           // The draft file is named by request.id (unchanged), but stores its
           // tab key; rewrite it so a restart restores the draft at the new spot.
-          saveDraft(savedId, { version: 1, key: newKey, kind: "collection", request }).catch((e) =>
-            setError(errString(e)),
-          );
+          saveDraft(savedId, {
+            version: 1,
+            key: newKey,
+            kind: "collection",
+            request,
+          }).catch((e) => setError(errString(e)));
           return nextMap;
         });
         setSelectedId((cur) => (cur === oldKey ? newKey : cur));
       }
-      if (op.destFolderId) setExpanded((e) => ({ ...e, [`folder:${op.destFolderId}`]: true }));
+      if (op.destFolderId)
+        setExpanded((e) => ({ ...e, [`folder:${op.destFolderId}`]: true }));
     }
   }
 
   /** Drop-indicator class for a tree row/request given the current hover. */
-  const overClass = (id: string) => (overRow?.id === id ? " drag-over-" + overRow.zone : "");
+  const overClass = (id: string) =>
+    overRow?.id === id ? " drag-over-" + overRow.zone : "";
 
   function renderFolder(
     folder: HttpFolder,
@@ -2549,18 +2770,30 @@ export function CurlUiWorkspace({
           data-parent-folder-id={parentFolderId ?? ""}
           className={
             "curlui-tree-row" +
-            (selectedId === folderTabKey(collectionId, folder.id) ? " active" : "") +
+            (selectedId === folderTabKey(collectionId, folder.id)
+              ? " active"
+              : "") +
             (dragId === folder.id ? " dragging" : "") +
             overClass(folder.id)
           }
           style={{ paddingLeft: 22 + depth * 14 }}
           onPointerDown={(e) =>
-            onTreePointerDown(e, "folder", folder.id, collectionId, parentFolderId)
+            onTreePointerDown(
+              e,
+              "folder",
+              folder.id,
+              collectionId,
+              parentFolderId,
+            )
           }
           onPointerMove={onTreePointerMove}
           onPointerUp={onTreePointerUp}
         >
-          <button type="button" className="curlui-tree-toggle" onClick={() => toggleExpanded(key)}>
+          <button
+            type="button"
+            className="curlui-tree-toggle"
+            onClick={() => toggleExpanded(key)}
+          >
             {isOpen ? "▾" : "▸"}
           </button>
           <span className="curlui-tree-folder-icon">📁</span>
@@ -2579,8 +2812,15 @@ export function CurlUiWorkspace({
             {folder.name}
           </button>
           <span className="curlui-tree-actions">
-            <div className="conn-menu" ref={treeMenu === key ? treeMenuRef : undefined}>
-              <button type="button" title="More" onClick={(e) => openTreeMenu(key, e)}>
+            <div
+              className="conn-menu"
+              ref={treeMenu === key ? treeMenuRef : undefined}
+            >
+              <button
+                type="button"
+                title="More"
+                onClick={(e) => openTreeMenu(key, e)}
+              >
                 ⋮
               </button>
               {treeMenu === key && treeMenuPos && (
@@ -2596,7 +2836,11 @@ export function CurlUiWorkspace({
                       setTreeMenu(null);
                       openNamePrompt({
                         kind: "folder",
-                        target: { kind: "folder", collectionId, folderId: folder.id },
+                        target: {
+                          kind: "folder",
+                          collectionId,
+                          folderId: folder.id,
+                        },
                       });
                     }}
                   >
@@ -2608,7 +2852,11 @@ export function CurlUiWorkspace({
                     onClick={(e) => {
                       e.stopPropagation();
                       setTreeMenu(null);
-                      addRequest({ kind: "folder", collectionId, folderId: folder.id });
+                      addRequest({
+                        kind: "folder",
+                        collectionId,
+                        folderId: folder.id,
+                      });
                     }}
                   >
                     + New request
@@ -2636,8 +2884,12 @@ export function CurlUiWorkspace({
         </div>
         {isOpen && (
           <div className="curlui-tree-children">
-            {folder.requests.map((r) => renderRequest(r, collectionId, folder.id, depth + 1))}
-            {folder.folders.map((f) => renderFolder(f, collectionId, folder.id, depth + 1))}
+            {folder.requests.map((r) =>
+              renderRequest(r, collectionId, folder.id, depth + 1),
+            )}
+            {folder.folders.map((f) =>
+              renderFolder(f, collectionId, folder.id, depth + 1),
+            )}
           </div>
         )}
       </div>
@@ -2674,11 +2926,15 @@ export function CurlUiWorkspace({
           }
           selectRequest(collectionId, folderId, req.id);
         }}
-        onPointerDown={(e) => onTreePointerDown(e, "request", req.id, collectionId, folderId)}
+        onPointerDown={(e) =>
+          onTreePointerDown(e, "request", req.id, collectionId, folderId)
+        }
         onPointerMove={onTreePointerMove}
         onPointerUp={onTreePointerUp}
       >
-        <span className={"curlui-req-method m-" + methodColor(req.method)}>{req.method}</span>
+        <span className={"curlui-req-method m-" + methodColor(req.method)}>
+          {req.method}
+        </span>
         <span className="curlui-req-name">{req.name}</span>
       </button>
     );
@@ -2688,7 +2944,8 @@ export function CurlUiWorkspace({
 
   const deleteConfirmExternalPath =
     deleteConfirm?.kind === "collection"
-      ? collections.collections.find((c) => c.id === deleteConfirm.collectionId)?.external?.path
+      ? collections.collections.find((c) => c.id === deleteConfirm.collectionId)
+          ?.external?.path
       : undefined;
 
   return (
@@ -2755,8 +3012,12 @@ export function CurlUiWorkspace({
                     data-col-id={col.id}
                     className={
                       "curlui-tree-row curlui-tree-col" +
-                      (selectedId === collectionTabKey(col.id) ? " active" : "") +
-                      (col.external?.missing ? " curlui-tree-col-missing" : "") +
+                      (selectedId === collectionTabKey(col.id)
+                        ? " active"
+                        : "") +
+                      (col.external?.missing
+                        ? " curlui-tree-col-missing"
+                        : "") +
                       overClass(col.id)
                     }
                     style={{ paddingLeft: 8 }}
@@ -2789,14 +3050,24 @@ export function CurlUiWorkspace({
                       )}
                     </button>
                     <span className="curlui-tree-actions">
-                      <div className="conn-menu" ref={treeMenu === key ? treeMenuRef : undefined}>
-                        <button type="button" title="More" onClick={(e) => openTreeMenu(key, e)}>
+                      <div
+                        className="conn-menu"
+                        ref={treeMenu === key ? treeMenuRef : undefined}
+                      >
+                        <button
+                          type="button"
+                          title="More"
+                          onClick={(e) => openTreeMenu(key, e)}
+                        >
                           ⋮
                         </button>
                         {treeMenu === key && treeMenuPos && (
                           <div
                             className="conn-menu-popup"
-                            style={{ right: treeMenuPos.right, top: treeMenuPos.top }}
+                            style={{
+                              right: treeMenuPos.right,
+                              top: treeMenuPos.top,
+                            }}
                           >
                             <button
                               type="button"
@@ -2806,7 +3077,10 @@ export function CurlUiWorkspace({
                                 setTreeMenu(null);
                                 openNamePrompt({
                                   kind: "folder",
-                                  target: { kind: "collection", collectionId: col.id },
+                                  target: {
+                                    kind: "collection",
+                                    collectionId: col.id,
+                                  },
                                 });
                               }}
                             >
@@ -2818,7 +3092,10 @@ export function CurlUiWorkspace({
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setTreeMenu(null);
-                                addRequest({ kind: "collection", collectionId: col.id });
+                                addRequest({
+                                  kind: "collection",
+                                  collectionId: col.id,
+                                });
                               }}
                             >
                               + New request
@@ -2856,7 +3133,9 @@ export function CurlUiWorkspace({
                   </div>
                   {isOpen && (
                     <div className="curlui-tree-children">
-                      {col.requests.map((r) => renderRequest(r, col.id, null, 0))}
+                      {col.requests.map((r) =>
+                        renderRequest(r, col.id, null, 0),
+                      )}
                       {col.folders.map((f) => renderFolder(f, col.id, null, 0))}
                     </div>
                   )}
@@ -2883,7 +3162,10 @@ export function CurlUiWorkspace({
             >
               +
             </button>
-            <div className="conn-menu" ref={externalMenuOpen ? externalMenuRef : undefined}>
+            <div
+              className="conn-menu"
+              ref={externalMenuOpen ? externalMenuRef : undefined}
+            >
               <button
                 type="button"
                 className="curlui-tree-fab"
@@ -2907,7 +3189,10 @@ export function CurlUiWorkspace({
               {externalMenuOpen && externalMenuPos && (
                 <div
                   className="conn-menu-popup"
-                  style={{ left: externalMenuPos.left, bottom: externalMenuPos.bottom }}
+                  style={{
+                    left: externalMenuPos.left,
+                    bottom: externalMenuPos.bottom,
+                  }}
                 >
                   <button
                     type="button"
@@ -2953,7 +3238,9 @@ export function CurlUiWorkspace({
                 key={t.key}
                 role="tab"
                 aria-selected={t.key === selectedId}
-                className={"curlui-req-tab" + (t.key === selectedId ? " active" : "")}
+                className={
+                  "curlui-req-tab" + (t.key === selectedId ? " active" : "")
+                }
                 onClick={() => setSelectedId(t.key)}
                 onMouseDown={(e) => {
                   // Middle-click closes, like a browser tab.
@@ -2975,7 +3262,11 @@ export function CurlUiWorkspace({
                 ) : t.kind === "environment" ? (
                   <span className="curlui-req-tab-icon">🌱</span>
                 ) : (
-                  <span className={"curlui-req-tab-method m-" + methodColor(t.method)}>
+                  <span
+                    className={
+                      "curlui-req-tab-method m-" + methodColor(t.method)
+                    }
+                  >
                     {t.method}
                   </span>
                 )}
@@ -3021,7 +3312,9 @@ export function CurlUiWorkspace({
               baseEnv={env}
               tab={collectionTab}
               onTabChange={setCollectionTab}
-              onPatch={(patch) => patchCollection(activeTab.collection.id, patch)}
+              onPatch={(patch) =>
+                patchCollection(activeTab.collection.id, patch)
+              }
               onExport={() => onExportCollection(activeTab.collection.id)}
               onRelink={() => onRelinkCollection(activeTab.collection.id)}
               onDelete={() =>
@@ -3052,7 +3345,9 @@ export function CurlUiWorkspace({
                   <button
                     type="button"
                     title="Set as active environment"
-                    onClick={() => setActiveEnvironment(activeTab.environment.id)}
+                    onClick={() =>
+                      setActiveEnvironment(activeTab.environment.id)
+                    }
                   >
                     Set active
                   </button>
@@ -3073,8 +3368,9 @@ export function CurlUiWorkspace({
               </div>
               <div className="curlui-tab-panel">
                 <p className="muted curlui-collection-hint">
-                  Variables in this environment. Use them as <code>{"{{NAME}}"}</code> in any
-                  request when this environment is active.
+                  Variables in this environment. Use them as{" "}
+                  <code>{"{{NAME}}"}</code> in any request when this environment
+                  is active.
                 </p>
                 <KvEditor
                   rows={headersToRows(activeTab.environment.variables)}
@@ -3120,7 +3416,9 @@ export function CurlUiWorkspace({
                 <DescriptionEditor
                   value={activeTab.folder.description ?? ""}
                   onChange={(v) =>
-                    patchFolder(activeTab.collectionId, activeTab.folderId, { description: v })
+                    patchFolder(activeTab.collectionId, activeTab.folderId, {
+                      description: v,
+                    })
                   }
                 />
               </div>
@@ -3153,7 +3451,9 @@ export function CurlUiWorkspace({
                 </div>
                 <div className="curlui-request-bar-row">
                   <select
-                    className={"curlui-method m-" + methodColor(activeRequest.method)}
+                    className={
+                      "curlui-method m-" + methodColor(activeRequest.method)
+                    }
                     value={activeRequest.method}
                     onChange={(e) => patchActive({ method: e.target.value })}
                   >
@@ -3203,7 +3503,11 @@ export function CurlUiWorkspace({
                       Delete
                     </button>
                   )}
-                  <button type="button" title="Copy as curl command" onClick={onCopyCurl}>
+                  <button
+                    type="button"
+                    title="Copy as curl command"
+                    onClick={onCopyCurl}
+                  >
                     {copiedCurl ? "Copied!" : "</>"}
                   </button>
                 </div>
@@ -3218,7 +3522,9 @@ export function CurlUiWorkspace({
                   >
                     Env
                     {Object.keys(effectiveEnv).length > 0 && (
-                      <span className="tab-badge">{Object.keys(effectiveEnv).length}</span>
+                      <span className="tab-badge">
+                        {Object.keys(effectiveEnv).length}
+                      </span>
                     )}
                   </button>
                   <button
@@ -3229,7 +3535,10 @@ export function CurlUiWorkspace({
                     Params
                     {paramRows.some((r) => r.enabled && r.key.trim()) && (
                       <span className="tab-badge">
-                        {paramRows.filter((r) => r.enabled && r.key.trim()).length}
+                        {
+                          paramRows.filter((r) => r.enabled && r.key.trim())
+                            .length
+                        }
                       </span>
                     )}
                   </button>
@@ -3239,9 +3548,9 @@ export function CurlUiWorkspace({
                     onClick={() => setReqTab("auth")}
                   >
                     Auth
-                    {!["inherit", "none"].includes(activeRequest.auth?.kind ?? "inherit") && (
-                      <span className="tab-dot" />
-                    )}
+                    {!["inherit", "none"].includes(
+                      activeRequest.auth?.kind ?? "inherit",
+                    ) && <span className="tab-dot" />}
                   </button>
                   <button
                     type="button"
@@ -3251,7 +3560,10 @@ export function CurlUiWorkspace({
                     Headers
                     {headerRows.some((r) => r.enabled && r.key.trim()) && (
                       <span className="tab-badge">
-                        {headerRows.filter((r) => r.enabled && r.key.trim()).length}
+                        {
+                          headerRows.filter((r) => r.enabled && r.key.trim())
+                            .length
+                        }
                       </span>
                     )}
                   </button>
@@ -3261,15 +3573,21 @@ export function CurlUiWorkspace({
                     onClick={() => setReqTab("body")}
                   >
                     Body
-                    {activeRequest.body_kind !== "none" && <span className="tab-dot" />}
+                    {activeRequest.body_kind !== "none" && (
+                      <span className="tab-dot" />
+                    )}
                   </button>
                   <button
                     type="button"
-                    className={"tab" + (reqTab === "prescript" ? " active" : "")}
+                    className={
+                      "tab" + (reqTab === "prescript" ? " active" : "")
+                    }
                     onClick={() => setReqTab("prescript")}
                   >
                     Pre-request
-                    {activeRequest.preScript?.trim() && <span className="tab-dot" />}
+                    {activeRequest.preScript?.trim() && (
+                      <span className="tab-dot" />
+                    )}
                   </button>
                   <button
                     type="button"
@@ -3277,15 +3595,21 @@ export function CurlUiWorkspace({
                     onClick={() => setReqTab("tests")}
                   >
                     Tests
-                    {activeRequest.postScript?.trim() && <span className="tab-dot" />}
+                    {activeRequest.postScript?.trim() && (
+                      <span className="tab-dot" />
+                    )}
                   </button>
                   <button
                     type="button"
-                    className={"tab" + (reqTab === "description" ? " active" : "")}
+                    className={
+                      "tab" + (reqTab === "description" ? " active" : "")
+                    }
                     onClick={() => setReqTab("description")}
                   >
                     Description
-                    {activeRequest.description?.trim() && <span className="tab-dot" />}
+                    {activeRequest.description?.trim() && (
+                      <span className="tab-dot" />
+                    )}
                   </button>
                 </div>
 
@@ -3294,8 +3618,9 @@ export function CurlUiWorkspace({
                     <div className="curlui-env-tab">
                       {Object.keys(effectiveEnv).length === 0 ? (
                         <p className="muted">
-                          No environment variables. Select or create an environment, or define
-                          variables in a collection’s Variables tab, then use them as{" "}
+                          No environment variables. Select or create an
+                          environment, or define variables in a collection’s
+                          Variables tab, then use them as{" "}
                           <code>{"{{NAME}}"}</code>.
                         </p>
                       ) : (
@@ -3330,23 +3655,34 @@ export function CurlUiWorkspace({
                         <input
                           type="checkbox"
                           checked={activeRequest.inheritHeaders !== false}
-                          onChange={(e) => patchActive({ inheritHeaders: e.target.checked })}
+                          onChange={(e) =>
+                            patchActive({ inheritHeaders: e.target.checked })
+                          }
                         />
                         Inherit headers from collection
                       </label>
                       {activeRequest.inheritHeaders !== false &&
                         activeRequestCollection?.headers &&
-                        Object.keys(activeRequestCollection.headers).length > 0 && (
+                        Object.keys(activeRequestCollection.headers).length >
+                          0 && (
                           <div className="curlui-inherited-headers">
-                            {Object.entries(activeRequestCollection.headers).map(([k, v]) => (
+                            {Object.entries(
+                              activeRequestCollection.headers,
+                            ).map(([k, v]) => (
                               <div key={k} className="curlui-inherited-row">
-                                <span className="curlui-inherited-key">{k}</span>
-                                <span className="curlui-inherited-val">{v}</span>
+                                <span className="curlui-inherited-key">
+                                  {k}
+                                </span>
+                                <span className="curlui-inherited-val">
+                                  {v}
+                                </span>
                               </div>
                             ))}
                           </div>
                         )}
-                      <div className="curlui-auto-headers-label">Auto-generated headers</div>
+                      <div className="curlui-auto-headers-label">
+                        Auto-generated headers
+                      </div>
                       <KvEditor
                         rows={autoHeaderRows(
                           headerRows.filter((r) => r.enabled).map((r) => r.key),
@@ -3355,7 +3691,9 @@ export function CurlUiWorkspace({
                         onChange={() => {}}
                         disabled
                       />
-                      <div className="curlui-auto-headers-label">Custom headers</div>
+                      <div className="curlui-auto-headers-label">
+                        Custom headers
+                      </div>
                       <KvEditor
                         rows={headerRows}
                         onChange={onHeaderRowsChange}
@@ -3452,7 +3790,11 @@ export function CurlUiWorkspace({
               {response && (
                 <div className="curlui-response">
                   <div className="curlui-response-meta">
-                    <span className={"curlui-status s-" + statusClass(response.status)}>
+                    <span
+                      className={
+                        "curlui-status s-" + statusClass(response.status)
+                      }
+                    >
                       {response.status} {response.status_text}
                     </span>
                     <span className="muted">{response.elapsed_ms} ms</span>
@@ -3468,26 +3810,36 @@ export function CurlUiWorkspace({
                     </button>
                     <button
                       type="button"
-                      className={"tab" + (resTab === "headers" ? " active" : "")}
+                      className={
+                        "tab" + (resTab === "headers" ? " active" : "")
+                      }
                       onClick={() => setResTab("headers")}
                     >
                       Headers
-                      <span className="tab-badge">{Object.keys(response.headers).length}</span>
+                      <span className="tab-badge">
+                        {Object.keys(response.headers).length}
+                      </span>
                     </button>
                     {testRun && (
                       <button
                         type="button"
-                        className={"tab" + (resTab === "tests" ? " active" : "")}
+                        className={
+                          "tab" + (resTab === "tests" ? " active" : "")
+                        }
                         onClick={() => setResTab("tests")}
                       >
                         Test Results
                         {testRun.tests.length > 0 && (
                           <span
                             className={
-                              "tab-badge" + (testRun.tests.some((t) => !t.passed) ? " bad" : "")
+                              "tab-badge" +
+                              (testRun.tests.some((t) => !t.passed)
+                                ? " bad"
+                                : "")
                             }
                           >
-                            {testRun.tests.filter((t) => t.passed).length}/{testRun.tests.length}
+                            {testRun.tests.filter((t) => t.passed).length}/
+                            {testRun.tests.length}
                           </span>
                         )}
                         {testRun.tests.length === 0 && testRun.error && (
@@ -3511,21 +3863,25 @@ export function CurlUiWorkspace({
                     )}
                     {resTab === "headers" && (
                       <KvEditor
-                        rows={Object.entries(response.headers).map(([k, v]) => newKvRow(k, v))}
+                        rows={Object.entries(response.headers).map(([k, v]) =>
+                          newKvRow(k, v),
+                        )}
                         onChange={() => {}}
                         disabled
                         disabledTitle=""
                       />
                     )}
-                    {resTab === "tests" && testRun && <TestResultsView run={testRun} />}
+                    {resTab === "tests" && testRun && (
+                      <TestResultsView run={testRun} />
+                    )}
                   </div>
                 </div>
               )}
             </div>
           ) : (
             <div className="placeholder">
-              Select a request from the collections tree, or click <strong>+</strong> above to start
-              a new one.
+              Select a request from the collections tree, or click{" "}
+              <strong>+</strong> above to start a new one.
             </div>
           )}
         </main>
@@ -3570,7 +3926,8 @@ export function CurlUiWorkspace({
         <ConfirmDialog
           title={`Delete ${deleteConfirm.kind}`}
           message={
-            deleteConfirm.kind === "request" || deleteConfirm.kind === "environment"
+            deleteConfirm.kind === "request" ||
+            deleteConfirm.kind === "environment"
               ? `Delete “${deleteConfirm.name}”?`
               : deleteConfirmExternalPath
                 ? `Remove “${deleteConfirm.name}” from this workspace? This only removes the link — the file on disk (${deleteConfirmExternalPath}) is not deleted.`
@@ -3625,7 +3982,8 @@ export function CurlUiWorkspace({
       {namePrompt && (
         <Modal
           title={
-            namePrompt.kind === "collection" || namePrompt.kind === "external-collection"
+            namePrompt.kind === "collection" ||
+            namePrompt.kind === "external-collection"
               ? "New collection"
               : namePrompt.kind === "environment"
                 ? "New environment"
@@ -3642,7 +4000,8 @@ export function CurlUiWorkspace({
               if (e.key === "Enter") confirmName();
             }}
             placeholder={
-              namePrompt.kind === "collection" || namePrompt.kind === "external-collection"
+              namePrompt.kind === "collection" ||
+              namePrompt.kind === "external-collection"
                 ? "Collection name"
                 : namePrompt.kind === "environment"
                   ? "Environment name"
@@ -3668,17 +4027,24 @@ export function CurlUiWorkspace({
 
       {saveDialog &&
         (() => {
-          const col = collections.collections.find((c) => c.id === saveDialog.collectionId);
+          const col = collections.collections.find(
+            (c) => c.id === saveDialog.collectionId,
+          );
           const folders = col ? flattenFolders(col) : [];
           return (
-            <Modal title="Save request to collection" onClose={() => setSaveDialog(null)}>
+            <Modal
+              title="Save request to collection"
+              onClose={() => setSaveDialog(null)}
+            >
               <label className="curlui-save-field">
                 <span className="field-label">Name</span>
                 <input
                   type="text"
                   className="curlui-name-input"
                   value={saveDialog.name}
-                  onChange={(e) => setSaveDialog((d) => d && { ...d, name: e.target.value })}
+                  onChange={(e) =>
+                    setSaveDialog((d) => d && { ...d, name: e.target.value })
+                  }
                   onKeyDown={(e) => {
                     if (e.key === "Enter") confirmSave();
                   }}
@@ -3691,10 +4057,19 @@ export function CurlUiWorkspace({
                 <select
                   value={saveDialog.collectionId}
                   onChange={(e) =>
-                    setSaveDialog((d) => d && { ...d, collectionId: e.target.value, folderId: "" })
+                    setSaveDialog(
+                      (d) =>
+                        d && {
+                          ...d,
+                          collectionId: e.target.value,
+                          folderId: "",
+                        },
+                    )
                   }
                 >
-                  {collections.collections.length === 0 && <option value="">No collections</option>}
+                  {collections.collections.length === 0 && (
+                    <option value="">No collections</option>
+                  )}
                   {collections.collections.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
@@ -3706,7 +4081,11 @@ export function CurlUiWorkspace({
                 <span className="field-label">Folder</span>
                 <select
                   value={saveDialog.folderId}
-                  onChange={(e) => setSaveDialog((d) => d && { ...d, folderId: e.target.value })}
+                  onChange={(e) =>
+                    setSaveDialog(
+                      (d) => d && { ...d, folderId: e.target.value },
+                    )
+                  }
                   disabled={folders.length === 0}
                 >
                   <option value="">(collection root)</option>

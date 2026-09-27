@@ -48,15 +48,19 @@ const STAGE_DEFAULTS: Record<string, string> = {
   $addFields: '{\n  newField: "$expression"\n}',
   $bucket:
     '{\n  groupBy: "$field",\n  boundaries: [0, 10, 20],\n  default: "other",\n  output: { count: { $sum: 1 } }\n}',
-  $bucketAuto: '{\n  groupBy: "$field",\n  buckets: 5,\n  output: { count: { $sum: 1 } }\n}',
+  $bucketAuto:
+    '{\n  groupBy: "$field",\n  buckets: 5,\n  output: { count: { $sum: 1 } }\n}',
   $changeStream: '{\n  fullDocument: "updateLookup"\n}',
   $changeStreamSplitLargeEvent: "{}",
-  $collStats: "{\n  latencyStats: { histograms: false },\n  storageStats: {},\n  count: {}\n}",
+  $collStats:
+    "{\n  latencyStats: { histograms: false },\n  storageStats: {},\n  count: {}\n}",
   $count: '"total"',
-  $densify: '{\n  field: "field",\n  range: { step: 1, unit: "day", bounds: "full" }\n}',
+  $densify:
+    '{\n  field: "field",\n  range: { step: 1, unit: "day", bounds: "full" }\n}',
   $documents: "[\n  { field: 1 }\n]",
   $facet: "{\n  outputField: [\n    // sub-pipeline stages\n  ]\n}",
-  $fill: '{\n  sortBy: { field: 1 },\n  output: { field: { method: "linear" } }\n}',
+  $fill:
+    '{\n  sortBy: { field: 1 },\n  output: { field: { method: "linear" } }\n}',
   $geoNear:
     '{\n  near: { type: "Point", coordinates: [0, 0] },\n  distanceField: "distance",\n  spherical: true\n}',
   $graphLookup:
@@ -75,7 +79,8 @@ const STAGE_DEFAULTS: Record<string, string> = {
   $replaceRoot: '{\n  newRoot: "$field"\n}',
   $replaceWith: '"$field"',
   $sample: "{\n  size: 100\n}",
-  $search: '{\n  index: "default",\n  text: { query: "value", path: "field" }\n}',
+  $search:
+    '{\n  index: "default",\n  text: { query: "value", path: "field" }\n}',
   $searchMeta: '{\n  index: "default",\n  facet: { facets: {} }\n}',
   $set: '{\n  newField: "$expression"\n}',
   $setWindowFields:
@@ -127,9 +132,14 @@ export function formatDoc(doc: unknown): string {
  * (the form MongoDB tools import). Used by the document "Copy raw JSON" action. */
 export function formatDocJson(doc: unknown): string {
   try {
-    return EJSON.stringify(EJSON.deserialize(doc as Record<string, unknown>), null, 2, {
-      relaxed: true,
-    });
+    return EJSON.stringify(
+      EJSON.deserialize(doc as Record<string, unknown>),
+      null,
+      2,
+      {
+        relaxed: true,
+      },
+    );
   } catch {
     return JSON.stringify(doc, null, 2);
   }
@@ -138,8 +148,11 @@ export function formatDocJson(doc: unknown): string {
 /** Pull the documents out of a `find`/`aggregate`/`listIndexes` command reply
  * (they live under `cursor.firstBatch`). */
 export function cursorBatch(rc: RunCommandResult): unknown[] {
-  const cursor = (rc.result as { cursor?: { firstBatch?: unknown } } | null)?.cursor;
-  return Array.isArray(cursor?.firstBatch) ? (cursor!.firstBatch as unknown[]) : [];
+  const cursor = (rc.result as { cursor?: { firstBatch?: unknown } } | null)
+    ?.cursor;
+  return Array.isArray(cursor?.firstBatch)
+    ? (cursor!.firstBatch as unknown[])
+    : [];
 }
 
 /** Format a `runCommand` reply for the Script tab: a cursor reply
@@ -147,7 +160,8 @@ export function cursorBatch(rc: RunCommandResult): unknown[] {
  * even none, so an empty result never shows the raw cursor envelope; `distinct`
  * yields its values; every other reply (write/count/admin) is a single blob. */
 export function formatRunResult(rc: RunCommandResult): string[] {
-  const cursor = (rc.result as { cursor?: { firstBatch?: unknown } } | null)?.cursor;
+  const cursor = (rc.result as { cursor?: { firstBatch?: unknown } } | null)
+    ?.cursor;
   if (Array.isArray(cursor?.firstBatch)) {
     return (cursor!.firstBatch as unknown[]).map(formatDoc);
   }
@@ -165,7 +179,10 @@ export interface IndexRow {
 
 /** Summarize a raw `listIndexes` entry (extended JSON) for the Indexes table. */
 export function describeIndex(raw: unknown): IndexRow {
-  const idx = EJSON.deserialize(raw as Record<string, unknown>) as Record<string, unknown>;
+  const idx = EJSON.deserialize(raw as Record<string, unknown>) as Record<
+    string,
+    unknown
+  >;
   const key = (idx.key ?? {}) as Record<string, unknown>;
   const keys = Object.entries(key)
     .map(([k, v]) => `${k}: ${v}`)
@@ -174,7 +191,8 @@ export function describeIndex(raw: unknown): IndexRow {
   if (idx.unique) props.push("unique");
   if (idx.sparse) props.push("sparse");
   if (idx.hidden) props.push("hidden");
-  if (idx.expireAfterSeconds != null) props.push(`TTL ${idx.expireAfterSeconds}s`);
+  if (idx.expireAfterSeconds != null)
+    props.push(`TTL ${idx.expireAfterSeconds}s`);
   if (idx.partialFilterExpression) props.push("partial");
   return { name: String(idx.name ?? ""), keys, props: props.join(", ") || "—" };
 }
@@ -196,10 +214,17 @@ function parseStageValue(text: string): unknown {
 // invalid shell-syntax input so the caller can show the error.
 
 /** Build a `find` command from the Documents filter box (shell syntax). */
-export function buildFindCommand(collection: string, filterText: string, limit: number): string {
+export function buildFindCommand(
+  collection: string,
+  filterText: string,
+  limit: number,
+): string {
   const text = filterText.trim();
   const filter = text ? parseFilter(text) : {};
-  return EJSON.stringify({ find: collection, filter, limit, batchSize: limit }, { relaxed: false });
+  return EJSON.stringify(
+    { find: collection, filter, limit, batchSize: limit },
+    { relaxed: false },
+  );
 }
 
 /** Build an `aggregate` command from the builder's enabled, non-empty stages. */
@@ -234,7 +259,11 @@ function dbCollExpr(collection: string): string {
 }
 
 /** A mongosh `find(...).limit(n)` script for the Documents filter (shell syntax). */
-export function findScript(collection: string, filterText: string, limit: number): string {
+export function findScript(
+  collection: string,
+  filterText: string,
+  limit: number,
+): string {
   const filter = filterText.trim() || "{}";
   return `${dbCollExpr(collection)}.find(${filter}).limit(${limit});`;
 }
@@ -254,7 +283,10 @@ export function aggregateScript(collection: string, pipeline: Stage[]): string {
  * it has none. */
 export function docId(doc: unknown): unknown {
   try {
-    const d = EJSON.deserialize(doc as Record<string, unknown>) as Record<string, unknown>;
+    const d = EJSON.deserialize(doc as Record<string, unknown>) as Record<
+      string,
+      unknown
+    >;
     return d?._id ?? null;
   } catch {
     return null;
@@ -277,8 +309,14 @@ export function buildDeleteCommand(collection: string, doc: unknown): string {
 /** Build a replace command from edited shell-syntax text: the edited document
  * fully replaces the one matched by its `_id`. Throws on parse error or a
  * missing/edited `_id`. */
-export function buildReplaceCommand(collection: string, editedText: string): string {
-  const replacement = parseFilter(editedText.trim() || "{}") as Record<string, unknown>;
+export function buildReplaceCommand(
+  collection: string,
+  editedText: string,
+): string {
+  const replacement = parseFilter(editedText.trim() || "{}") as Record<
+    string,
+    unknown
+  >;
   const id = replacement._id;
   if (id === undefined) {
     throw new Error("The edited document must keep its _id.");

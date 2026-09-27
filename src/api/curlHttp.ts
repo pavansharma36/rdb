@@ -11,7 +11,11 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { readFile } from "@tauri-apps/plugin-fs";
 import type { ConnectionConfig } from "./api.ts";
-import { encodeFormComponent, type HttpRequest, type HttpResponse } from "./curlui.ts";
+import {
+  encodeFormComponent,
+  type HttpRequest,
+  type HttpResponse,
+} from "./curlui.ts";
 
 /** Transport settings derived from the connection config. Mirrors the plugin's
  *  `SessionSettings` (`crates/plugins/curlui/src/lib.rs`). */
@@ -133,10 +137,16 @@ async function buildFormData(parts: HttpRequest["parts"]): Promise<FormData> {
         bytes = await readFile(p.value);
       } catch (e) {
         const raw = e instanceof Error ? e.message : String(e);
-        throw new Error(`Could not read file "${p.value}" for form field "${p.name}": ${raw}`);
+        throw new Error(
+          `Could not read file "${p.value}" for form field "${p.name}": ${raw}`,
+        );
       }
-      const filename = p.filename && p.filename.trim() ? p.filename : basename(p.value);
-      const type = p.content_type && p.content_type.trim() ? p.content_type : guessMime(filename);
+      const filename =
+        p.filename && p.filename.trim() ? p.filename : basename(p.value);
+      const type =
+        p.content_type && p.content_type.trim()
+          ? p.content_type
+          : guessMime(filename);
       fd.append(p.name, new File([bytes], filename, { type }), filename);
     } else if (p.content_type && p.content_type.trim()) {
       // Preserve an explicit Content-Type on a text field via a Blob (the
@@ -241,12 +251,17 @@ export async function sendHttpRequest(
       // send it when TLS verification is disabled.
       ...(settings.verifyTls
         ? {}
-        : { danger: { acceptInvalidCerts: true, acceptInvalidHostnames: true } }),
+        : {
+            danger: { acceptInvalidCerts: true, acceptInvalidHostnames: true },
+          }),
       // A total-request timeout, matching reqwest's `.timeout(...)`.
       signal: AbortSignal.timeout(settings.timeoutSecs * 1000),
     });
   } catch (e) {
-    if (e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError")) {
+    if (
+      e instanceof DOMException &&
+      (e.name === "TimeoutError" || e.name === "AbortError")
+    ) {
       throw new Error(`Request timed out after ${settings.timeoutSecs}s.`);
     }
     throw new Error(describeFetchError(url, e));

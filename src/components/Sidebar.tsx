@@ -74,7 +74,9 @@ export function Sidebar({
   // Viewport coords (right/top, px) to anchor the open popup. The popup is
   // position:fixed so it escapes the scrollable .conn-list (which would
   // otherwise clip it and add a scrollbar).
-  const [menuPos, setMenuPos] = useState<{ right: number; top: number } | null>(null);
+  const [menuPos, setMenuPos] = useState<{ right: number; top: number } | null>(
+    null,
+  );
   const connMenuRef = useRef<HTMLDivElement>(null);
 
   const [version, setVersion] = useState("");
@@ -122,14 +124,23 @@ export function Sidebar({
     // Left button only; ignore presses that land on the action buttons/menu.
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("button, .conn-menu")) return;
-    dragRef.current = { id, startX: e.clientX, startY: e.clientY, dragging: false };
+    dragRef.current = {
+      id,
+      startX: e.clientX,
+      startY: e.clientY,
+      dragging: false,
+    };
   }
 
   function onItemPointerMove(e: React.PointerEvent) {
     const st = dragRef.current;
     if (!st) return;
     if (!st.dragging) {
-      if (Math.abs(e.clientX - st.startX) < 5 && Math.abs(e.clientY - st.startY) < 5) return;
+      if (
+        Math.abs(e.clientX - st.startX) < 5 &&
+        Math.abs(e.clientY - st.startY) < 5
+      )
+        return;
       st.dragging = true;
       setDragId(st.id);
       // Route the rest of the gesture to this row even if the pointer strays.
@@ -175,7 +186,10 @@ export function Sidebar({
   useEffect(() => {
     if (openMenuId === null) return;
     function onClick(e: MouseEvent) {
-      if (connMenuRef.current && !connMenuRef.current.contains(e.target as Node)) {
+      if (
+        connMenuRef.current &&
+        !connMenuRef.current.contains(e.target as Node)
+      ) {
         setOpenMenuId(null);
       }
     }
@@ -193,7 +207,11 @@ export function Sidebar({
   return (
     <aside
       className={"sidebar" + (collapsible ? " collapsible" : "")}
-      style={collapsible ? ({ "--sidebar-expanded": `${width}px` } as CSSProperties) : { width }}
+      style={
+        collapsible
+          ? ({ "--sidebar-expanded": `${width}px` } as CSSProperties)
+          : { width }
+      }
     >
       <div className="sidebar-header">
         <span className="logo">rdb</span>
@@ -202,7 +220,10 @@ export function Sidebar({
           {channel === "nightly" ? "nightly" : `v${version}`}
         </span>
       </div>
-      <button className={"new-btn" + (creating ? " active" : "")} onClick={onNew}>
+      <button
+        className={"new-btn" + (creating ? " active" : "")}
+        onClick={onNew}
+      >
         + New connection
       </button>
       <nav className="conn-list">
@@ -245,7 +266,11 @@ export function Sidebar({
               ) : (
                 <span
                   className={
-                    "dot dot-" + kind + " dot-id-" + s.pluginId + (live ? " connected" : "")
+                    "dot dot-" +
+                    kind +
+                    " dot-id-" +
+                    s.pluginId +
+                    (live ? " connected" : "")
                   }
                   title={live ? "Connected" : "Not connected"}
                 />
@@ -265,7 +290,10 @@ export function Sidebar({
                   ⏏
                 </button>
               )}
-              <div className="conn-menu" ref={openMenuId === s.id ? connMenuRef : undefined}>
+              <div
+                className="conn-menu"
+                ref={openMenuId === s.id ? connMenuRef : undefined}
+              >
                 <button
                   className="icon-btn"
                   title="More"
@@ -332,14 +360,21 @@ export function Sidebar({
           ⤓ Install plugin
         </button>
         <div className="footer-menu" ref={menuRef}>
-          <button className="icon-btn" title="More" onClick={() => setMenuOpen((o) => !o)}>
+          <button
+            className="icon-btn"
+            title="More"
+            onClick={() => setMenuOpen((o) => !o)}
+          >
             ⋮
           </button>
           {menuOpen && (
             <div className="footer-menu-popup">
               <label className="footer-menu-theme">
                 <span className="muted">Theme</span>
-                <select value={theme} onChange={(e) => onThemeChange(e.target.value)}>
+                <select
+                  value={theme}
+                  onChange={(e) => onThemeChange(e.target.value)}
+                >
                   {THEMES.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.label}
@@ -368,7 +403,9 @@ export function Sidebar({
                 className="footer-menu-item support-btn"
                 title="Support / Donate"
                 onClick={() =>
-                  openExternal("https://github.com/sponsors/pavansharma36").catch(() => {})
+                  openExternal(
+                    "https://github.com/sponsors/pavansharma36",
+                  ).catch(() => {})
                 }
               >
                 ♥ Support
@@ -399,15 +436,18 @@ export function Sidebar({
         <Modal title="About rdb" onClose={() => setAboutOpen(false)}>
           <div className="about-dialog">
             <p className="about-name">
-              <span className="logo">rdb</span> <span className="muted">client</span>
+              <span className="logo">rdb</span>{" "}
+              <span className="muted">client</span>
             </p>
             <p>
               Version{" "}
-              <strong>{channel === "nightly" ? `${version} (nightly)` : `v${version}`}</strong>
+              <strong>
+                {channel === "nightly" ? `${version} (nightly)` : `v${version}`}
+              </strong>
             </p>
             <p className="muted">
-              A cross-platform desktop client for relational databases, document stores, and message
-              brokers.
+              A cross-platform desktop client for relational databases, document
+              stores, and message brokers.
             </p>
             <p>
               <a

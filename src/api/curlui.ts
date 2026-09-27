@@ -170,7 +170,15 @@ export function newEnvironment(name = "New environment"): HttpEnvironment {
   return { id: genId(), name, variables: {} };
 }
 
-export const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
+export const HTTP_METHODS = [
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "HEAD",
+  "OPTIONS",
+] as const;
 
 export function defaultCollectionsFile(): CollectionsFile {
   return {
@@ -250,7 +258,8 @@ interface ExternalLinksFile {
 }
 
 /** The collection v2.1 schema URL, written into every collection file. */
-const SCHEMA_URL = "https://schema.getpostman.com/json/collection/v2.1.0/collection.json";
+const SCHEMA_URL =
+  "https://schema.getpostman.com/json/collection/v2.1.0/collection.json";
 
 /** Namespace for fields the v2.1 format has no home for. Other tools ignore
  *  unknown properties on import, so this round-trips losslessly for us while
@@ -371,7 +380,12 @@ interface RdbCollectionExt {
 }
 
 interface WireCollection {
-  info: { name?: string; _postman_id?: string; description?: string; schema?: string };
+  info: {
+    name?: string;
+    _postman_id?: string;
+    description?: string;
+    schema?: string;
+  };
   variable?: WireVariable[];
   auth?: WireAuth;
   event?: WireEvent[];
@@ -443,7 +457,11 @@ function wireToAuth(wire: WireAuth | undefined): Auth {
     case "noauth":
       return { kind: "none", in: "header" };
     case "bearer":
-      return { kind: "bearer", token: wireAuthValue(wire.bearer, "token"), in: "header" };
+      return {
+        kind: "bearer",
+        token: wireAuthValue(wire.bearer, "token"),
+        in: "header",
+      };
     case "basic":
       return {
         kind: "basic",
@@ -494,7 +512,10 @@ function rewriteScriptNamespace(script: string): string {
 }
 
 /** Read one script string out of an `event[]` by its `listen` name. */
-function eventScript(events: WireEvent[] | undefined, listen: string): string | undefined {
+function eventScript(
+  events: WireEvent[] | undefined,
+  listen: string,
+): string | undefined {
   const exec = events?.find((e) => e.listen === listen)?.script?.exec;
   const text = Array.isArray(exec) ? exec.join("\n") : (exec ?? "");
   return text.trim() ? text : undefined;
@@ -505,9 +526,17 @@ function eventScript(events: WireEvent[] | undefined, listen: string): string | 
 function bodyToWire(req: HttpRequestItem): WireBody | undefined {
   switch (req.body_kind) {
     case "json":
-      return { mode: "raw", raw: req.body ?? "", options: { raw: { language: "json" } } };
+      return {
+        mode: "raw",
+        raw: req.body ?? "",
+        options: { raw: { language: "json" } },
+      };
     case "text":
-      return { mode: "raw", raw: req.body ?? "", options: { raw: { language: "text" } } };
+      return {
+        mode: "raw",
+        raw: req.body ?? "",
+        options: { raw: { language: "text" } },
+      };
     case "form": {
       // Reuse the form split/collapse logic so the verbatim `a=b&c=d` string
       // maps to the format's structured pairs (dropping the trailing blank row).
@@ -517,7 +546,10 @@ function bodyToWire(req: HttpRequestItem): WireBody | undefined {
       return { mode: "urlencoded", urlencoded };
     }
     case "multipart":
-      return { mode: "formdata", formdata: (req.parts ?? []).map(partToFormData) };
+      return {
+        mode: "formdata",
+        formdata: (req.parts ?? []).map(partToFormData),
+      };
     case "none":
     default:
       return undefined;
@@ -543,7 +575,11 @@ function wireToBody(
       return { body: bodyStr, body_kind: "form" };
     }
     case "formdata":
-      return { body: "", body_kind: "multipart", parts: (body.formdata ?? []).map(formDataToPart) };
+      return {
+        body: "",
+        body_kind: "multipart",
+        parts: (body.formdata ?? []).map(formDataToPart),
+      };
     // "file"/"graphql"/"none"/absent have no in-memory equivalent -> none.
     default:
       return { body: "", body_kind: "none" };
@@ -632,7 +668,10 @@ function folderToWireItem(f: HttpFolder): WireFolderItem {
     ...(f.description ? { description: f.description } : {}),
     // Folders first, then requests (the relative order across the two arrays is
     // not representable in the in-memory model).
-    item: [...f.folders.map(folderToWireItem), ...f.requests.map(requestToWireItem)],
+    item: [
+      ...f.folders.map(folderToWireItem),
+      ...f.requests.map(requestToWireItem),
+    ],
   };
 }
 
@@ -644,9 +683,15 @@ function collectionToWire(c: HttpCollection, order: number): WireCollection {
       schema: SCHEMA_URL,
       ...(c.description ? { description: c.description } : {}),
     },
-    item: [...c.folders.map(folderToWireItem), ...c.requests.map(requestToWireItem)],
+    item: [
+      ...c.folders.map(folderToWireItem),
+      ...c.requests.map(requestToWireItem),
+    ],
   };
-  const variable = Object.entries(c.env ?? {}).map(([key, value]) => ({ key, value }));
+  const variable = Object.entries(c.env ?? {}).map(([key, value]) => ({
+    key,
+    value,
+  }));
   if (variable.length) wire.variable = variable;
   const auth = authToWire(c.auth ?? { kind: "none" });
   if (auth) wire.auth = auth;
@@ -698,17 +743,24 @@ function wireItemToFolder(item: WireFolderItem): HttpFolder {
 
 /** Partition a wire `item[]` into our two arrays by discriminator: an item
  *  with `item` is a folder, an item with `request` is a request. */
-function splitItems(items: WireItem[]): { folders: HttpFolder[]; requests: HttpRequestItem[] } {
+function splitItems(items: WireItem[]): {
+  folders: HttpFolder[];
+  requests: HttpRequestItem[];
+} {
   const folders: HttpFolder[] = [];
   const requests: HttpRequestItem[] = [];
   for (const it of items) {
-    if ("item" in it && Array.isArray(it.item)) folders.push(wireItemToFolder(it));
-    else if ("request" in it && it.request) requests.push(wireItemToRequest(it));
+    if ("item" in it && Array.isArray(it.item))
+      folders.push(wireItemToFolder(it));
+    else if ("request" in it && it.request)
+      requests.push(wireItemToRequest(it));
   }
   return { folders, requests };
 }
 
-function wireToCollection(wire: WireCollection): HttpCollection & { _order?: number } {
+function wireToCollection(
+  wire: WireCollection,
+): HttpCollection & { _order?: number } {
   const { folders, requests } = splitItems(wire.item ?? []);
   const env: Record<string, string> = {};
   for (const v of wire.variable ?? []) {
@@ -735,7 +787,9 @@ function wireToCollection(wire: WireCollection): HttpCollection & { _order?: num
 }
 
 /** Sort by the `_order` we stamped on write (stable; absent -> 0), then drop it. */
-function sortAndStripOrder<T extends { _order?: number }>(items: T[]): Omit<T, "_order">[] {
+function sortAndStripOrder<T extends { _order?: number }>(
+  items: T[],
+): Omit<T, "_order">[] {
   return items
     .map((it, i) => ({ it, key: it._order ?? i }))
     .sort((a, b) => a.key - b.key)
@@ -808,7 +862,11 @@ function parseCollectionJson(json: string): HttpCollection {
   } catch {
     throw new Error("File is not valid JSON");
   }
-  if (!wire || typeof wire !== "object" || (!wire.info && !Array.isArray(wire.item))) {
+  if (
+    !wire ||
+    typeof wire !== "object" ||
+    (!wire.info && !Array.isArray(wire.item))
+  ) {
     throw new Error("File is not a valid collection");
   }
   const { _order, ...c } = wireToCollection(wire);
@@ -847,7 +905,9 @@ function prepareImported(
     ...r,
     ...(regenerateIds ? { id: genId() } : {}),
     ...(r.preScript ? { preScript: rewriteScriptNamespace(r.preScript) } : {}),
-    ...(r.postScript ? { postScript: rewriteScriptNamespace(r.postScript) } : {}),
+    ...(r.postScript
+      ? { postScript: rewriteScriptNamespace(r.postScript) }
+      : {}),
   });
   const walkFolder = (f: HttpFolder): HttpFolder => ({
     ...f,
@@ -861,7 +921,9 @@ function prepareImported(
     folders: c.folders.map(walkFolder),
     requests: c.requests.map(convertReq),
     ...(c.preScript ? { preScript: rewriteScriptNamespace(c.preScript) } : {}),
-    ...(c.postScript ? { postScript: rewriteScriptNamespace(c.postScript) } : {}),
+    ...(c.postScript
+      ? { postScript: rewriteScriptNamespace(c.postScript) }
+      : {}),
   };
 }
 
@@ -884,7 +946,10 @@ export async function loadCurlFiles(savedId: string): Promise<CurlFile[]> {
  *  profile: write every desired file, then prune stale collection files
  *  no longer wanted so deletions are reflected on disk. Restricting the
  *  prune to that suffix inherently protects the environment files and sidecar. */
-export async function saveCurlFiles(savedId: string, files: CurlFile[]): Promise<void> {
+export async function saveCurlFiles(
+  savedId: string,
+  files: CurlFile[],
+): Promise<void> {
   const wanted = new Set(files.map((f) => f.path));
   for (const f of files) {
     await writeWorkspaceFileAt(savedId, f.path, f.content);
@@ -909,7 +974,9 @@ export async function saveCurlFiles(savedId: string, files: CurlFile[]): Promise
 
 /** Load the id -> path registry of linked external collections. `[]` when
  *  none are linked or the sidecar is missing/corrupt. */
-export async function loadExternalLinks(savedId: string): Promise<ExternalLink[]> {
+export async function loadExternalLinks(
+  savedId: string,
+): Promise<ExternalLink[]> {
   const content = await readWorkspaceFile(savedId, EXTERNAL_LINKS_FILE);
   if (content === null) return [];
   try {
@@ -921,15 +988,24 @@ export async function loadExternalLinks(savedId: string): Promise<ExternalLink[]
 }
 
 /** Persist the id -> path registry of linked external collections. */
-export function saveExternalLinks(savedId: string, links: ExternalLink[]): Promise<void> {
+export function saveExternalLinks(
+  savedId: string,
+  links: ExternalLink[],
+): Promise<void> {
   const data: ExternalLinksFile = { version: 1, links };
-  return writeWorkspaceFileAt(savedId, EXTERNAL_LINKS_FILE, JSON.stringify(data, null, 2));
+  return writeWorkspaceFileAt(
+    savedId,
+    EXTERNAL_LINKS_FILE,
+    JSON.stringify(data, null, 2),
+  );
 }
 
 /** Read and parse a linked collection file from its external path. Throws if
  *  the path can't be read or doesn't look like a collection — callers should
  *  fall back to a `missing` placeholder rather than let this fail the load. */
-export async function readExternalCollectionFile(path: string): Promise<HttpCollection> {
+export async function readExternalCollectionFile(
+  path: string,
+): Promise<HttpCollection> {
   const text = await readTextFile(path);
   return parseLinkedCollectionFile(text);
 }
@@ -959,7 +1035,9 @@ function envToWire(env: HttpEnvironment, order: number): WireEnvironment {
 }
 
 /** Wire environment file -> in-memory environment (dropping disabled values). */
-function wireToEnv(wire: WireEnvironment): HttpEnvironment & { _order?: number } {
+function wireToEnv(
+  wire: WireEnvironment,
+): HttpEnvironment & { _order?: number } {
   const variables: Record<string, string> = {};
   for (const v of wire.values ?? []) {
     if (v.enabled === false || !v.key) continue;
@@ -975,7 +1053,9 @@ function wireToEnv(wire: WireEnvironment): HttpEnvironment & { _order?: number }
 
 /** Load all environments for a profile, plus the active selection from the
  *  sidecar. Falls back to an empty set when nothing is saved yet. */
-export async function loadEnvironments(savedId: string): Promise<EnvironmentsFile> {
+export async function loadEnvironments(
+  savedId: string,
+): Promise<EnvironmentsFile> {
   const entries = await listWorkspaceDir(savedId, "");
   const envs: (HttpEnvironment & { _order?: number })[] = [];
   for (const e of entries) {
@@ -994,7 +1074,8 @@ export async function loadEnvironments(savedId: string): Promise<EnvironmentsFil
   const meta = await readWorkspaceFile(savedId, ENV_META_FILE);
   if (meta !== null) {
     try {
-      activeId = (JSON.parse(meta) as { activeId?: string | null }).activeId ?? null;
+      activeId =
+        (JSON.parse(meta) as { activeId?: string | null }).activeId ?? null;
     } catch {
       // Ignore a corrupt sidecar; treat as no active environment.
     }
@@ -1002,19 +1083,27 @@ export async function loadEnvironments(savedId: string): Promise<EnvironmentsFil
   // Guard against a dangling activeId that no longer names an existing env.
   if (activeId && !environments.some((e) => e.id === activeId)) activeId = null;
 
-  if (environments.length === 0 && activeId === null) return defaultEnvironmentsFile();
+  if (environments.length === 0 && activeId === null)
+    return defaultEnvironmentsFile();
   return { version: 1, environments, activeId };
 }
 
 /** Persist all environments for a profile: one environment file each,
  *  plus the active-selection sidecar. Prunes stale environment files. */
-export async function saveEnvironments(savedId: string, data: EnvironmentsFile): Promise<void> {
+export async function saveEnvironments(
+  savedId: string,
+  data: EnvironmentsFile,
+): Promise<void> {
   const wanted = new Set<string>();
   for (let i = 0; i < data.environments.length; i++) {
     const env = data.environments[i];
     const path = `${env.id}${ENV_SUFFIX}`;
     wanted.add(path);
-    await writeWorkspaceFileAt(savedId, path, JSON.stringify(envToWire(env, i), null, 2));
+    await writeWorkspaceFileAt(
+      savedId,
+      path,
+      JSON.stringify(envToWire(env, i), null, 2),
+    );
   }
   await writeWorkspaceFileAt(
     savedId,
@@ -1087,7 +1176,9 @@ export function deleteDraft(savedId: string, requestId: string): Promise<void> {
 }
 
 /** Load the open-tabs session, or null when none is saved / it is corrupt. */
-export async function loadCurlSession(savedId: string): Promise<CurlSession | null> {
+export async function loadCurlSession(
+  savedId: string,
+): Promise<CurlSession | null> {
   const content = await readWorkspaceFile(savedId, SESSION_FILE);
   if (content === null) return null;
   try {
@@ -1104,8 +1195,15 @@ export async function loadCurlSession(savedId: string): Promise<CurlSession | nu
 }
 
 /** Persist the open-tabs session. */
-export function saveCurlSession(savedId: string, session: CurlSession): Promise<void> {
-  return writeWorkspaceFileAt(savedId, SESSION_FILE, JSON.stringify(session, null, 2));
+export function saveCurlSession(
+  savedId: string,
+  session: CurlSession,
+): Promise<void> {
+  return writeWorkspaceFileAt(
+    savedId,
+    SESSION_FILE,
+    JSON.stringify(session, null, 2),
+  );
 }
 
 export function methodColor(method: string): string {
@@ -1156,8 +1254,13 @@ export function autoHeaders(version: string): Record<string, string> {
 /** Read-only display rows for {@link autoHeaders}. Any auto header whose name
  *  the caller's own (enabled) header keys override — case-insensitively — is
  *  marked `enabled: false` so the UI can show it as inactive/struck-through. */
-export function autoHeaderRows(overrideKeys: string[], version: string): KvRow[] {
-  const overridden = new Set(overrideKeys.map((k) => k.trim().toLowerCase()).filter(Boolean));
+export function autoHeaderRows(
+  overrideKeys: string[],
+  version: string,
+): KvRow[] {
+  const overridden = new Set(
+    overrideKeys.map((k) => k.trim().toLowerCase()).filter(Boolean),
+  );
   return Object.entries(autoHeaders(version)).map(([k, v]) => ({
     id: "auto:" + k,
     enabled: !overridden.has(k.toLowerCase()),
@@ -1277,7 +1380,11 @@ export function splitVarTokens(template: string): VarToken[] {
       tokens.push({ text: rest, isVar: false });
       break;
     }
-    tokens.push({ text: rest.slice(0, end + 2), isVar: true, name: rest.slice(2, end).trim() });
+    tokens.push({
+      text: rest.slice(0, end + 2),
+      isVar: true,
+      name: rest.slice(2, end).trim(),
+    });
     rest = rest.slice(end + 2);
   }
   return tokens;
@@ -1286,7 +1393,10 @@ export function splitVarTokens(template: string): VarToken[] {
 /** Replace `{{NAME}}` placeholders using the environment map. Throws on an
  *  unclosed placeholder, an empty name, or an unknown variable. Mirrors the
  *  behaviour the curlui plugin used to apply server-side. */
-export function interpolate(template: string, env: Record<string, string>): string {
+export function interpolate(
+  template: string,
+  env: Record<string, string>,
+): string {
   let out = "";
   let rest = template;
   for (let start = rest.indexOf("{{"); start >= 0; start = rest.indexOf("{{")) {
@@ -1312,7 +1422,12 @@ function isLocalHost(host: string): boolean {
   if (!m) return false;
   const a = Number(m[1]);
   const b = Number(m[2]);
-  return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  return (
+    a === 127 ||
+    a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
 }
 
 /** Default a schemeless URL to `https://` so a bare host like `www.google.com`
@@ -1321,7 +1436,8 @@ function isLocalHost(host: string): boolean {
  *  A leading `scheme://` is left untouched. */
 export function normalizeUrl(url: string): string {
   const trimmed = url.trim();
-  if (!trimmed || /^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(trimmed)) return trimmed;
+  if (!trimmed || /^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(trimmed))
+    return trimmed;
   const hostPart = trimmed.split(/[/?#]/)[0].split(":")[0];
   const scheme = isLocalHost(hostPart) ? "http" : "https";
   return `${scheme}://${trimmed}`;
@@ -1375,7 +1491,8 @@ export function buildSendable(
   switch (auth?.kind) {
     case "bearer":
       if (auth.token?.trim() && !haveKey("Authorization")) {
-        headers["Authorization"] = `Bearer ${interpolate(auth.token.trim(), effEnv)}`;
+        headers["Authorization"] =
+          `Bearer ${interpolate(auth.token.trim(), effEnv)}`;
       }
       break;
     case "basic":
@@ -1423,7 +1540,9 @@ export function buildSendable(
         kind: p.kind,
         value: interpolate(p.value, effEnv),
         ...(p.filename ? { filename: interpolate(p.filename, effEnv) } : {}),
-        ...(p.content_type ? { content_type: interpolate(p.content_type, effEnv) } : {}),
+        ...(p.content_type
+          ? { content_type: interpolate(p.content_type, effEnv) }
+          : {}),
       }));
     return {
       method: req.method,
@@ -1450,7 +1569,8 @@ export function buildSendable(
     };
   }
 
-  const body = req.body_kind === "none" ? "" : interpolate(req.body ?? "", effEnv);
+  const body =
+    req.body_kind === "none" ? "" : interpolate(req.body ?? "", effEnv);
 
   if (req.body_kind === "json" && !haveKey("Content-Type")) {
     headers["Content-Type"] = "application/json";

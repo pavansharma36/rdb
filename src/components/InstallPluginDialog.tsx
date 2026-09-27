@@ -1,6 +1,11 @@
 import { RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { api, errString } from "../api/api.ts";
-import type { AvailablePlugin, GithubPreview, PluginInfo, PluginStatus } from "../api/api.ts";
+import type {
+  AvailablePlugin,
+  GithubPreview,
+  PluginInfo,
+  PluginStatus,
+} from "../api/api.ts";
 import { loadConfig } from "../api/store.ts";
 import { Modal } from "./Modal";
 
@@ -139,7 +144,9 @@ export function InstallPluginDialog({
       // Reflect the new install in the list: this plugin is now up to date.
       setAvailable((list) =>
         (list ?? []).map((p) =>
-          p.id === info.id ? { ...p, status: "up_to_date", installedVersion: info.version } : p,
+          p.id === info.id
+            ? { ...p, status: "up_to_date", installedVersion: info.version }
+            : p,
         ),
       );
       setSelected(null);
@@ -157,7 +164,9 @@ export function InstallPluginDialog({
    *  verifying the checksum when one is published. Stops at the first failure
    *  so a broken release doesn't cascade; plugins already updated stay updated. */
   async function onUpdateAll() {
-    const outdated = (available ?? []).filter((p) => p.status === "update_available");
+    const outdated = (available ?? []).filter(
+      (p) => p.status === "update_available",
+    );
     if (outdated.length === 0) return;
     setError(null);
     // Clear any pending single-plugin selection so the two flows don't fight.
@@ -168,15 +177,24 @@ export function InstallPluginDialog({
       setUpdatingAll({ id: plugin.id, done, total: outdated.length });
       try {
         const pv = await api.previewGithubPlugin(repo, plugin.tag, plugin.id);
-        const info = await api.installGithubPlugin(pv.repo, pv.tag, plugin.id, pv.sha256);
+        const info = await api.installGithubPlugin(
+          pv.repo,
+          pv.tag,
+          plugin.id,
+          pv.sha256,
+        );
         setAvailable((list) =>
           (list ?? []).map((p) =>
-            p.id === info.id ? { ...p, status: "up_to_date", installedVersion: info.version } : p,
+            p.id === info.id
+              ? { ...p, status: "up_to_date", installedVersion: info.version }
+              : p,
           ),
         );
         onInstalled(info);
       } catch (e) {
-        setError(`Updating ${plugin.name ?? plugin.id} failed: ${errString(e)}`);
+        setError(
+          `Updating ${plugin.name ?? plugin.id} failed: ${errString(e)}`,
+        );
         setUpdatingAll(null);
         return;
       }
@@ -194,7 +212,9 @@ export function InstallPluginDialog({
       // Reflect removal: this plugin is now installable again.
       setAvailable((list) =>
         (list ?? []).map((p) =>
-          p.id === plugin.id ? { ...p, status: "not_installed", installedVersion: null } : p,
+          p.id === plugin.id
+            ? { ...p, status: "not_installed", installedVersion: null }
+            : p,
         ),
       );
       if (selected?.id === plugin.id) {
@@ -221,7 +241,9 @@ export function InstallPluginDialog({
       case "unknown":
         return `${size} · installed${v ? ` (v${v})` : ""}`;
       case "not_installed":
-        return plugin.availableVersion ? `${size} · v${plugin.availableVersion}` : size;
+        return plugin.availableVersion
+          ? `${size} · v${plugin.availableVersion}`
+          : size;
     }
   }
 
@@ -253,12 +275,16 @@ export function InstallPluginDialog({
       {available && available.length > 0 && (
         <div>
           <div className="plugin-list-head">
-            <p className="msg warn">Make sure no connections are open while updating plugin.</p>
+            <p className="msg warn">
+              Make sure no connections are open while updating plugin.
+            </p>
             {available.some((p) => p.status === "update_available") && (
               <button
                 className="primary"
                 onClick={onUpdateAll}
-                disabled={busy !== null || uninstalling !== null || updatingAll !== null}
+                disabled={
+                  busy !== null || uninstalling !== null || updatingAll !== null
+                }
               >
                 {updatingAll
                   ? `Updating ${updatingAll.done + 1}/${updatingAll.total}…`
@@ -289,9 +315,13 @@ export function InstallPluginDialog({
                 return (
                   <li key={plugin.id} className="plugin-row">
                     <div className="plugin-row-main">
-                      <span className="plugin-name">{plugin.name ?? plugin.id}</span>
+                      <span className="plugin-name">
+                        {plugin.name ?? plugin.id}
+                      </span>
                       {plugin.description && (
-                        <span className="muted small">{plugin.description}</span>
+                        <span className="muted small">
+                          {plugin.description}
+                        </span>
                       )}
                       <span className="muted small">
                         {confirming
@@ -328,7 +358,11 @@ export function InstallPluginDialog({
                               updatingAll !== null ||
                               upToDate
                             }
-                            className={plugin.status === "update_available" ? "primary" : ""}
+                            className={
+                              plugin.status === "update_available"
+                                ? "primary"
+                                : ""
+                            }
                           >
                             {bulkUpdating
                               ? "Updating…"
@@ -340,7 +374,9 @@ export function InstallPluginDialog({
                             <button
                               onClick={() => setConfirmingId(plugin.id)}
                               disabled={
-                                busy !== null || uninstalling !== null || updatingAll !== null
+                                busy !== null ||
+                                uninstalling !== null ||
+                                updatingAll !== null
                               }
                               className="danger"
                             >
@@ -364,7 +400,9 @@ export function InstallPluginDialog({
             <span className="muted">Plugin</span>
             <span>{selected.name ?? selected.id}</span>
           </div>
-          {selected.description && <p className="muted small">{selected.description}</p>}
+          {selected.description && (
+            <p className="muted small">{selected.description}</p>
+          )}
           <div className="preview-row">
             <span className="muted">Asset</span>
             <span>{preview.assetName}</span>
@@ -385,15 +423,19 @@ export function InstallPluginDialog({
           </div>
           {!preview.sha256 && (
             <p className="warn small">
-              This release publishes no checksum. The download cannot be verified — only install if
-              you trust this source.
+              This release publishes no checksum. The download cannot be
+              verified — only install if you trust this source.
             </p>
           )}
           <p className="muted small">
-            Plugins are native executables that run with full access to your machine. Only install
-            plugins you trust.
+            Plugins are native executables that run with full access to your
+            machine. Only install plugins you trust.
           </p>
-          <button className="primary" onClick={onInstall} disabled={busy !== null}>
+          <button
+            className="primary"
+            onClick={onInstall}
+            disabled={busy !== null}
+          >
             {busy === "install"
               ? "Installing…"
               : preview.sha256

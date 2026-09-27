@@ -32,7 +32,8 @@ export interface TransferItem {
 }
 
 /** Lifecycle of a background transfer job (mirrors `JobPhase` in the plugin). */
-export type TransferPhase = "scanning" | "running" | "done" | "cancelled" | "error";
+export type TransferPhase =
+  "scanning" | "running" | "done" | "cancelled" | "error";
 
 /** Progress snapshot of the connection's current/last transfer (mirrors
  *  `TransferStats` in the plugin). `total` is 0 while still scanning. */
@@ -59,7 +60,11 @@ export const sftp_api = {
    *  the frontend polls `sftpLastTransferStats` and can `sftpCancelLastTransfer`.
    *  One transfer at a time per connection — rejects if one is already running.
    *  A directory item is mirrored recursively by the plugin. */
-  sftpStartTransfer: (connectionId: ConnectionId, kind: TransferKind, items: TransferItem[]) =>
+  sftpStartTransfer: (
+    connectionId: ConnectionId,
+    kind: TransferKind,
+    items: TransferItem[],
+  ) =>
     pluginCall<null>(connectionId, "filemanager.start_transfer", {
       kind,
       items,
@@ -68,7 +73,11 @@ export const sftp_api = {
   /** Progress of the connection's current/last transfer, or null if none has
    *  run. Cheap to poll. */
   sftpLastTransferStats: (connectionId: ConnectionId) =>
-    pluginCall<TransferStats | null>(connectionId, "filemanager.last_transfer_stats", {}),
+    pluginCall<TransferStats | null>(
+      connectionId,
+      "filemanager.last_transfer_stats",
+      {},
+    ),
 
   /** Cooperatively cancel the current transfer (observed between files). */
   sftpCancelLastTransfer: (connectionId: ConnectionId) =>

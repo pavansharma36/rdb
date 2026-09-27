@@ -75,7 +75,9 @@ export function WorkspaceFileList({
           files.map((f) => (
             <div
               key={f.name}
-              className={"tree-node leaf" + (activeFile === f.name ? " active" : "")}
+              className={
+                "tree-node leaf" + (activeFile === f.name ? " active" : "")
+              }
               onClick={() => onLoad(f)}
               title="Load into editor"
             >

@@ -11,7 +11,11 @@ export interface FilterRow {
 
 /** Browse-filter operators with their labels and whether they take a value. */
 // eslint-disable-next-line react-refresh/only-export-components
-export const BROWSE_OPS: { op: BrowseOp; label: string; needsValue: boolean }[] = [
+export const BROWSE_OPS: {
+  op: BrowseOp;
+  label: string;
+  needsValue: boolean;
+}[] = [
   { op: "eq", label: "= equals", needsValue: true },
   { op: "ne", label: "≠ not equal", needsValue: true },
   { op: "lt", label: "< less than", needsValue: true },
@@ -38,7 +42,13 @@ const RAW_OPT = "__raw__";
  * button's text color drive it (muted normally, accent when a filter is on). */
 export function FunnelIcon() {
   return (
-    <svg className="funnel-icon" width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
+    <svg
+      className="funnel-icon"
+      width="11"
+      height="11"
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+    >
       <path
         d="M1.5 2.5h13l-5 6v5l-3 1.5v-6.5z"
         fill="currentColor"

@@ -86,7 +86,12 @@ export function DataTable<T>({
                 style={{ cursor: onRowClick ? "pointer" : "default" }}
               >
                 {cols.map((c) => (
-                  <td key={c.key} style={{ textAlign: c.align === "right" ? "right" : "left" }}>
+                  <td
+                    key={c.key}
+                    style={{
+                      textAlign: c.align === "right" ? "right" : "left",
+                    }}
+                  >
                     {c.render(row)}
                   </td>
                 ))}
@@ -100,7 +105,13 @@ export function DataTable<T>({
 }
 
 /** A single labelled metric tile (used on the broker overview). */
-export function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+export function Stat({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
   return (
     <div className="mq-stat">
       <div className="mq-stat-val">{value}</div>

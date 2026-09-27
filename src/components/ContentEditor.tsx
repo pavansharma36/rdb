@@ -1,5 +1,9 @@
 import { useCallback, useMemo, useState } from "react";
-import { CodeEditorV2, type CodeLanguage, type EditorKeybinding } from "./CodeEditorV2.tsx";
+import {
+  CodeEditorV2,
+  type CodeLanguage,
+  type EditorKeybinding,
+} from "./CodeEditorV2.tsx";
 
 const INDENT = "  "; // two spaces per level — matches JSON.stringify(…, 2)
 
@@ -12,9 +16,19 @@ type Format = "json" | "xml" | "html" | "text";
  *  structured-syntax suffixes (`+json`, `+xml`), defaulting to plain text. */
 function resolveFormat(contentType: string | undefined): Format {
   const mime = (contentType ?? "").split(";")[0].trim().toLowerCase();
-  if (mime === "application/json" || mime === "text/json" || mime.endsWith("+json")) return "json";
+  if (
+    mime === "application/json" ||
+    mime === "text/json" ||
+    mime.endsWith("+json")
+  )
+    return "json";
   if (mime === "text/html" || mime === "application/xhtml+xml") return "html";
-  if (mime === "application/xml" || mime === "text/xml" || mime.endsWith("+xml")) return "xml";
+  if (
+    mime === "application/xml" ||
+    mime === "text/xml" ||
+    mime.endsWith("+xml")
+  )
+    return "xml";
   return "text";
 }
 
@@ -122,8 +136,12 @@ function formatMarkup(src: string): string {
 function formatForDisplay(value: string, format: Format): string {
   if (!value.trim()) return value;
   try {
-    if (format === "json") return JSON.stringify(JSON.parse(normalizeQuotes(value)), null, 2);
-    if ((format === "xml" || format === "html") && markupError(value, format) === null)
+    if (format === "json")
+      return JSON.stringify(JSON.parse(normalizeQuotes(value)), null, 2);
+    if (
+      (format === "xml" || format === "html") &&
+      markupError(value, format) === null
+    )
       return formatMarkup(value);
   } catch {
     /* fall through to the raw value */
@@ -189,7 +207,9 @@ export function ContentEditor({
 
   // Inline status from Format/Validate; cleared on the next edit. `ok` drives
   // the message color (valid → success, invalid → error).
-  const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
+  const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(
+    null,
+  );
 
   const emit = useCallback(
     (next: string) => {
@@ -245,8 +265,14 @@ export function ContentEditor({
   const validate = useCallback(() => {
     const err = contentError();
     const okLabel =
-      format === "json" ? "Valid JSON" : format === "xml" ? "Valid XML" : "Valid HTML";
-    setStatus(err ? { ok: false, message: err } : { ok: true, message: okLabel });
+      format === "json"
+        ? "Valid JSON"
+        : format === "xml"
+          ? "Valid XML"
+          : "Valid HTML";
+    setStatus(
+      err ? { ok: false, message: err } : { ok: true, message: okLabel },
+    );
   }, [contentError, format]);
 
   return (
@@ -266,15 +292,25 @@ export function ContentEditor({
       />
       {!readOnly && format !== "text" && (
         <div className="content-editor-toolbar">
-          <button type="button" onClick={reformat} title="Pretty-print (2-space indent)">
+          <button
+            type="button"
+            onClick={reformat}
+            title="Pretty-print (2-space indent)"
+          >
             Format
           </button>
-          <button type="button" onClick={validate} title={`Check ${format.toUpperCase()} syntax`}>
+          <button
+            type="button"
+            onClick={validate}
+            title={`Check ${format.toUpperCase()} syntax`}
+          >
             Validate
           </button>
           {status && (
             <span
-              className={"content-editor-status " + (status.ok ? "is-ok" : "is-err")}
+              className={
+                "content-editor-status " + (status.ok ? "is-ok" : "is-err")
+              }
               title={status.message}
             >
               {status.message}

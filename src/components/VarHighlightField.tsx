@@ -9,7 +9,10 @@ function renderTokens(value: string, env: Record<string, string>) {
     t.isVar ? (
       <span
         key={i}
-        className={"var-hl-token " + (t.name! in env ? "var-hl-resolved" : "var-hl-unresolved")}
+        className={
+          "var-hl-token " +
+          (t.name! in env ? "var-hl-resolved" : "var-hl-unresolved")
+        }
       >
         {t.text}
       </span>
@@ -46,7 +49,10 @@ export function VarHighlightInput({
 }) {
   const backdropRef = useRef<HTMLDivElement>(null);
   return (
-    <div className={"var-hl-field" + (className ? " " + className : "")} title={title}>
+    <div
+      className={"var-hl-field" + (className ? " " + className : "")}
+      title={title}
+    >
       <div ref={backdropRef} className="var-hl-backdrop" aria-hidden="true">
         {renderTokens(value, env)}
       </div>
@@ -58,7 +64,8 @@ export function VarHighlightInput({
         onChange={(e) => onChange(e.target.value)}
         onPaste={onPaste}
         onScroll={(e) => {
-          if (backdropRef.current) backdropRef.current.scrollLeft = e.currentTarget.scrollLeft;
+          if (backdropRef.current)
+            backdropRef.current.scrollLeft = e.currentTarget.scrollLeft;
         }}
       />
     </div>
@@ -90,7 +97,11 @@ export function VarHighlightTextarea({
   const backdropValue = value.endsWith("\n") ? value + " " : value;
   return (
     <div className={"var-hl-field" + (className ? " " + className : "")}>
-      <div ref={backdropRef} className="var-hl-backdrop multiline" aria-hidden="true">
+      <div
+        ref={backdropRef}
+        className="var-hl-backdrop multiline"
+        aria-hidden="true"
+      >
         {renderTokens(backdropValue, env)}
       </div>
       <textarea

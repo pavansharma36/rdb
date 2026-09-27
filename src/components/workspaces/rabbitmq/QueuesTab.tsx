@@ -23,7 +23,9 @@ export function QueuesTab({
 
   // Keep the open detail panel in sync with refreshed data.
   const live = selected
-    ? (queues.find((q) => q.name === selected.name && q.vhost === selected.vhost) ?? selected)
+    ? (queues.find(
+        (q) => q.name === selected.name && q.vhost === selected.vhost,
+      ) ?? selected)
     : null;
 
   async function guard(fn: () => Promise<void>) {
@@ -58,7 +60,12 @@ export function QueuesTab({
       render: (r) => vhostLabel(r.vhost),
       sortVal: (r) => r.vhost,
     },
-    { key: "type", label: "Type", render: (r) => r.type, sortVal: (r) => r.type },
+    {
+      key: "type",
+      label: "Type",
+      render: (r) => r.type,
+      sortVal: (r) => r.type,
+    },
     {
       key: "state",
       label: "State",
@@ -250,7 +257,11 @@ function QueueDetail({
             />
           </label>
           <label className="row">
-            <input type="checkbox" checked={remove} onChange={(e) => setRemove(e.target.checked)} />{" "}
+            <input
+              type="checkbox"
+              checked={remove}
+              onChange={(e) => setRemove(e.target.checked)}
+            />{" "}
             remove from queue
           </label>
           <button disabled={busy} onClick={getMessages}>
