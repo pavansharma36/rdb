@@ -5,7 +5,7 @@ name: Publish plugins
 # (src-tauri/src/github.rs) can fetch them.
 #
 # Two modes:
-#   - push to master  -> nightly: rolling `plugins-latest` prerelease,
+#   - push to main  -> nightly: rolling `plugins-latest` prerelease,
 #                        version `<major>.<minor>.<commit-count>`.
 #   - push a `v*` tag -> stable: immutable `v<version>` release,
 #                        version taken from the tag (e.g. v0.2.0 -> 0.2.0).
@@ -21,11 +21,11 @@ on:
   workflow_dispatch:
   workflow_call:
 
-# Master pushes supersede each other; tag builds run independently and are
+# main pushes supersede each other; tag builds run independently and are
 # never cancelled (distinct ref -> distinct group).
 concurrency:
   group: publish-plugins-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref == 'refs/heads/master' }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
 
 permissions:
   contents: write
@@ -77,7 +77,7 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      # Auto-version. On a tag, use the tag's version. On master, keep the
+      # Auto-version. On a tag, use the tag's version. On main, keep the
       # major.minor from the workspace Cargo.toml and set the patch to the git
       # commit count, so each push builds a higher version shared by the app and
       # all plugins. Stamped only for this build (not committed back) to avoid a
@@ -211,11 +211,11 @@ jobs:
           files: release/*
 
       # Nightly only: move the rolling `plugins-latest` git tag to this commit so
-      # it tracks the most recent master build (mirrors publish-app.yml's `latest`
+      # it tracks the most recent main build (mirrors publish-app.yml's `latest`
       # tag). Tag builds publish an immutable `plugins-v<semver>` tag instead.
       - name: Run plugins-latest tag
         if: github.ref_type != 'tag'
         uses: EndBug/latest-tag@v1
         with:
-          description: "Points to the most recent plugins build on master"
+          description: "Points to the most recent plugins build on main"
           ref: "plugins-latest"

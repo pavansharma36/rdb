@@ -12,16 +12,16 @@ name: Checks
 on:
   pull_request:
   push:
-    # master pushes and v* tags are gated by publish.yml, which calls this
+    # main pushes and v* tags are gated by publish.yml, which calls this
     # workflow via `workflow_call` — so we only run standalone on `dev`
     # (and PRs) to avoid double-running the checks on release events.
     branches: [dev]
   workflow_call:
 
-# Per-ref: a newer push supersedes an in-flight run, except on master.
+# Per-ref: a newer push supersedes an in-flight run, except on main.
 concurrency:
   group: checks-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
