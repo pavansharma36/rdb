@@ -389,9 +389,10 @@ owning plugin: `<app_data_dir>/connections/<plugin_id>/connections.json` (the
 exact base path is OS-specific). The files are human-readable JSON. Profiles
 whose plugin is no longer installed are skipped on load but left on disk.
 
-> ⚠️ **Security note:** connection configs — **including passwords** — are
-> stored in plaintext. Treat the files accordingly. A secure-credential store is
-> not yet implemented.
+Passwords are stored in the operating system credential store (Keychain on
+macOS, Credential Manager on Windows, and Secret Service on Linux). The JSON
+files contain only a keychain reference for each password. On Linux, a Secret
+Service provider must be available to the app.
 
 ---
 
@@ -461,4 +462,3 @@ including for commercial purposes within your own organization — but you may
 service whose value derives substantially from the software's functionality
 (including paid hosting or support services). This is not an OSI-approved
 open-source license.
-

@@ -29,9 +29,7 @@ export interface ShowIf {
   equals: string;
 }
 
-/** How a secret is stored. Mirrors Rust `SecretField`'s `type` tag. Only
- *  `PLAIN_TEXT` exists today; future variants (keychain/env/encrypted) extend
- *  this without changing the field shape. */
+/** How a secret is stored. Mirrors Rust `SecretField`'s `type` tag. */
 export type SecretType = "PLAIN_TEXT" | "KEY_RING";
 
 /** A credential value in a `ConnectionConfig`. Every `password`-kind field

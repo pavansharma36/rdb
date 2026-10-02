@@ -42,7 +42,8 @@ function defaultValues(fields: ConfigField[]): ConnectionConfig {
 
 /** Read a `SecretField`-shaped value back as its plaintext for display. */
 function secretValue(value: unknown): string {
-    return (value as SecretField | undefined)?.value ?? "";
+    const secret = value as SecretField | undefined;
+    return secret?.type === "PLAIN_TEXT" ? secret.value : "";
 }
 
 /** A field shows unless its `show_if` rule is unmet by the current values. */
@@ -121,9 +122,21 @@ export function ConnectionForm({
 
     /** Config to send: only visible fields, so hidden defaults aren't included. */
     function visibleConfig(): ConnectionConfig {
-        return Object.fromEntries(
+        const config = Object.fromEntries(
             visibleFields().map((f) => [f.key, values[f.key]]),
         );
+        // An unchanged keychain secret is represented by an empty password box
+        // in the UI. Keep its reference so saving or testing does not erase it.
+        const savedConfig = initial?.config ?? prefill?.config;
+        for (const field of visibleFields()) {
+            const oldSecret = savedConfig?.[field.key] as SecretField | undefined;
+            const newSecret = config[field.key] as SecretField | undefined;
+            if (field.type.kind === "password" && oldSecret?.type === "KEY_RING"
+                && newSecret?.type === "PLAIN_TEXT" && newSecret.value === "") {
+                config[field.key] = oldSecret;
+            }
+        }
+        return config;
     }
 
     async function onTest() {
@@ -250,10 +263,9 @@ function SecretField({
     onChange: (v: unknown) => void;
     coerce: (f: ConfigField, raw: string) => unknown;
 }) {
-    const secValue = secretValue(value).length === 0;
-    console.log("Rendering secret field", secValue);
-    let [edit, setEdit] = useState(secValue, []);
-    console.log("Edit", edit)
+    const secret = value as SecretField | undefined;
+    const hasSavedSecret = secret?.type === "KEY_RING" || secretValue(value).length > 0;
+    const [edit, setEdit] = useState(!hasSavedSecret);
     return (edit ? <input
         type={"password"}
         value={secretValue(value)}

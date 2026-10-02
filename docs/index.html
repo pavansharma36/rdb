@@ -275,9 +275,8 @@ curl -fsSL https://erpavan.in/rdb/install.sh | bash -s -- --nightly</code></pre>
                         an unsigned build may be blocked by Gatekeeper on first launch —
                         run "xattr -c /Applications/rdb.app" to allow it.
                     </li>
-                    <li>Connection configs (including passwords)
-                        are currently stored in plaintext.
-                    </li>
+                    <li>Passwords use the operating system credential store;
+                        Linux requires a Secret Service provider.</li>
                 </ul>
             </div>
         </div>
