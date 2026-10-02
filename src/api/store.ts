@@ -6,7 +6,7 @@
 // and splits them back out by plugin on save. This module is the single place
 // the UI touches persistence.
 //
-// NOTE: configs are stored as-is, including any password field, in plaintext.
+// Passwords are stored in the OS credential store by the Rust persistence layer.
 
 import { invoke } from "@tauri-apps/api/core";
 import type { ConnectionConfig } from "./api.ts";

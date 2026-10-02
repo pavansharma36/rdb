@@ -42,7 +42,8 @@ function defaultValues(fields: ConfigField[]): ConnectionConfig {
 
 /** Read a `SecretField`-shaped value back as its plaintext for display. */
 function secretValue(value: unknown): string {
-  return (value as SecretField | undefined)?.value ?? "";
+  const secret = value as SecretField | undefined;
+  return secret?.type === "PLAIN_TEXT" ? secret.value : "";
 }
 
 /** A field shows unless its `show_if` rule is unmet by the current values. */
@@ -121,9 +122,25 @@ export function ConnectionForm({
 
   /** Config to send: only visible fields, so hidden defaults aren't included. */
   function visibleConfig(): ConnectionConfig {
-    return Object.fromEntries(
+    const config = Object.fromEntries(
       visibleFields().map((f) => [f.key, values[f.key]]),
     );
+    // An unchanged keychain secret is represented by an empty password box
+    // in the UI. Keep its reference so saving or testing does not erase it.
+    const savedConfig = initial?.config ?? prefill?.config;
+    for (const field of visibleFields()) {
+      const oldSecret = savedConfig?.[field.key] as SecretField | undefined;
+      const newSecret = config[field.key] as SecretField | undefined;
+      if (
+        field.type.kind === "password" &&
+        oldSecret?.type === "KEY_RING" &&
+        newSecret?.type === "PLAIN_TEXT" &&
+        newSecret.value === ""
+      ) {
+        config[field.key] = oldSecret;
+      }
+    }
+    return config;
   }
 
   async function onTest() {
@@ -239,6 +256,44 @@ export function ConnectionForm({
   );
 }
 
+function SecretField({
+  field,
+  value,
+  onChange,
+  coerce,
+}: {
+  field: ConfigField;
+  value: unknown;
+  onChange: (v: unknown) => void;
+  coerce: (f: ConfigField, raw: string) => unknown;
+}) {
+  const secret = value as SecretField | undefined;
+  const hasSavedSecret =
+    secret?.type === "KEY_RING" || secretValue(value).length > 0;
+  const [edit, setEdit] = useState(!hasSavedSecret);
+  return edit ? (
+    <input
+      type={"password"}
+      value={secretValue(value)}
+      placeholder={field.placeholder ?? ""}
+      onChange={(e) => onChange(coerce(field, e.target.value))}
+    />
+  ) : (
+    <div>
+      <label>******</label>
+      <button
+        onClick={() => {
+          onChange(coerce(field, ""));
+          setEdit(true);
+        }}
+        className={"right"}
+      >
+        Edit
+      </button>
+    </div>
+  );
+}
+
 function Field({
   field,
   value,
@@ -300,22 +355,17 @@ function Field({
           value={(value as Record<string, string> | undefined) ?? {}}
           onChange={onChange}
         />
+      ) : t.kind == "password" ? (
+        <SecretField
+          field={field}
+          value={value}
+          onChange={onChange}
+          coerce={coerce}
+        ></SecretField>
       ) : (
         <input
-          type={
-            t.kind === "password"
-              ? "password"
-              : t.kind === "number"
-                ? "number"
-                : "text"
-          }
-          value={
-            t.kind === "password"
-              ? secretValue(value)
-              : value === undefined || value === null
-                ? ""
-                : String(value)
-          }
+          type={t.kind === "number" ? "number" : "text"}
+          value={value === undefined || value === null ? "" : String(value)}
           placeholder={field.placeholder ?? ""}
           onChange={(e) => onChange(coerce(field, e.target.value))}
         />

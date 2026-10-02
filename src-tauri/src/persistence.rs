@@ -1,21 +1,18 @@
 //! Persistence for saved connection profiles.
 //!
 //! Profiles are stored as human-readable JSON, grouped by the plugin that owns
-//! them: `<app_data_dir>/connections/<plugin_id>/connections.json`. The files
-//! survive restarts and can be inspected. NOTE: a credential field is stored as
-//! a `SecretField` (`{"type":"PLAIN_TEXT","value":...}`); the `PLAIN_TEXT`
-//! variant holds the secret in plaintext.
+//! them: `<app_data_dir>/connections/<plugin_id>/connections.json`. Secret values
+//! are stored in the OS keychain; only keychain references are written to JSON.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rdb_core::ConnectionConfig;
+use crate::plugin_manager::PluginManager;
+use rdb_core::{ConnectionConfig, PluginError, SecretField};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
-
-use crate::plugin_manager::PluginManager;
 
 /// A reusable connection the user has saved. Mirrors the frontend
 /// `SavedConnection` (camelCase on the wire).
@@ -114,12 +111,18 @@ pub fn load_connections(
 #[tauri::command]
 pub fn save_connections(app: AppHandle, connections: Vec<SavedConnection>) -> Result<(), String> {
     let dir = connections_dir(&app)?;
+    let old_connections = read_all_connections(&dir)?;
+    let old_secret_refs = secret_refs(&old_connections)?;
 
     // Group incoming connections by their owning plugin (sorted by id).
     let mut groups: BTreeMap<String, Vec<SavedConnection>> = BTreeMap::new();
     for conn in connections {
         validate_plugin_id(&conn.plugin_id)?;
-        groups.entry(conn.plugin_id.clone()).or_default().push(conn);
+        let transformed_conn = transform_secrets(conn).map_err(|e| e.to_string())?;
+        groups
+            .entry(transformed_conn.plugin_id.clone())
+            .or_default()
+            .push(transformed_conn);
     }
 
     // Clear out files for plugins that no longer have any saved connections.
@@ -146,5 +149,81 @@ pub fn save_connections(app: AppHandle, connections: Vec<SavedConnection>) -> Re
         let json = serde_json::to_vec_pretty(&conns).map_err(|e| e.to_string())?;
         fs::write(plugin_dir.join("connections.json"), json).map_err(|e| e.to_string())?;
     }
+
+    // Remove keychain entries no longer referenced by any saved profile. Do
+    // this only after profile files have been written, so a persistence error
+    // cannot leave a surviving profile pointing at a deleted credential.
+    let retained_secret_refs = secret_refs_from_files(&dir)?;
+    for reference in old_secret_refs.difference(&retained_secret_refs) {
+        SecretField::KeyRing(reference.clone())
+            .delete_key_ring()
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
+}
+
+fn read_all_connections(dir: &PathBuf) -> Result<Vec<SavedConnection>, String> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.to_string()),
+    };
+    let mut files: Vec<PathBuf> = entries
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    files.retain(|path| path.is_dir());
+    files.sort();
+
+    let mut connections = Vec::new();
+    for file in files.into_iter().map(|path| path.join("connections.json")) {
+        match fs::read(file) {
+            Ok(bytes) => connections.extend(
+                serde_json::from_slice::<Vec<SavedConnection>>(&bytes)
+                    .map_err(|e| e.to_string())?,
+            ),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(connections)
+}
+
+fn secret_refs(connections: &[SavedConnection]) -> Result<HashSet<String>, String> {
+    let mut references = HashSet::new();
+    for value in connections
+        .iter()
+        .flat_map(|connection| connection.config.values())
+    {
+        if !matches!(
+            value.get("type").and_then(serde_json::Value::as_str),
+            Some("KEY_RING")
+        ) {
+            continue;
+        }
+        let SecretField::KeyRing(reference) = serde_json::from_value(value.clone())
+            .map_err(|e| format!("invalid keychain secret reference: {e}"))?
+        else {
+            continue;
+        };
+        references.insert(reference);
+    }
+    Ok(references)
+}
+
+fn secret_refs_from_files(dir: &PathBuf) -> Result<HashSet<String>, String> {
+    secret_refs(&read_all_connections(dir)?)
+}
+
+fn transform_secrets(mut conn: SavedConnection) -> Result<SavedConnection, PluginError> {
+    for (k, v) in conn.config.iter_mut() {
+        let Ok(secret) = serde_json::from_value::<SecretField>(v.clone()) else {
+            continue;
+        };
+        if let SecretField::PlainText(value) = secret {
+            *v = serde_json::to_value(SecretField::key_ring_from_plain(&conn.id, k, value)?)
+                .map_err(|e| PluginError::Backend(e.to_string()))?;
+        }
+    }
+    Ok(conn)
 }

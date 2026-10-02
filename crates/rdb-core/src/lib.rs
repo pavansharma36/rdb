@@ -6,6 +6,7 @@
 //! UI can build a connection form generically.
 
 use async_trait::async_trait;
+use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -115,10 +116,9 @@ pub type ConnectionConfig = HashMap<String, serde_json::Value>;
 /// field carries one of these instead of a bare string, so a secret is
 /// self-describing about *how* it is stored.
 ///
-/// Only `PlainText` exists today (the value is stored verbatim, in plaintext —
-/// the same as before this type existed). The `type` tag is the stable wire
-/// discriminant, so future storage strategies (OS keychain, env var, encrypted
-/// blob, …) can be added as new variants without changing the field shape.
+/// `PlainText` supports legacy and in-memory values; saved values are migrated
+/// to `KeyRing`, which stores only a keychain entry reference in profile JSON.
+/// The `type` tag is the stable wire discriminant for storage strategies.
 ///
 /// Wire/disk form: `{ "type": "PLAIN_TEXT", "value": "hunter2" }`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -126,7 +126,11 @@ pub type ConnectionConfig = HashMap<String, serde_json::Value>;
 pub enum SecretField {
     #[serde(rename = "PLAIN_TEXT")]
     PlainText(String),
+    #[serde(rename = "KEY_RING")]
+    KeyRing(String),
 }
+
+const KEY_RING_APP_NAME: &str = "dev.rdb.app";
 
 impl SecretField {
     /// A plaintext secret (the only kind supported today).
@@ -134,11 +138,49 @@ impl SecretField {
         Self::PlainText(value.into())
     }
 
+    pub fn key_ring_from_plain(
+        conn_id: &str,
+        field: &str,
+        plain_text: impl Into<String>,
+    ) -> Result<Self> {
+        let secret_key = format!("connection:{conn_id}:{field}");
+        let entry = Entry::new(KEY_RING_APP_NAME, &secret_key)
+            .map_err(|e| PluginError::Backend(format!("cannot access system keychain: {e}")))?;
+        entry.set_password(&plain_text.into()).map_err(|e| {
+            PluginError::Backend(format!("cannot store secret in system keychain: {e}"))
+        })?;
+        Ok(Self::KeyRing(secret_key))
+    }
+
     /// The resolved plaintext secret. For `PlainText` this is the stored value.
     /// Future variants resolve their value here (e.g. read from a keychain).
-    pub fn reveal(&self) -> &str {
+    pub fn reveal(&self) -> Result<String> {
         match self {
-            SecretField::PlainText(v) => v,
+            SecretField::PlainText(v) => Ok(v.clone()),
+            SecretField::KeyRing(v) => Entry::new(KEY_RING_APP_NAME, v)
+                .map_err(|e| PluginError::Backend(format!("cannot access system keychain: {e}")))?
+                .get_password()
+                .map_err(|e| {
+                    PluginError::Backend(format!(
+                        "cannot retrieve secret from system keychain: {e}"
+                    ))
+                }),
+        }
+    }
+
+    /// Remove this secret from the keychain. Removing an already absent entry
+    /// is treated as success so profile cleanup can safely be retried.
+    pub fn delete_key_ring(&self) -> Result<()> {
+        let Self::KeyRing(reference) = self else {
+            return Ok(());
+        };
+        let entry = Entry::new(KEY_RING_APP_NAME, reference)
+            .map_err(|e| PluginError::Backend(format!("cannot access system keychain: {e}")))?;
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(PluginError::Backend(format!(
+                "cannot delete secret from system keychain: {e}"
+            ))),
         }
     }
 }
@@ -158,7 +200,7 @@ pub fn cfg_secret(cfg: &ConnectionConfig, key: &str) -> Result<Option<String>> {
         Some(v) => {
             let secret: SecretField = serde_json::from_value(v.clone())
                 .map_err(|e| PluginError::Config(format!("field {key}: {e}")))?;
-            Ok(Some(secret.reveal().to_owned()))
+            Ok(Some(secret.reveal()?))
         }
     }
 }
