@@ -4088,7 +4088,9 @@ select.curlui-method {
 }
 
 @keyframes curlui-running-pulse {
-  50% { opacity: 0.35; }
+  50% {
+    opacity: 0.35;
+  }
 }
 
 .curlui-cancel-request {
