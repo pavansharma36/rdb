@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::plugin_manager::PluginManager;
@@ -121,7 +121,7 @@ pub fn save_connection(
 }
 
 fn save_connection_in_dir(
-    dir: &PathBuf,
+    dir: &Path,
     connection: SavedConnection,
 ) -> Result<SavedConnection, String> {
     validate_plugin_id(&connection.plugin_id)?;
@@ -167,7 +167,7 @@ pub fn delete_connection(app: AppHandle, connection_id: String) -> Result<(), St
     delete_connection_in_dir(&dir, &connection_id)
 }
 
-fn delete_connection_in_dir(dir: &PathBuf, connection_id: &str) -> Result<(), String> {
+fn delete_connection_in_dir(dir: &Path, connection_id: &str) -> Result<(), String> {
     let all = read_all_connections(dir)?;
     let Some(connection) = all.iter().find(|old| old.id == connection_id) else {
         return Ok(());
@@ -184,11 +184,7 @@ fn delete_connection_in_dir(dir: &PathBuf, connection_id: &str) -> Result<(), St
     Ok(())
 }
 
-fn write_profiles(
-    dir: &PathBuf,
-    plugin_id: &str,
-    profiles: &[SavedConnection],
-) -> Result<(), String> {
+fn write_profiles(dir: &Path, plugin_id: &str, profiles: &[SavedConnection]) -> Result<(), String> {
     let plugin_dir = dir.join(plugin_id);
     fs::create_dir_all(&plugin_dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_vec_pretty(profiles).map_err(|e| e.to_string())?;
@@ -197,7 +193,7 @@ fn write_profiles(
     fs::rename(&temporary, plugin_dir.join("connections.json")).map_err(|e| e.to_string())
 }
 
-fn cleanup_secrets(dir: &PathBuf, old_refs: &HashSet<String>) {
+fn cleanup_secrets(dir: &Path, old_refs: &HashSet<String>) {
     // Cleanup failure must not report an already committed save as failed.
     match secret_refs_from_files(dir) {
         Ok(retained) => {
@@ -211,7 +207,7 @@ fn cleanup_secrets(dir: &PathBuf, old_refs: &HashSet<String>) {
     }
 }
 
-fn read_all_connections(dir: &PathBuf) -> Result<Vec<SavedConnection>, String> {
+fn read_all_connections(dir: &Path) -> Result<Vec<SavedConnection>, String> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -260,7 +256,7 @@ fn secret_refs(connections: &[SavedConnection]) -> Result<HashSet<String>, Strin
     Ok(references)
 }
 
-fn secret_refs_from_files(dir: &PathBuf) -> Result<HashSet<String>, String> {
+fn secret_refs_from_files(dir: &Path) -> Result<HashSet<String>, String> {
     secret_refs(&read_all_connections(dir)?)
 }
 
