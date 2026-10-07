@@ -125,7 +125,7 @@ fn save_connection_in_dir(
     connection: SavedConnection,
 ) -> Result<SavedConnection, String> {
     validate_plugin_id(&connection.plugin_id)?;
-    let all = read_all_connections(&dir)?;
+    let all = read_all_connections(dir)?;
     if all
         .iter()
         .any(|old| old.id == connection.id && old.plugin_id != connection.plugin_id)
@@ -146,7 +146,7 @@ fn save_connection_in_dir(
         } else {
             profiles.push(connection.clone());
         }
-        write_profiles(&dir, &connection.plugin_id, &profiles)?;
+        write_profiles(dir, &connection.plugin_id, &profiles)?;
         Ok(connection)
     })();
     if result.is_err() {
@@ -154,7 +154,7 @@ fn save_connection_in_dir(
             let _ = secret.delete_key_ring();
         }
     } else {
-        cleanup_secrets(&dir, &old_refs);
+        cleanup_secrets(dir, &old_refs);
     }
     result
 }
@@ -179,8 +179,8 @@ fn delete_connection_in_dir(dir: &PathBuf, connection_id: &str) -> Result<(), St
         .filter(|old| old.plugin_id == connection.plugin_id && old.id != connection_id)
         .cloned()
         .collect();
-    write_profiles(&dir, &connection.plugin_id, &profiles)?;
-    cleanup_secrets(&dir, &old_refs);
+    write_profiles(dir, &connection.plugin_id, &profiles)?;
+    cleanup_secrets(dir, &old_refs);
     Ok(())
 }
 
