@@ -66,7 +66,7 @@ React frontend  ──@tauri-apps/api invoke()──▶  Tauri host (src-tauri)
    plugin lifecycle (`list_plugins`, `test_connection`, `open_connection`, `close_connection`,
    `plugin_call`, `cancel_last_plugin_call`), GitHub install (`list_github_plugins`,
    `preview_github_plugin`, `install_github_plugin`, `uninstall_plugin`), app self-update
-   (`check_update`, `install_update`, `app_channel`), persistence (`load_connections`/`save_connections`,
+   (`check_update`, `install_update`, `app_channel`), persistence (`load_connections`/`save_connection`/`delete_connection`,
    `load_config`/`save_config`), per-connection workspace files (`read_workspace_file`,
    `write_workspace_file_at`, `list_workspace_dir`, `delete_workspace_path`), and PTY commands for CLI
    workspaces (`pty_spawn`, `pty_write`, `pty_resize`, `pty_close`, `pty_close_connection`, `pty_snapshot`).

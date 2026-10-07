@@ -19,7 +19,8 @@ import { CurlUiWorkspace } from "./components/workspaces/CurlUiWorkspace";
 import type { SavedConnection } from "./api/store.ts";
 import {
   loadConnections,
-  saveConnections,
+  saveConnection,
+  deleteConnection,
   upsert,
   remove,
   genId,
@@ -184,16 +185,23 @@ export function App() {
   // Show the form when creating, editing, or when nothing is open/selected.
   const showForm = creating || editingId !== null || active === null;
 
-  /** Update saved profiles in state and persist them to disk. */
-  function persist(next: SavedConnection[]) {
-    setSaved(next);
-    saveConnections(next).catch((e) => setConnectError(errString(e)));
+  /** Persist one profile and keep the backend's reference-only config. */
+  async function persist(profile: SavedConnection): Promise<SavedConnection> {
+    const stored = await saveConnection(profile);
+    setSaved((current) => upsert(current, stored));
+    return stored;
   }
 
-  /** Re-stamp `order` on every profile to match the new sidebar sequence and
-   * persist. The only place `order` is written — so it changes only on drag. */
-  function reorderConnections(orderedIds: string[]) {
-    persist(saved.map((c) => ({ ...c, order: orderedIds.indexOf(c.id) })));
+  /** Save only profiles whose sidebar position changed. */
+  async function reorderConnections(orderedIds: string[]) {
+    try {
+      for (const conn of saved) {
+        const order = orderedIds.indexOf(conn.id);
+        if (order !== (conn.order ?? 0)) await persist({ ...conn, order });
+      }
+    } catch (e) {
+      setConnectError(errString(e));
+    }
   }
 
   /** Build a live OpenConnection record from a saved profile + backend id. */
@@ -213,7 +221,7 @@ export function App() {
    * settings are kept even if connecting fails. Throws on connect failure so
    * the form can show it. */
   async function saveAndConnect(profile: SavedConnection) {
-    persist(upsert(saved, profile));
+    profile = await persist(profile);
     // If this profile already had a live connection (e.g. editing it), close
     // the stale one so we don't leak a backend connection.
     const prevLive = open.find((o) => o.savedId === profile.id);
@@ -292,6 +300,12 @@ export function App() {
   }
 
   async function deleteSaved(id: string) {
+    try {
+      await deleteConnection(id);
+    } catch (e) {
+      setConnectError(errString(e));
+      return;
+    }
     const live = open.find((o) => o.savedId === id);
     if (live) {
       try {
@@ -303,7 +317,7 @@ export function App() {
       setOpen((os) => os.filter((o) => o.savedId !== id));
       setActiveId((cur) => (cur === live.id ? null : cur));
     }
-    persist(remove(saved, id));
+    setSaved((current) => remove(current, id));
     setEditingId((cur) => (cur === id ? null : cur));
     // The profile is gone; discard any preserved workspace state for it.
     clearConnectionState(id);
@@ -467,7 +481,7 @@ export function App() {
     const conn = saved.find((s) => s.id === savedId);
     if (!conn) return;
     const next = { ...conn, settings: { ...conn.settings, ...patch } };
-    persist(upsert(saved, next));
+    persist(next).catch((e) => setConnectError(errString(e)));
   }
 
   /** Read a numeric per-connection setting, falling back to `dflt`. */
