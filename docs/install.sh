@@ -3,7 +3,7 @@
 #
 # Downloads and installs the platform-matched app bundle:
 #   - macOS: mounts the .dmg and copies rdb.app into /Applications
-#   - Linux: places the .AppImage at ~/.local/bin/rdb (executable)
+#   - Linux: installs the .deb or .rpm with the system package manager
 #
 # Plugins (Postgres, MySQL, MongoDB, …) are NOT installed here — add them from
 # the app's sidebar via the "⤓ Install plugin" dialog once rdb is running.
@@ -18,9 +18,8 @@
 #   --nightly     Install the rolling prerelease (app tag `latest`) instead of
 #                 the newest stable release. Ignored if --tag is given.
 #   --tag <tag>   Install a specific release tag (e.g. v0.1.2).
-#   --dir <path>  Install location. macOS: the directory rdb.app is copied into
-#                 (default /Applications). Linux: the directory the AppImage is
-#                 placed in as `rdb` (default ~/.local/bin).
+#   --dir <path>  macOS only: the directory rdb.app is copied into
+#                 (default /Applications). Linux packages install system-wide.
 #   --help        Show this help.
 #
 # Honours $GITHUB_TOKEN (lifts the unauthenticated GitHub API rate limit).
@@ -48,9 +47,8 @@ Flags:
   --nightly     Install the rolling prerelease (app tag `latest`) instead of the
                 newest stable release. Ignored if --tag is given.
   --tag <tag>   Install a specific release tag (e.g. v0.1.2).
-  --dir <path>  Install location. macOS: the directory rdb.app is copied into
-                (default /Applications). Linux: the directory the AppImage is
-                placed in as `rdb` (default ~/.local/bin).
+  --dir <path>  macOS only: the directory rdb.app is copied into
+                (default /Applications). Linux packages install system-wide.
   --help        Show this help.
 
 Only the desktop app is installed. Add database/queue plugins from the app's
@@ -118,9 +116,28 @@ case "$os" in
     PLATFORM="linux"
     OS_LABEL="Linux"
     case "$arch" in
-      x64) ASSET_MATCH="_amd64.AppImage" ;;
+      x64) : ;;
       *)   die "no Linux $arch app build. Download from ${RELEASES_URL}" ;;
     esac
+    [ -z "$INSTALL_DIR" ] || die "--dir is only supported on macOS; Linux packages install system-wide"
+    if have apt-get; then
+      PACKAGE_MANAGER="apt-get"
+      ASSET_MATCH="_amd64.deb"
+    elif have dnf; then
+      PACKAGE_MANAGER="dnf"
+      ASSET_MATCH=".x86_64.rpm"
+    elif have yum; then
+      PACKAGE_MANAGER="yum"
+      ASSET_MATCH=".x86_64.rpm"
+    elif have zypper; then
+      PACKAGE_MANAGER="zypper"
+      ASSET_MATCH=".x86_64.rpm"
+    else
+      die "need apt-get, dnf, yum, or zypper to install Linux packages. Download from ${RELEASES_URL}"
+    fi
+    if [ "$(id -u)" -ne 0 ] && ! have sudo; then
+      die "need sudo or root privileges to install Linux packages"
+    fi
     ;;
   *)
     die "unsupported OS '$os'. On Windows use the .msi/.exe from ${RELEASES_URL}"
@@ -231,19 +248,22 @@ install_macos() {
 }
 
 install_linux() {
-  local dir="${INSTALL_DIR:-$HOME/.local/bin}"
-  mkdir -p "$dir"
-  local dest="$dir/rdb"
-  info "Installing AppImage to ${dest}…"
-  cp "$TMP/$ASSET_NAME" "$dest"
-  chmod +x "$dest"
-  info "Installed: $dest"
-  case ":$PATH:" in
-    *":$dir:"*) : ;;
-    *) warn "$dir is not on your PATH — add it, or run the app with: $dest" ;;
+  local package="$TMP/$ASSET_NAME"
+  local -a elevate=()
+  if [ "$(id -u)" -ne 0 ]; then
+    elevate=(sudo)
+  fi
+  # apt's sandbox user must be able to read the downloaded package.
+  chmod 755 "$TMP"
+  chmod 644 "$package"
+  info "Installing ${ASSET_NAME} with ${PACKAGE_MANAGER}…"
+  case "$PACKAGE_MANAGER" in
+    apt-get|dnf|yum) "${elevate[@]}" "$PACKAGE_MANAGER" install -y "$package" ;;
+    zypper) "${elevate[@]}" zypper --non-interactive install "$package" ;;
   esac
+  info "Installed: rdb"
   echo
-  echo "Launch it with:  rdb   (or: $dest)"
+  echo "Launch it with:  rdb"
 }
 
 case "$PLATFORM" in
