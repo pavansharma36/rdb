@@ -143,7 +143,8 @@ impl SecretField {
         field: &str,
         plain_text: impl Into<String>,
     ) -> Result<Self> {
-        let secret_key = format!("connection:{conn_id}:{field}");
+        let suffix = Uuid::new_v4().simple().to_string();
+        let secret_key = format!("connection:{conn_id}:{field}:{}", &suffix[..3]);
         let entry = Entry::new(KEY_RING_APP_NAME, &secret_key)
             .map_err(|e| PluginError::Backend(format!("cannot access system keychain: {e}")))?;
         entry.set_password(&plain_text.into()).map_err(|e| {

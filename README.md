@@ -166,8 +166,8 @@ rdb/
 
 The quickest way to get the desktop app on **macOS or Linux** is the install
 script — it downloads the release build matching your OS/arch and installs it
-(macOS: copies `rdb.app` into `/Applications`; Linux: places the AppImage at
-`~/.local/bin/rdb`):
+(macOS: copies `rdb.app` into `/Applications`; Linux: installs a `.deb` or `.rpm`
+package system-wide with the system package manager):
 
 ```bash
 curl -fsSL https://erpavan.in/rdb/install.sh | bash
@@ -177,12 +177,12 @@ curl -fsSL https://erpavan.in/rdb/install.sh | bash -s -- --nightly
 ```
 
 Flags: `--nightly` (rolling prerelease), `--tag v0.1.2` (a specific release),
-`--dir <path>` (install location). Prefer to read before you pipe to a shell?
+`--dir <path>` (macOS install location). Prefer to read before you pipe to a shell?
 Download [`docs/install.sh`](docs/install.sh) and run it directly.
 
 **Windows**, or **Linux on arm64**, aren't covered by the script — grab an
 installer from the [latest release](https://github.com/pavansharma36/rdb/releases/latest)
-(`.msi`/`.exe` on Windows, `.AppImage`/`.deb`/`.rpm` on Linux).
+(`.msi`/`.exe` on Windows, `.deb`/`.rpm` on Linux).
 
 The script installs only the app. Once it's running, add database/queue plugins
 from the sidebar's **⤓ Install plugin** dialog — see [Plugins](#plugins). The app

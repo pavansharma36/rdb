@@ -218,6 +218,8 @@ function describeFetchError(url: string, err: unknown): string {
 export async function sendHttpRequest(
   req: HttpRequest,
   settings: HttpSettings,
+  onProgress?: (response: HttpResponse) => void,
+  requestSignal?: AbortSignal,
 ): Promise<HttpResponse> {
   const url = encodeQueryUrl(req.url);
   const isMultipart = req.body_kind === "multipart";
@@ -255,7 +257,12 @@ export async function sendHttpRequest(
             danger: { acceptInvalidCerts: true, acceptInvalidHostnames: true },
           }),
       // A total-request timeout, matching reqwest's `.timeout(...)`.
-      signal: AbortSignal.timeout(settings.timeoutSecs * 1000),
+      signal: requestSignal
+        ? AbortSignal.any([
+            AbortSignal.timeout(settings.timeoutSecs * 1000),
+            requestSignal,
+          ])
+        : AbortSignal.timeout(settings.timeoutSecs * 1000),
     });
   } catch (e) {
     if (
@@ -272,6 +279,47 @@ export async function sendHttpRequest(
   res.headers.forEach((v, k) => {
     respHeaders[k] = v;
   });
+
+  const contentType = respHeaders["content-type"] ?? "";
+  if (contentType.toLowerCase().includes("text/event-stream") && res.body) {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let body = "";
+    onProgress?.({
+      status: res.status,
+      status_text: res.statusText,
+      headers: respHeaders,
+      body,
+      body_encoding: "text",
+      elapsed_ms: Math.round(performance.now() - started),
+    });
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        body += decoder.decode(value, { stream: true });
+        onProgress?.({
+          status: res.status,
+          status_text: res.statusText,
+          headers: respHeaders,
+          body,
+          body_encoding: "text",
+          elapsed_ms: Math.round(performance.now() - started),
+        });
+      }
+      body += decoder.decode();
+    } finally {
+      reader.releaseLock();
+    }
+    return {
+      status: res.status,
+      status_text: res.statusText,
+      headers: respHeaders,
+      body,
+      body_encoding: "text",
+      elapsed_ms: Math.round(performance.now() - started),
+    };
+  }
 
   const buf = await res.arrayBuffer();
   let respBody: string;

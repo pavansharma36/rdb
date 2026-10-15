@@ -1070,6 +1070,10 @@ export function CurlUiWorkspace({
   const [responses, setResponses] = useConnectionState<
     Record<string, HttpResponse>
   >(scope, "responses", {});
+  const [runningRequests, setRunningRequests] = useState<
+    Record<string, boolean>
+  >({});
+  const requestControllers = useRef(new Map<string, AbortController>());
   // Script test results + console logs per open tab, keyed like `responses`.
   const [testResults, setTestResults] = useConnectionState<
     Record<string, TestRun>
@@ -1315,6 +1319,9 @@ export function CurlUiWorkspace({
   );
 
   const response = selectedId ? (responses[selectedId] ?? null) : null;
+  const requestRunning = selectedId
+    ? (runningRequests[selectedId] ?? false)
+    : false;
   const testRun = selectedId ? (testResults[selectedId] ?? null) : null;
   const activeRequestError = selectedId
     ? (requestErrors[selectedId] ?? null)
@@ -2187,6 +2194,10 @@ export function CurlUiWorkspace({
   async function onSend() {
     if (!activeRequest || !selectedId) return;
     const key = selectedId;
+    requestControllers.current.get(key)?.abort();
+    const controller = new AbortController();
+    requestControllers.current.set(key, controller);
+    setRunningRequests((running) => ({ ...running, [key]: true }));
     const collection = activeRequestCollection;
     setRequestError(key, null);
     setResTab("body");
@@ -2280,7 +2291,13 @@ export function CurlUiWorkspace({
       const res = await sendHttpRequest(
         buildSendable(mutated, finalEnv, effCollection, pluginVersion),
         settings,
+        (progress) => {
+          loader.hide();
+          setResponses((r) => ({ ...r, [key]: progress }));
+        },
+        controller.signal,
       );
+      setRunningRequests((running) => ({ ...running, [key]: false }));
       setResponses((r) => ({ ...r, [key]: res }));
 
       // Post-response (test) scripts: request then collection.
@@ -2300,10 +2317,22 @@ export function CurlUiWorkspace({
       if (scriptError) setRequestError(key, `Test script: ${scriptError}`);
       if (tests.length) setResTab("tests");
     } catch (e) {
-      setRequestError(key, errString(e));
+      if (controller.signal.aborted) {
+        setRequestError(key, null);
+      } else {
+        setRequestError(key, errString(e));
+      }
     } finally {
+      if (requestControllers.current.get(key) === controller) {
+        requestControllers.current.delete(key);
+      }
+      setRunningRequests((running) => ({ ...running, [key]: false }));
       loader.hide();
     }
+  }
+
+  function cancelRequest(key: string) {
+    requestControllers.current.get(key)?.abort();
   }
 
   function onEditorKeyDown(e: ReactKeyboardEvent) {
@@ -3474,9 +3503,27 @@ export function CurlUiWorkspace({
                     }}
                     onPaste={onUrlPaste}
                   />
-                  <button type="button" className="primary" onClick={onSend}>
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={onSend}
+                    disabled={requestRunning}
+                  >
                     Send
                   </button>
+                  {requestRunning && selectedId && (
+                    <span className="curlui-request-running" role="status">
+                      <span className="curlui-running-dot" />
+                      Running
+                      <button
+                        type="button"
+                        className="curlui-cancel-request"
+                        onClick={() => cancelRequest(selectedId)}
+                      >
+                        Cancel
+                      </button>
+                    </span>
+                  )}
                   <button
                     type="button"
                     title={

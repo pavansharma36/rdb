@@ -39,7 +39,7 @@ jobs:
             args: "--target x86_64-apple-darwin"
           - os: ubuntu-22.04
             rust-target: x86_64-unknown-linux-gnu
-            args: ""
+            args: "--bundles deb,rpm"
           - os: windows-latest
             rust-target: x86_64-pc-windows-msvc
             args: ""

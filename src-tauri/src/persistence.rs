@@ -4,10 +4,10 @@
 //! them: `<app_data_dir>/connections/<plugin_id>/connections.json`. Secret values
 //! are stored in the OS keychain; only keychain references are written to JSON.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use crate::plugin_manager::PluginManager;
 use rdb_core::{ConnectionConfig, PluginError, SecretField};
@@ -105,64 +105,109 @@ pub fn load_connections(
     Ok(out)
 }
 
-/// Persist the full set of profiles, splitting them into one file per owning
-/// plugin (`connections/<plugin_id>/connections.json`). Plugins whose profiles
-/// were all removed have their file deleted so stale entries don't linger.
+// Serialize read-modify-write operations so concurrent profile saves cannot
+// overwrite each other within a plugin's connections.json.
+static CONNECTION_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Insert or replace one profile and return its reference-only saved config.
 #[tauri::command]
-pub fn save_connections(app: AppHandle, connections: Vec<SavedConnection>) -> Result<(), String> {
+pub fn save_connection(
+    app: AppHandle,
+    connection: SavedConnection,
+) -> Result<SavedConnection, String> {
+    let _guard = CONNECTION_WRITE_LOCK.lock().map_err(|e| e.to_string())?;
     let dir = connections_dir(&app)?;
-    let old_connections = read_all_connections(&dir)?;
-    let old_secret_refs = secret_refs(&old_connections)?;
+    save_connection_in_dir(&dir, connection)
+}
 
-    // Group incoming connections by their owning plugin (sorted by id).
-    let mut groups: BTreeMap<String, Vec<SavedConnection>> = BTreeMap::new();
-    for conn in connections {
-        validate_plugin_id(&conn.plugin_id)?;
-        let transformed_conn = transform_secrets(conn).map_err(|e| e.to_string())?;
-        groups
-            .entry(transformed_conn.plugin_id.clone())
-            .or_default()
-            .push(transformed_conn);
+fn save_connection_in_dir(
+    dir: &Path,
+    connection: SavedConnection,
+) -> Result<SavedConnection, String> {
+    validate_plugin_id(&connection.plugin_id)?;
+    let all = read_all_connections(dir)?;
+    if all
+        .iter()
+        .any(|old| old.id == connection.id && old.plugin_id != connection.plugin_id)
+    {
+        return Err("cannot change the plugin of an existing connection".into());
     }
-
-    // Clear out files for plugins that no longer have any saved connections.
-    if let Ok(entries) = fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = path.file_name().and_then(|n| n.to_str()).map(str::to_owned);
-            if let Some(name) = name {
-                if path.is_dir() && !groups.contains_key(&name) {
-                    let file = path.join("connections.json");
-                    match fs::remove_file(&file) {
-                        Ok(()) => {}
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(e) => return Err(e.to_string()),
-                    }
-                }
-            }
+    let old_refs = secret_refs(&all)?;
+    let mut created = Vec::new();
+    let result = (|| {
+        let connection =
+            transform_secrets(connection, &old_refs, &mut created).map_err(|e| e.to_string())?;
+        let mut profiles: Vec<_> = all
+            .into_iter()
+            .filter(|old| old.plugin_id == connection.plugin_id)
+            .collect();
+        if let Some(old) = profiles.iter_mut().find(|old| old.id == connection.id) {
+            *old = connection.clone();
+        } else {
+            profiles.push(connection.clone());
         }
+        write_profiles(dir, &connection.plugin_id, &profiles)?;
+        Ok(connection)
+    })();
+    if result.is_err() {
+        for secret in created {
+            let _ = secret.delete_key_ring();
+        }
+    } else {
+        cleanup_secrets(dir, &old_refs);
     }
+    result
+}
 
-    for (plugin_id, conns) in groups {
-        let plugin_dir = dir.join(&plugin_id);
-        fs::create_dir_all(&plugin_dir).map_err(|e| e.to_string())?;
-        let json = serde_json::to_vec_pretty(&conns).map_err(|e| e.to_string())?;
-        fs::write(plugin_dir.join("connections.json"), json).map_err(|e| e.to_string())?;
-    }
+/// Delete one saved profile without changing any other profile.
+#[tauri::command]
+pub fn delete_connection(app: AppHandle, connection_id: String) -> Result<(), String> {
+    let _guard = CONNECTION_WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+    let dir = connections_dir(&app)?;
+    delete_connection_in_dir(&dir, &connection_id)
+}
 
-    // Remove keychain entries no longer referenced by any saved profile. Do
-    // this only after profile files have been written, so a persistence error
-    // cannot leave a surviving profile pointing at a deleted credential.
-    let retained_secret_refs = secret_refs_from_files(&dir)?;
-    for reference in old_secret_refs.difference(&retained_secret_refs) {
-        SecretField::KeyRing(reference.clone())
-            .delete_key_ring()
-            .map_err(|e| e.to_string())?;
-    }
+fn delete_connection_in_dir(dir: &Path, connection_id: &str) -> Result<(), String> {
+    let all = read_all_connections(dir)?;
+    let Some(connection) = all.iter().find(|old| old.id == connection_id) else {
+        return Ok(());
+    };
+    validate_plugin_id(&connection.plugin_id)?;
+    let old_refs = secret_refs(&all)?;
+    let profiles: Vec<_> = all
+        .iter()
+        .filter(|old| old.plugin_id == connection.plugin_id && old.id != connection_id)
+        .cloned()
+        .collect();
+    write_profiles(dir, &connection.plugin_id, &profiles)?;
+    cleanup_secrets(dir, &old_refs);
     Ok(())
 }
 
-fn read_all_connections(dir: &PathBuf) -> Result<Vec<SavedConnection>, String> {
+fn write_profiles(dir: &Path, plugin_id: &str, profiles: &[SavedConnection]) -> Result<(), String> {
+    let plugin_dir = dir.join(plugin_id);
+    fs::create_dir_all(&plugin_dir).map_err(|e| e.to_string())?;
+    let json = serde_json::to_vec_pretty(profiles).map_err(|e| e.to_string())?;
+    let temporary = plugin_dir.join("connections.json.tmp");
+    fs::write(&temporary, json).map_err(|e| e.to_string())?;
+    fs::rename(&temporary, plugin_dir.join("connections.json")).map_err(|e| e.to_string())
+}
+
+fn cleanup_secrets(dir: &Path, old_refs: &HashSet<String>) {
+    // Cleanup failure must not report an already committed save as failed.
+    match secret_refs_from_files(dir) {
+        Ok(retained) => {
+            for reference in old_refs.difference(&retained) {
+                if let Err(error) = SecretField::KeyRing(reference.clone()).delete_key_ring() {
+                    tracing::warn!("cannot clean up unused keychain entry: {error}");
+                }
+            }
+        }
+        Err(error) => tracing::warn!("cannot inspect keychain references for cleanup: {error}"),
+    }
+}
+
+fn read_all_connections(dir: &Path) -> Result<Vec<SavedConnection>, String> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -211,19 +256,92 @@ fn secret_refs(connections: &[SavedConnection]) -> Result<HashSet<String>, Strin
     Ok(references)
 }
 
-fn secret_refs_from_files(dir: &PathBuf) -> Result<HashSet<String>, String> {
+fn secret_refs_from_files(dir: &Path) -> Result<HashSet<String>, String> {
     secret_refs(&read_all_connections(dir)?)
 }
 
-fn transform_secrets(mut conn: SavedConnection) -> Result<SavedConnection, PluginError> {
+fn transform_secrets(
+    mut conn: SavedConnection,
+    old_refs: &HashSet<String>,
+    created: &mut Vec<SecretField>,
+) -> Result<SavedConnection, PluginError> {
     for (k, v) in conn.config.iter_mut() {
         let Ok(secret) = serde_json::from_value::<SecretField>(v.clone()) else {
             continue;
         };
-        if let SecretField::PlainText(value) = secret {
-            *v = serde_json::to_value(SecretField::key_ring_from_plain(&conn.id, k, value)?)
-                .map_err(|e| PluginError::Backend(e.to_string()))?;
-        }
+        let plain = match secret {
+            SecretField::PlainText(value) => value,
+            SecretField::KeyRing(ref reference)
+                if reference.starts_with(&format!("connection:{}:{k}:", conn.id))
+                    && old_refs.contains(reference) =>
+            {
+                continue
+            }
+            // Copy references owned by another profile when cloning. Legacy
+            // entries without a version suffix are migrated on their next save.
+            other => other.reveal()?,
+        };
+        let secret = SecretField::key_ring_from_plain(&conn.id, k, plain)?;
+        created.push(secret.clone());
+        *v = serde_json::to_value(secret).map_err(|e| PluginError::Backend(e.to_string()))?;
     }
     Ok(conn)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile(id: &str, plugin: &str, name: &str) -> SavedConnection {
+        SavedConnection {
+            id: id.into(),
+            name: name.into(),
+            plugin_id: plugin.into(),
+            config: HashMap::new(),
+            order: 0,
+            settings: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn saving_and_deleting_one_profile_preserves_other_profiles_and_plugins() {
+        let dir = std::env::temp_dir().join(format!(
+            "rdb-persistence-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        save_connection_in_dir(&dir, profile("a", "postgres", "first")).unwrap();
+        save_connection_in_dir(&dir, profile("b", "postgres", "second")).unwrap();
+        save_connection_in_dir(&dir, profile("c", "mysql", "third")).unwrap();
+        let other_file = dir.join("mysql/connections.json");
+        let other_bytes = fs::read(&other_file).unwrap();
+
+        save_connection_in_dir(&dir, profile("a", "postgres", "edited")).unwrap();
+        let all = read_all_connections(&dir).unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all.iter().find(|p| p.id == "a").unwrap().name, "edited");
+        assert_eq!(all.iter().find(|p| p.id == "b").unwrap().name, "second");
+        assert_eq!(fs::read(&other_file).unwrap(), other_bytes);
+        assert!(save_connection_in_dir(&dir, profile("a", "mysql", "moved")).is_err());
+
+        // A failed staging write must leave the existing profile file intact.
+        let profile_file = dir.join("postgres/connections.json");
+        let before_failure = fs::read(&profile_file).unwrap();
+        let staging = dir.join("postgres/connections.json.tmp");
+        fs::create_dir(&staging).unwrap();
+        assert!(save_connection_in_dir(&dir, profile("a", "postgres", "failed")).is_err());
+        assert_eq!(fs::read(&profile_file).unwrap(), before_failure);
+        fs::remove_dir(staging).unwrap();
+
+        delete_connection_in_dir(&dir, "a").unwrap();
+        delete_connection_in_dir(&dir, "a").unwrap();
+        let all = read_all_connections(&dir).unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all.iter().all(|p| p.id != "a"));
+        assert_eq!(fs::read(&other_file).unwrap(), other_bytes);
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

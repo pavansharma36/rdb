@@ -3,7 +3,7 @@
 // Profiles live in per-plugin JSON files in the OS app-data dir
 // (connections/<pluginId>/connections.json), written by the Rust backend (see
 // src-tauri/src/persistence.rs). The backend merges them into one list on load
-// and splits them back out by plugin on save. This module is the single place
+// and updates a single profile in its plugin file on save. This module is the single place
 // the UI touches persistence.
 //
 // Passwords are stored in the OS credential store by the Rust persistence layer.
@@ -39,9 +39,16 @@ export function loadConnections(): Promise<SavedConnection[]> {
   return invoke<SavedConnection[]>("load_connections");
 }
 
-/** Persist the full set of saved profiles to disk. */
-export function saveConnections(connections: SavedConnection[]): Promise<void> {
-  return invoke<void>("save_connections", { connections });
+/** Save one profile; returns the config with keyring references. */
+export function saveConnection(
+  connection: SavedConnection,
+): Promise<SavedConnection> {
+  return invoke<SavedConnection>("save_connection", { connection });
+}
+
+/** Delete one saved profile and its unreferenced credentials. */
+export function deleteConnection(connectionId: string): Promise<void> {
+  return invoke<void>("delete_connection", { connectionId });
 }
 
 /** Pure: insert or replace `conn` (matched by id). Returns the new list. */

@@ -181,6 +181,8 @@ export function ConnectionForm({
       name: finalName,
       pluginId: selected.id,
       config: visibleConfig(),
+      order: initial?.order,
+      settings: initial?.settings,
     };
     try {
       await onSaveAndConnect(profile);

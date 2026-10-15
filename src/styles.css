@@ -4070,6 +4070,34 @@ select.curlui-method {
   align-items: center;
 }
 
+.curlui-request-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.curlui-running-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: curlui-running-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes curlui-running-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.curlui-cancel-request {
+  padding: 3px 7px;
+  color: var(--err);
+}
+
 .curlui-status {
   font-weight: 600;
 }
